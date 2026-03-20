@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Lumina",
   description: "DDL and torrent content download orchestrator",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
@@ -19,8 +23,9 @@ export default function RootLayout({
           <div className="max-w-7xl mx-auto flex items-center justify-between">
             <Link
               href="/"
-              className="text-lg font-bold bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent"
+              className="flex items-center gap-2 text-lg font-bold bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent"
             >
+              <Image src="/favicon.svg" alt="" width={24} height={24} />
               Lumina
             </Link>
             <Link

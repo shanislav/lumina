@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#d946ef"/>
+    </linearGradient>
+    <linearGradient id="face-left" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+    <linearGradient id="face-right" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#9333ea"/>
+    </linearGradient>
+    <linearGradient id="face-top" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c084fc"/>
+      <stop offset="100%" stop-color="#e879f9"/>
+    </linearGradient>
+    <linearGradient id="ray1" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#a78bfa" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="ray2" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#c084fc" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="ray3" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#e879f9" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#e879f9" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="outer-glow">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Light rays emanating upward from prism -->
+  <polygon points="256,200 180,60 200,60" fill="url(#ray1)" opacity="0.5"/>
+  <polygon points="256,200 240,40 268,40" fill="url(#ray2)" opacity="0.6"/>
+  <polygon points="256,200 310,55 335,55" fill="url(#ray3)" opacity="0.4"/>
+
+  <!-- Small sparkle top -->
+  <circle cx="254" cy="48" r="4" fill="#e879f9" opacity="0.8"/>
+  <circle cx="190" cy="68" r="3" fill="#a78bfa" opacity="0.6"/>
+  <circle cx="322" cy="62" r="3" fill="#c084fc" opacity="0.7"/>
+
+  <!-- Main prism/gem shape -->
+  <g filter="url(#outer-glow)">
+    <!-- Top face (brightest) -->
+    <polygon points="256,140 160,260 352,260" fill="url(#face-top)"/>
+
+    <!-- Left face -->
+    <polygon points="160,260 256,140 200,420" fill="url(#face-left)"/>
+
+    <!-- Right face -->
+    <polygon points="352,260 256,140 312,420" fill="url(#face-right)"/>
+
+    <!-- Bottom face (darkest) -->
+    <polygon points="160,260 352,260 312,420 200,420" fill="#6d28d9"/>
+
+    <!-- Inner highlight lines -->
+    <line x1="256" y1="140" x2="200" y2="420" stroke="#c084fc" stroke-width="1" opacity="0.4"/>
+    <line x1="256" y1="140" x2="312" y2="420" stroke="#c084fc" stroke-width="1" opacity="0.4"/>
+    <line x1="160" y1="260" x2="312" y2="420" stroke="#a78bfa" stroke-width="0.8" opacity="0.25"/>
+    <line x1="352" y1="260" x2="200" y2="420" stroke="#a78bfa" stroke-width="0.8" opacity="0.25"/>
+
+    <!-- Bright edge highlight -->
+    <line x1="160" y1="260" x2="256" y2="140" stroke="#e9d5ff" stroke-width="2" opacity="0.5"/>
+    <line x1="256" y1="140" x2="352" y2="260" stroke="#e9d5ff" stroke-width="1.5" opacity="0.35"/>
+  </g>
+
+  <!-- Subtle reflection dot on gem -->
+  <ellipse cx="230" cy="210" rx="12" ry="8" fill="white" opacity="0.15" transform="rotate(-20, 230, 210)"/>
+</svg>

@@ -85,7 +85,8 @@ export default function Home() {
 
   return (
     <main className="flex flex-col items-center gap-8 px-4 py-12 max-w-7xl mx-auto">
-      <div className="text-center space-y-2">
+      <div className="text-center space-y-3 flex flex-col items-center">
+        <img src="/logo.svg" alt="Lumina" className="w-20 h-20 drop-shadow-[0_0_24px_rgba(167,139,250,0.4)]" />
         <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
           Lumina
         </h1>
