@@ -50,7 +50,6 @@ class Aria2Client:
         if single_connection:
             options["split"] = "1"
             options["max-connection-per-server"] = "1"
-            options["min-split-size"] = "1G"
         data = await self._rpc("aria2.addUri", [[uri], options])
         return data["result"]
 
