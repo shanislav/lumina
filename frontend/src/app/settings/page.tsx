@@ -17,6 +17,7 @@ import {
   getLanguages,
 } from "@/lib/api";
 import { FLAG } from "@/components/LanguageSelect";
+import FolderBrowser from "@/components/FolderBrowser";
 
 const SOURCE_TYPES = [
   {
@@ -60,7 +61,7 @@ const SETTINGS_SECTIONS = [
     title: "Stahování",
     icon: "📁",
     fields: [
-      { key: "plex_media_dir", label: "Složka pro stahování", type: "text", hint: "Cílová složka pro Plex (v Docker kontejneru)" },
+      { key: "plex_media_dir", label: "Složka pro stahování", type: "folder", hint: "Cílová složka pro Plex (v Docker kontejneru)" },
     ],
   },
   {
@@ -105,6 +106,9 @@ export default function SettingsPage() {
 
   // Languages
   const [allLanguages, setAllLanguages] = useState<LanguageOption[]>([]);
+
+  // Folder browser
+  const [browsingField, setBrowsingField] = useState<string | null>(null);
 
   const loadSources = useCallback(async () => {
     try {
@@ -217,6 +221,27 @@ export default function SettingsPage() {
                         }
                         className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-zinc-700 accent-violet-500"
                       />
+                    ) : field.type === "folder" ? (
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={settings[field.key] || ""}
+                          onChange={(e) =>
+                            handleSettingChange(field.key, e.target.value)
+                          }
+                          className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 placeholder-zinc-600 text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setBrowsingField(field.key)}
+                          className="rounded bg-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-600 transition-colors flex items-center gap-1.5"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                          </svg>
+                          Browse
+                        </button>
+                      </div>
                     ) : (
                       <input
                         type={field.type}
@@ -414,6 +439,18 @@ export default function SettingsPage() {
           </button>
         )}
       </section>
+
+      {/* Folder browser modal */}
+      {browsingField && (
+        <FolderBrowser
+          initialPath={settings[browsingField] || "/downloads"}
+          onSelect={(path) => {
+            handleSettingChange(browsingField, path);
+            setBrowsingField(null);
+          }}
+          onCancel={() => setBrowsingField(null)}
+        />
+      )}
     </main>
   );
 }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import SearchBar from "@/components/SearchBar";
 import MovieGrid from "@/components/MovieGrid";
 import FileTable from "@/components/FileTable";
+import DownloadPanel from "@/components/DownloadPanel";
 import {
   TMDBMovie,
   ScoredFile,
@@ -21,6 +22,7 @@ export default function Home() {
   const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
   const [moviesLoading, setMoviesLoading] = useState(false);
   const [filesLoading, setFilesLoading] = useState(false);
+  const [resultsCollapsed, setResultsCollapsed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,6 +44,7 @@ export default function Home() {
     setMovies([]);
     setFiles([]);
     setSelectedMovie(null);
+    setResultsCollapsed(false);
     setMoviesLoading(true);
     setSearchLang(language);
     try {
@@ -110,6 +113,7 @@ export default function Home() {
               onClick={() => {
                 setSelectedMovie(null);
                 setFiles([]);
+                setResultsCollapsed(false);
               }}
               className="text-zinc-500 hover:text-zinc-300 transition-colors text-sm"
             >
@@ -123,10 +127,29 @@ export default function Home() {
                 </span>
               )}
             </h2>
+            {resultsCollapsed && files.length > 0 && (
+              <button
+                onClick={() => setResultsCollapsed(false)}
+                className="ml-auto flex items-center gap-1.5 text-zinc-500 hover:text-zinc-300 transition-colors text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+                Zobrazit výsledky ({files.length})
+              </button>
+            )}
           </div>
-          <FileTable files={files} loading={filesLoading} />
+          {!resultsCollapsed && (
+            <FileTable
+              files={files}
+              loading={filesLoading}
+              onDownloadStarted={() => setResultsCollapsed(true)}
+            />
+          )}
         </div>
       )}
+
+      <DownloadPanel />
     </main>
   );
 }

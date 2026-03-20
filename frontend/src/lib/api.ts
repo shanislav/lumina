@@ -82,6 +82,37 @@ export async function startDownload(
   return res.json();
 }
 
+export interface DownloadItem {
+  gid?: string;
+  hash?: string;
+  status: string;
+  total_length: number;
+  completed_length: number;
+  download_speed: number;
+  filename: string;
+  backend: "aria2" | "qbittorrent";
+  progress?: number;
+}
+
+export async function getDownloads(): Promise<DownloadItem[]> {
+  const res = await fetch(`${API_BASE}/api/downloads`);
+  if (!res.ok) throw new Error(`Failed to load downloads: ${res.status}`);
+  const data = await res.json();
+  return data.downloads;
+}
+
+export async function removeDownload(
+  identifier: string,
+  backend: "aria2" | "qbittorrent" = "aria2",
+  active: boolean = false,
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (backend === "qbittorrent") params.set("backend", "qbittorrent");
+  if (active) params.set("active", "true");
+  const qs = params.toString() ? `?${params}` : "";
+  await fetch(`${API_BASE}/api/download/${identifier}${qs}`, { method: "DELETE" });
+}
+
 // --- Source Management ---
 
 export async function getSources(): Promise<Source[]> {

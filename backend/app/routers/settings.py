@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter
 
@@ -85,6 +86,28 @@ async def update_settings(body: dict[str, str]) -> dict[str, str]:
     new_stored = await get_all_settings()
     merged = {**DEFAULTS, **new_stored}
     return _mask(merged)
+
+
+@router.get("/browse")
+async def browse_directories(path: str = "/") -> dict:
+    """List subdirectories for the folder picker."""
+    target = Path(path).resolve()
+    if not target.is_dir():
+        return {"path": str(target), "parent": str(target.parent), "dirs": []}
+
+    dirs: list[dict] = []
+    try:
+        for entry in sorted(target.iterdir()):
+            if entry.is_dir() and not entry.name.startswith("."):
+                dirs.append({"name": entry.name, "path": str(entry)})
+    except PermissionError:
+        pass
+
+    return {
+        "path": str(target),
+        "parent": str(target.parent) if target != target.parent else None,
+        "dirs": dirs,
+    }
 
 
 @router.get("/languages")

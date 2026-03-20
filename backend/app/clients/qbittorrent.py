@@ -74,5 +74,17 @@ class QBittorrentClient:
             "downloaded": t.get("downloaded", 0),
         }
 
+    async def delete_torrent(self, torrent_hash: str, delete_files: bool = False) -> bool:
+        """Remove a torrent from qBittorrent. Optionally delete downloaded files."""
+        await self.login()
+        resp = await self._http.post(
+            f"{self._base_url}/api/v2/torrents/delete",
+            data={
+                "hashes": torrent_hash,
+                "deleteFiles": str(delete_files).lower(),
+            },
+        )
+        return resp.status_code == 200
+
     async def close(self) -> None:
         await self._http.aclose()

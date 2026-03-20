@@ -6,6 +6,7 @@ import { ScoredFile, startDownload, formatSize } from "@/lib/api";
 interface Props {
   files: ScoredFile[];
   loading: boolean;
+  onDownloadStarted?: () => void;
 }
 
 const BADGE_STYLES: Record<string, { bg: string; label: string }> = {
@@ -26,7 +27,7 @@ function SourceBadge({ source, seeders }: { source: string; seeders: number | nu
   );
 }
 
-export default function FileTable({ files, loading }: Props) {
+export default function FileTable({ files, loading, onDownloadStarted }: Props) {
   const [downloading, setDownloading] = useState<Record<string, string>>({});
 
   async function handleDownload(file: ScoredFile) {
@@ -35,6 +36,7 @@ export default function FileTable({ files, loading }: Props) {
       const result = await startDownload(file);
       const id = result.gid || result.hash || "ok";
       setDownloading((prev) => ({ ...prev, [file.ident]: id }));
+      onDownloadStarted?.();
     } catch {
       setDownloading((prev) => ({ ...prev, [file.ident]: "error" }));
     }
