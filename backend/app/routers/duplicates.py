@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -299,24 +300,35 @@ Example: [[0, 5], [3, 7]]"""
         user_prompt = f"Files:\n{chr(10).join(batch_lines)}"
 
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(
-                    GROQ_API_URL,
-                    headers={
-                        "Authorization": f"Bearer {groq_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "llama-3.3-70b-versatile",
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        "temperature": 0.1,
-                        "max_tokens": 4096,
-                    },
-                )
-                resp.raise_for_status()
+            # Retry with backoff for rate limits (Groq free tier ~30 req/min)
+            resp = None
+            for attempt in range(4):
+                async with httpx.AsyncClient(timeout=120) as client:
+                    resp = await client.post(
+                        GROQ_API_URL,
+                        headers={
+                            "Authorization": f"Bearer {groq_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": "llama-3.1-8b-instant",
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            "temperature": 0.1,
+                            "max_tokens": 4096,
+                        },
+                    )
+                    if resp.status_code == 429:
+                        wait = (2 ** attempt) * 5  # 5s, 10s, 20s, 40s
+                        logger.warning("Groq rate limited, waiting %ds (attempt %d/4)", wait, attempt + 1)
+                        await asyncio.sleep(wait)
+                        continue
+                    resp.raise_for_status()
+                    break
+            else:
+                raise RuntimeError("Groq rate limit exceeded after 4 retries")
 
             content = resp.json()["choices"][0]["message"]["content"].strip()
             # Strip markdown fences
