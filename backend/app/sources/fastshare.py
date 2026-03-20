@@ -24,7 +24,7 @@ class FastShareSource(BaseSource):
         ]
 
     async def get_download_info(self, ident: str) -> dict:
-        url = await self._client.get_free_download_url(ident)
+        url = await self._client.get_download_url(ident)
         return {"url": url}
 
     async def test_connection(self) -> bool:

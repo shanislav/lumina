@@ -7,3 +7,5 @@ __pycache__/
 downloads/
 .idea/
 .python-version
+*.db
+data/

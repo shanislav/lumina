@@ -155,11 +155,11 @@ class FastShareClient:
 
         return files
 
-    async def get_free_download_url(self, file_id: str) -> str:
-        """Get a direct download URL for the given file ID."""
+    async def get_download_url(self, file_id: str) -> str:
+        """Get a direct download URL — uses premium speed if logged in."""
         await self.ensure_login()
 
-        # Step 1: load file page to get CSRF token
+        # Load file page to get CSRF token
         page_resp = await self._http.get(
             f"{BASE_CLOUD}/{file_id}/file",
             headers={"Referer": BASE_CLOUD},
@@ -170,7 +170,23 @@ class FastShareClient:
             raise RuntimeError(f"FastShare: CSRF token not found for file {file_id}")
         csrf = csrf_match.group(1)
 
-        # Step 2: POST to /free/ with CSRF — get redirect to download_free.php
+        # Try premium download first (full speed for paid accounts)
+        premium_resp = await self._http.post(
+            f"{BASE_CLOUD}/download/",
+            params={"lang": "cs", "u": file_id},
+            data={"csrf": csrf},
+            headers={"Referer": f"{BASE_CLOUD}/{file_id}/file"},
+            follow_redirects=False,
+        )
+
+        if premium_resp.status_code in (301, 302, 303, 307):
+            download_url = premium_resp.headers.get("location", "")
+            if "download.php" in download_url:
+                logger.info("FastShare: using premium download for file %s", file_id)
+                return download_url
+
+        # Fallback to free download (slower, no premium)
+        logger.info("FastShare: premium not available, falling back to free for file %s", file_id)
         free_resp = await self._http.post(
             f"{BASE_CLOUD}/free/",
             params={"lang": "cs", "u": file_id},
