@@ -170,41 +170,52 @@ class FastShareClient:
             raise RuntimeError(f"FastShare: CSRF token not found for file {file_id}")
         csrf = csrf_match.group(1)
 
-        # Try premium download first (full speed for paid accounts)
-        premium_resp = await self._http.post(
-            f"{BASE_CLOUD}/download/",
-            params={"lang": "cs", "u": file_id},
-            data={"csrf": csrf},
-            headers={"Referer": f"{BASE_CLOUD}/{file_id}/file"},
-            follow_redirects=False,
-        )
-
-        if premium_resp.status_code in (301, 302, 303, 307):
-            download_url = premium_resp.headers.get("location", "")
-            if "download.php" in download_url:
-                logger.info("FastShare: using premium download for file %s", file_id)
-                return download_url
-
-        # Fallback to free download (slower, no premium)
-        logger.info("FastShare: premium not available, falling back to free for file %s", file_id)
-        free_resp = await self._http.post(
-            f"{BASE_CLOUD}/free/",
-            params={"lang": "cs", "u": file_id},
-            data={"csrf": csrf},
-            headers={"Referer": f"{BASE_CLOUD}/{file_id}/file"},
-            follow_redirects=False,
-        )
-
-        if free_resp.status_code in (301, 302, 303, 307):
-            download_url = free_resp.headers.get("location", "")
-            if "download_free.php" in download_url or "download.php" in download_url:
-                return download_url
-            raise RuntimeError(
-                f"FastShare: unexpected redirect to {download_url}"
+        # Try premium/VIP download first, then fall back to free
+        for endpoint in ("/download/", "/free/"):
+            resp = await self._http.post(
+                f"{BASE_CLOUD}{endpoint}",
+                params={"lang": "cs", "u": file_id},
+                data={"csrf": csrf},
+                headers={"Referer": f"{BASE_CLOUD}/{file_id}/file"},
+                follow_redirects=False,
             )
 
+            # Redirect to download URL (typical for non-VIP or some VIP flows)
+            if resp.status_code in (301, 302, 303, 307):
+                download_url = resp.headers.get("location", "")
+                if "download" in download_url:
+                    logger.info("FastShare: got redirect from %s for file %s", endpoint, file_id)
+                    return download_url
+
+            # 200 response — VIP accounts may get the download link in the HTML body
+            if resp.status_code == 200:
+                # Look for a direct download link in the response
+                link_match = re.search(
+                    r'href=["\']?(https?://[^"\'>\s]*download[^"\'>\s]*)["\']?',
+                    resp.text,
+                )
+                if link_match:
+                    url = link_match.group(1)
+                    logger.info("FastShare: found download link in %s response for file %s", endpoint, file_id)
+                    return url
+
+                # Some VIP responses embed the URL in a JS redirect
+                js_match = re.search(
+                    r'(?:window\.location|location\.href)\s*=\s*["\']([^"\']+download[^"\']*)["\']',
+                    resp.text,
+                )
+                if js_match:
+                    url = js_match.group(1)
+                    logger.info("FastShare: found JS redirect in %s response for file %s", endpoint, file_id)
+                    return url
+
+                logger.warning(
+                    "FastShare: got 200 from %s but no download link found (body: %s...)",
+                    endpoint, resp.text[:500],
+                )
+
         raise RuntimeError(
-            f"FastShare: expected redirect, got {free_resp.status_code}"
+            f"FastShare: could not obtain download URL for file {file_id}"
         )
 
     async def close(self) -> None:
