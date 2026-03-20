@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import SearchBar from "@/components/SearchBar";
 import MovieGrid from "@/components/MovieGrid";
@@ -15,6 +15,14 @@ import {
 } from "@/lib/api";
 
 export default function Home() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center min-h-[calc(100vh-57px)]"><div className="text-zinc-600 text-sm animate-pulse">Nacitam...</div></div>}>
+      <HomeContent />
+    </Suspense>
+  );
+}
+
+function HomeContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [ready, setReady] = useState(false);
