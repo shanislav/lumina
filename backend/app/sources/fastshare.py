@@ -8,7 +8,9 @@ class FastShareSource(BaseSource):
 
     def __init__(self, source_id: int, config: dict) -> None:
         super().__init__(source_id, config)
-        self._client = FastShareClient(config["login"], config["password"])
+        # Support both old "heslo" and new "password" config key
+        password = config.get("password") or config.get("heslo", "")
+        self._client = FastShareClient(config["login"], password)
 
     async def search(self, query: str, limit: int = 30) -> list[SearchResult]:
         files = await self._client.search(query, limit)
