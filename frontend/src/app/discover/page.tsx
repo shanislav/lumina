@@ -44,11 +44,9 @@ export default function DiscoverPage() {
   }, []);
 
   function handleSelect(movie: TMDBMovie) {
-    // Navigate to home with search query pre-filled
-    const query = movie.year
-      ? `${movie.title} ${movie.year}`
-      : movie.title;
-    router.push(`/?q=${encodeURIComponent(query)}&tmdb=${movie.tmdb_id}`);
+    // Pass movie data so home page can skip TMDB search and go straight to file search
+    const movieData = btoa(encodeURIComponent(JSON.stringify(movie)));
+    router.push(`/?movie=${movieData}`);
   }
 
   return (

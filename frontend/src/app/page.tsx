@@ -47,36 +47,38 @@ function HomeContent() {
   }, [router]);
 
   const [searchLang, setSearchLang] = useState<string | undefined>(undefined);
-  const [initialQuery, setInitialQuery] = useState("");
 
-  // Auto-search when coming from Discover page with ?q= param
-  const handleSearchCb = useCallback(async (query: string, language?: string) => {
-    setError(null);
+  // Handle incoming movie from Discover page — go straight to file search
+  const handleDiscoverMovie = useCallback(async (movie: TMDBMovie) => {
+    setSelectedMovie(movie);
     setMovies([]);
     setFiles([]);
-    setSelectedMovie(null);
-    setResultsCollapsed(false);
-    setMoviesLoading(true);
-    setSearchLang(language);
+    setFilesLoading(true);
+    setError(null);
     try {
-      const results = await searchMovies(query, language);
-      setMovies(results);
+      const query = movie.year
+        ? `${movie.title} ${movie.year}`
+        : movie.title;
+      const results = await searchFiles(query);
+      setFiles(results);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Search error");
+      setError(e instanceof Error ? e.message : "File search error");
     } finally {
-      setMoviesLoading(false);
+      setFilesLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const q = searchParams.get("q");
-    if (q && ready) {
-      setInitialQuery(q);
-      handleSearchCb(q);
+    const movieParam = searchParams.get("movie");
+    if (movieParam && ready) {
+      try {
+        const movie: TMDBMovie = JSON.parse(decodeURIComponent(atob(movieParam)));
+        handleDiscoverMovie(movie);
+      } catch { /* ignore bad data */ }
       // Clean URL
       window.history.replaceState({}, "", "/");
     }
-  }, [searchParams, ready, handleSearchCb]);
+  }, [searchParams, ready, handleDiscoverMovie]);
 
   async function handleSearch(query: string, language?: string) {
     setError(null);
@@ -134,7 +136,7 @@ function HomeContent() {
         </p>
       </div>
 
-      <SearchBar onSearch={handleSearch} loading={moviesLoading} initialQuery={initialQuery} />
+      <SearchBar onSearch={handleSearch} loading={moviesLoading} />
 
       {error && (
         <div className="rounded-lg bg-red-900/30 border border-red-800 px-4 py-3 text-red-300 text-sm w-full max-w-2xl">
