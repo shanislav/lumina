@@ -76,7 +76,7 @@ class FastShareClient:
         self._hash = user["hash"]
         self._unlimited = str(user.get("unlimited", "")).lower() == "true"
         credit_data = user.get("data", {})
-        self._credit_mb = int(credit_data.get("value", 0)) if credit_data else 0
+        self._credit_mb = int(credit_data.get("value") or 0) if credit_data else 0
 
         logger.info(
             "FastShare login OK: hash=%s***, unlimited=%s, credit=%d MB",
@@ -133,10 +133,10 @@ class FastShareClient:
                 file_id = self._extract_file_id(download_url, item)
 
             size_data = item.get("data", {})
-            size = int(size_data.get("value", 0)) if size_data else 0
+            size = int(size_data.get("value") or 0) if size_data else 0
 
             duration_data = item.get("duration", {})
-            duration = int(duration_data.get("value", 0)) if duration_data else 0
+            duration = int(duration_data.get("value") or 0) if duration_data else 0
 
             resolution = item.get("resolution", "")
 
