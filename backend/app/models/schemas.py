@@ -56,11 +56,6 @@ class ScoredFile(BaseModel):
     source_id: int = 0
     magnet_url: str | None = None
     seeders: int | None = None
-    # AI-parsed from filename
-    video_codec: str = ""
-    audio_codec: str = ""
-    release_type: str = ""
-    languages: list[str] = []
 
 
 class SearchRequest(BaseModel):

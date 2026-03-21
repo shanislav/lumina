@@ -20,10 +20,6 @@ export interface ScoredFile {
   source_id: number;
   magnet_url: string | null;
   seeders: number | null;
-  video_codec: string;
-  audio_codec: string;
-  release_type: string;
-  languages: string[];
 }
 
 export interface Source {

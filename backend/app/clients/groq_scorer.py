@@ -178,11 +178,6 @@ For EACH entry extract:
   Score LOW (0-20) for: subtitles (.srt, .sub), samples, soundtracks, NFO files, screenshots, RAR parts that are not the main file.
   Score HIGH (70-100) for: full movie files (.mkv, .avi, .mp4) or torrents whose name closely matches the query.
   For torrents, higher seeders count is a positive quality signal.
-- "video_codec": detected video codec from filename (e.g. "HEVC", "x265", "H.264", "x264", "AVC", "VP9", "AV1", "XviD", ""). Empty string if not found.
-- "audio_codec": detected audio codec from filename (e.g. "DTS", "DTS-HD", "AC3", "EAC3", "AAC", "FLAC", "TrueHD", "Atmos", ""). Empty string if not found.
-- "release_type": detected release source (e.g. "BluRay", "WEB-DL", "WEBRip", "HDRip", "BDRip", "DVDRip", "HDTV", "Remux", ""). Empty string if not found.
-- "languages": array of language codes detected in the filename (e.g. ["CZ", "EN"], ["CZ"], []). Use uppercase 2-letter codes.
-
 Return ONLY a valid JSON array, no markdown fences, no explanation.\
 """
 
@@ -257,10 +252,6 @@ async def score_results(
                     source_id=f.source_id,
                     magnet_url=f.magnet_url,
                     seeders=f.seeders,
-                    video_codec=entry.get("video_codec", ""),
-                    audio_codec=entry.get("audio_codec", ""),
-                    release_type=entry.get("release_type", ""),
-                    languages=entry.get("languages", []),
                 )
             )
 
@@ -301,23 +292,6 @@ def _fallback_scoring(
         if f.seeders is not None and f.seeders > 5:
             score = min(100, score + 10)
 
-        # Basic codec detection for fallback
-        vcodec = ""
-        for vc in ["hevc", "x265", "h.264", "x264", "avc", "xvid"]:
-            if vc in name_lower:
-                vcodec = vc.upper()
-                break
-        acodec = ""
-        for ac in ["dts-hd", "dts", "truehd", "atmos", "eac3", "ac3", "aac", "flac"]:
-            if ac in name_lower:
-                acodec = ac.upper()
-                break
-        rtype = ""
-        for rt in ["remux", "bluray", "blu-ray", "web-dl", "webrip", "hdrip", "bdrip", "dvdrip", "hdtv"]:
-            if rt in name_lower:
-                rtype = rt
-                break
-
         results.append(
             ScoredFile(
                 ident=f.ident,
@@ -330,9 +304,6 @@ def _fallback_scoring(
                 source_id=f.source_id,
                 magnet_url=f.magnet_url,
                 seeders=f.seeders,
-                video_codec=vcodec,
-                audio_codec=acodec,
-                release_type=rtype,
             )
         )
     results.sort(key=lambda r: (-r.relevance_score, -r.size))
