@@ -158,7 +158,24 @@ export default function FileTable({ files, loading, onDownloadStarted }: Props) 
                         {file.relevance_score}
                       </span>
                     </div>
-                    <div className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
+                    <div className="py-2 px-3 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                      {file.source !== "jackett" && (
+                        <a
+                          href={
+                            file.source === "fastshare"
+                              ? `https://www.fastshare.cz/${file.ident}`
+                              : `https://webshare.cz/file/${file.ident}/`
+                          }
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded bg-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-600 transition-colors"
+                          title="Otevřít na zdroji"
+                        >
+                          <svg className="w-3.5 h-3.5 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </a>
+                      )}
                       {!dlState ? (
                         <button
                           onClick={() => handleDownload(file)}
