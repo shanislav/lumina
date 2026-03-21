@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     aria2_rpc_url: str = "http://aria2:6800/jsonrpc"
     aria2_rpc_secret: str = "your_aria2_secret"
     plex_media_dir: str = "/downloads/plex"
+    tv_media_dir: str = ""
 
     qbittorrent_url: str = ""
     qbittorrent_username: str = "admin"
@@ -43,6 +44,7 @@ async def get_effective_settings() -> dict[str, str]:
         "aria2_rpc_url": db_settings.get("aria2_rpc_url") or env.aria2_rpc_url,
         "aria2_rpc_secret": db_settings.get("aria2_rpc_secret") or env.aria2_rpc_secret,
         "plex_media_dir": db_settings.get("plex_media_dir") or env.plex_media_dir,
+        "tv_media_dir": db_settings.get("tv_media_dir") or env.tv_media_dir,
         "qbittorrent_url": db_settings.get("qbittorrent_url") or env.qbittorrent_url,
         "qbittorrent_username": db_settings.get("qbittorrent_username") or env.qbittorrent_username,
         "qbittorrent_password": db_settings.get("qbittorrent_password") or env.qbittorrent_password,

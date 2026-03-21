@@ -106,7 +106,8 @@ export async function searchFiles(query: string, language?: string): Promise<Sco
 
 export async function startDownload(
   file: ScoredFile,
-  targetFolder?: string
+  targetFolder?: string,
+  contentType: "movie" | "tv" = "movie",
 ): Promise<{
   gid?: string;
   hash?: string;
@@ -123,6 +124,7 @@ export async function startDownload(
       source_id: file.source_id,
       magnet_url: file.magnet_url,
       target_folder: targetFolder,
+      content_type: contentType,
     }),
   });
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
@@ -139,6 +141,7 @@ export interface DownloadItem {
   filename: string;
   backend: "aria2" | "qbittorrent";
   progress?: number;
+  source_label?: string;
 }
 
 export async function getDownloads(): Promise<DownloadItem[]> {

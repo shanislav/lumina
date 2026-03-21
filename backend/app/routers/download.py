@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from app.config import get_effective_settings
@@ -7,30 +9,49 @@ from app.models.schemas import DownloadRequest
 from app.sources.base import DownloadBackend
 from app.sources.registry import SourceRegistry
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api", tags=["download"])
+
+# In-memory mapping: gid/hash → source label (e.g. "FastShare", "WebShare", "Torrent")
+_download_sources: dict[str, str] = {}
+
+SOURCE_LABELS: dict[str, str] = {
+    "webshare": "WebShare",
+    "fastshare": "FastShare",
+    "jackett": "Torrent",
+}
+
+
+def _resolve_target_dir(cfg: dict, req: DownloadRequest) -> str:
+    """Pick the right download folder based on content type."""
+    if req.target_folder:
+        return req.target_folder
+    if req.content_type == "tv" and cfg.get("tv_media_dir"):
+        return cfg["tv_media_dir"]
+    return cfg["plex_media_dir"]
 
 
 @router.post("/download")
 async def start_download(req: DownloadRequest) -> dict:
     cfg = await get_effective_settings()
-    target_dir = req.target_folder or cfg["plex_media_dir"]
+    target_dir = _resolve_target_dir(cfg, req)
 
     registry = SourceRegistry.get()
     source = registry.get_source_by_id(req.source_id) if req.source_id else None
+    source_label = SOURCE_LABELS.get(req.source, req.source)
 
     if source and source.download_backend == DownloadBackend.ARIA2:
         download_info = await source.get_download_info(req.file_ident)
         aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
         try:
-            # DDL servers (FastShare, WebShare) don't support Range requests
-            # so we must download in a single connection to avoid errors.
-            # Some sources (FastShare) need auth cookies passed as headers.
             gid = await aria2.add_uri(
                 download_info["url"],
                 directory=target_dir,
                 single_connection=True,
                 headers=download_info.get("headers"),
             )
+            _download_sources[gid] = source_label
             return {
                 "gid": gid,
                 "status": "active",
@@ -53,6 +74,7 @@ async def start_download(req: DownloadRequest) -> dict:
         )
         try:
             torrent_hash = await qbt.add_torrent(req.magnet_url, save_path=target_dir)
+            _download_sources[torrent_hash] = source_label
             return {
                 "hash": torrent_hash,
                 "status": "active",
@@ -78,11 +100,13 @@ async def list_downloads() -> dict:
             active = await aria2.tell_active()
             for d in active:
                 d["backend"] = "aria2"
+                d["source_label"] = _download_sources.get(d.get("gid", ""), "")
             downloads.extend(active)
 
             stopped = await aria2.tell_stopped(0, 10)
             for d in stopped:
                 d["backend"] = "aria2"
+                d["source_label"] = _download_sources.get(d.get("gid", ""), "")
             downloads.extend(stopped)
         finally:
             await aria2.close()
@@ -105,8 +129,9 @@ async def list_downloads() -> dict:
                 )
                 resp.raise_for_status()
                 for t in resp.json():
+                    h = t.get("hash", "")
                     downloads.append({
-                        "hash": t.get("hash", ""),
+                        "hash": h,
                         "status": t.get("state", "unknown"),
                         "total_length": t.get("total_size", 0),
                         "completed_length": t.get("downloaded", 0),
@@ -114,6 +139,7 @@ async def list_downloads() -> dict:
                         "filename": t.get("name", ""),
                         "backend": "qbittorrent",
                         "progress": t.get("progress", 0),
+                        "source_label": _download_sources.get(h, "Torrent"),
                     })
             finally:
                 await qbt.close()
@@ -129,6 +155,9 @@ async def remove_download(
 ) -> dict:
     """Remove/cancel a download. Use active=true to cancel an in-progress download."""
     cfg = await get_effective_settings()
+
+    # Clean up source tracking
+    _download_sources.pop(identifier, None)
 
     if backend == "qbittorrent":
         if not cfg.get("qbittorrent_url"):
@@ -147,7 +176,6 @@ async def remove_download(
         aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
         try:
             if active:
-                # Cancel active download, then clean up the result entry
                 await aria2.force_remove(identifier)
                 await aria2.remove_result(identifier)
                 return {"ok": True}

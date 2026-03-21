@@ -125,9 +125,19 @@ export default function DownloadPanel() {
                   <span className="text-sm text-zinc-200 truncate flex-1" title={name}>
                     {name}
                   </span>
-                  <span className="text-xs text-zinc-500 uppercase">
-                    {dl.backend === "qbittorrent" ? "qBit" : "Aria2"}
-                  </span>
+                  {dl.source_label ? (
+                    <span className={`text-xs font-medium ${
+                      dl.source_label === "FastShare" ? "text-cyan-400" :
+                      dl.source_label === "WebShare" ? "text-violet-400" :
+                      "text-orange-400"
+                    }`}>
+                      {dl.source_label}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-zinc-500 uppercase">
+                      {dl.backend === "qbittorrent" ? "Torrent" : "DDL"}
+                    </span>
+                  )}
                   {(dl.gid || dl.hash) && (
                     <button
                       onClick={async () => {

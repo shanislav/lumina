@@ -64,6 +64,7 @@ class DownloadRequest(BaseModel):
     source_id: int = 0
     magnet_url: str | None = None
     target_folder: str | None = None
+    content_type: str = "movie"  # "movie" or "tv"
 
 
 # --- Source CRUD models ---

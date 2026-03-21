@@ -62,7 +62,8 @@ const SETTINGS_SECTIONS = [
     title: "Stahování",
     icon: "📁",
     fields: [
-      { key: "plex_media_dir", label: "Složka pro stahování", type: "folder", hint: "Cílová složka pro Plex (v Docker kontejneru)" },
+      { key: "plex_media_dir", label: "Složka pro filmy", type: "folder", hint: "Cílová složka pro filmy (v Docker kontejneru)" },
+      { key: "tv_media_dir", label: "Složka pro seriály", type: "folder", hint: "Pokud prázdné, seriály se stahují do složky pro filmy" },
     ],
   },
   {
