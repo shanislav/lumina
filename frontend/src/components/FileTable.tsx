@@ -31,7 +31,10 @@ function SourceBadge({ source, seeders }: { source: string; seeders: number | nu
 }
 
 function sourceLink(file: ScoredFile): string | null {
-  if (file.source === "fastshare") return `https://www.fastshare.cz/${file.ident}`;
+  if (file.source === "fastshare") {
+    const slug = file.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    return `https://fastshare.cloud/${file.ident}/${slug}`;
+  }
   if (file.source === "webshare") return `https://webshare.cz/file/${file.ident}/`;
   return null;
 }
