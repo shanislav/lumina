@@ -9,18 +9,6 @@ export interface TMDBMovie {
   poster_url: string | null;
 }
 
-export interface FileMetadata {
-  resolution: string;
-  duration: string;
-  thumbnail: string;
-  uploaded_at: string;
-  genres: string[];
-  description: string;
-  grabs: number | null;
-  votes_up: number;
-  votes_down: number;
-}
-
 export interface ScoredFile {
   ident: string;
   name: string;
@@ -32,7 +20,10 @@ export interface ScoredFile {
   source_id: number;
   magnet_url: string | null;
   seeders: number | null;
-  meta: FileMetadata;
+  video_codec: string;
+  audio_codec: string;
+  release_type: string;
+  languages: string[];
 }
 
 export interface Source {

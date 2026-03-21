@@ -25,16 +25,6 @@ class SearchResult(BaseModel):
     size: int
     magnet_url: str | None = None
     seeders: int | None = None
-    # Extra metadata (source-dependent, all optional)
-    resolution: str = ""
-    duration: str = ""          # human-readable e.g. "01:26:23"
-    thumbnail: str = ""
-    uploaded_at: str = ""       # ISO date or human-readable
-    genres: list[str] = []
-    description: str = ""
-    grabs: int | None = None    # how many people downloaded (torrents)
-    votes_up: int = 0
-    votes_down: int = 0
 
 
 class BaseSource(ABC):

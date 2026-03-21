@@ -90,7 +90,6 @@ async def discover_popular(language: str | None = None) -> list[TMDBMovie]:
 
 def _to_scorable(results: list[SearchResult]) -> list[ScorableFile]:
     """Convert unified SearchResults into ScorableFiles for the scorer."""
-    from app.models.schemas import FileMetadata
     return [
         ScorableFile(
             index=i,
@@ -101,17 +100,6 @@ def _to_scorable(results: list[SearchResult]) -> list[ScorableFile]:
             ident=r.ident,
             magnet_url=r.magnet_url,
             seeders=r.seeders,
-            meta=FileMetadata(
-                resolution=r.resolution,
-                duration=r.duration,
-                thumbnail=r.thumbnail,
-                uploaded_at=r.uploaded_at,
-                genres=r.genres,
-                description=r.description,
-                grabs=r.grabs,
-                votes_up=r.votes_up,
-                votes_down=r.votes_down,
-            ),
         )
         for i, r in enumerate(results)
     ]

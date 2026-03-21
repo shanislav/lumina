@@ -32,19 +32,6 @@ class TMDBMovie(BaseModel):
     poster_url: str | None
 
 
-class FileMetadata(BaseModel):
-    """Extra metadata from sources — carried through scoring untouched."""
-    resolution: str = ""
-    duration: str = ""
-    thumbnail: str = ""
-    uploaded_at: str = ""
-    genres: list[str] = []
-    description: str = ""
-    grabs: int | None = None
-    votes_up: int = 0
-    votes_down: int = 0
-
-
 class ScorableFile(BaseModel):
     """Unified intermediate type for scoring — merges all source results."""
 
@@ -56,7 +43,6 @@ class ScorableFile(BaseModel):
     ident: str
     magnet_url: str | None = None
     seeders: int | None = None
-    meta: FileMetadata = FileMetadata()
 
 
 class ScoredFile(BaseModel):
@@ -70,7 +56,11 @@ class ScoredFile(BaseModel):
     source_id: int = 0
     magnet_url: str | None = None
     seeders: int | None = None
-    meta: FileMetadata = FileMetadata()
+    # AI-parsed from filename
+    video_codec: str = ""
+    audio_codec: str = ""
+    release_type: str = ""
+    languages: list[str] = []
 
 
 class SearchRequest(BaseModel):

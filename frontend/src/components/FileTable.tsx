@@ -27,56 +27,32 @@ function SourceBadge({ source, seeders }: { source: string; seeders: number | nu
   );
 }
 
-function hasMetadata(file: ScoredFile): boolean {
-  const m = file.meta;
-  if (!m) return false;
-  return !!(
-    m.resolution || m.duration || m.uploaded_at || m.description ||
-    (m.genres && m.genres.length > 0) || m.grabs ||
-    m.votes_up > 0 || m.votes_down > 0
-  );
+function hasDetail(file: ScoredFile): boolean {
+  return !!(file.video_codec || file.audio_codec || file.release_type || (file.languages && file.languages.length > 0));
 }
 
-function MetaRow({ file }: { file: ScoredFile }) {
-  const m = file.meta;
-  if (!m) return null;
-
-  const tags: { label: string; value: string; color?: string }[] = [];
-
-  if (m.resolution) tags.push({ label: "Rozlišení", value: m.resolution });
-  if (m.duration) tags.push({ label: "Délka", value: m.duration });
-  if (m.uploaded_at) tags.push({ label: "Nahráno", value: m.uploaded_at });
-  if (m.grabs) tags.push({ label: "Staženo", value: `${m.grabs}×` });
-  if (m.votes_up > 0 || m.votes_down > 0) {
-    tags.push({ label: "Hlasy", value: `👍 ${m.votes_up}  👎 ${m.votes_down}`, color: m.votes_up > m.votes_down ? "text-green-400" : "text-red-400" });
-  }
+function DetailRow({ file }: { file: ScoredFile }) {
+  const tags: { label: string; value: string }[] = [];
+  if (file.video_codec) tags.push({ label: "Video", value: file.video_codec });
+  if (file.audio_codec) tags.push({ label: "Audio", value: file.audio_codec });
+  if (file.release_type) tags.push({ label: "Zdroj", value: file.release_type });
 
   return (
-    <div className="px-3 py-2 bg-zinc-900/80 border-t border-zinc-800/50 space-y-1.5">
-      {/* Tags */}
-      {tags.length > 0 && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1">
-          {tags.map((t) => (
-            <span key={t.label} className="text-xs">
-              <span className="text-zinc-500">{t.label}:</span>{" "}
-              <span className={t.color || "text-zinc-300"}>{t.value}</span>
+    <div className="px-3 py-2 bg-zinc-900/80 border-t border-zinc-800/50 flex items-center gap-4 flex-wrap">
+      {tags.map((t) => (
+        <span key={t.label} className="text-xs">
+          <span className="text-zinc-500">{t.label}:</span>{" "}
+          <span className="text-zinc-200 font-mono">{t.value}</span>
+        </span>
+      ))}
+      {file.languages && file.languages.length > 0 && (
+        <div className="flex gap-1">
+          {file.languages.map((l) => (
+            <span key={l} className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-300 font-medium">
+              {l}
             </span>
           ))}
         </div>
-      )}
-      {/* Genres */}
-      {m.genres && m.genres.length > 0 && (
-        <div className="flex gap-1.5 flex-wrap">
-          {m.genres.map((g) => (
-            <span key={g} className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
-              {g}
-            </span>
-          ))}
-        </div>
-      )}
-      {/* Description */}
-      {m.description && (
-        <p className="text-xs text-zinc-500 line-clamp-2">{m.description}</p>
       )}
     </div>
   );
@@ -130,25 +106,25 @@ export default function FileTable({ files, loading, onDownloadStarted }: Props) 
           {files.map((file) => {
             const key = `${file.source}-${file.source_id}-${file.ident}`;
             const dlState = downloading[file.ident];
-            const hasMeta = hasMetadata(file);
+            const detail = hasDetail(file);
             const isExpanded = expandedId === key;
 
             return (
               <tr
                 key={key}
-                className="border-b border-zinc-800/50 hover:bg-zinc-900/50 group"
+                className="border-b border-zinc-800/50 hover:bg-zinc-900/50"
               >
                 <td colSpan={7} className="p-0">
                   <div
-                    className={`grid grid-cols-[4rem_1fr_5rem_4rem_5rem_4rem_7rem] items-center cursor-pointer`}
-                    onClick={() => hasMeta && setExpandedId(isExpanded ? null : key)}
+                    className="grid grid-cols-[4rem_1fr_5rem_4rem_5rem_4rem_7rem] items-center cursor-pointer"
+                    onClick={() => detail && setExpandedId(isExpanded ? null : key)}
                   >
                     <div className="py-2 px-3">
                       <SourceBadge source={file.source} seeders={file.seeders} />
                     </div>
                     <div className="py-2 px-3 text-zinc-200 truncate flex items-center gap-1.5">
                       <span className="truncate">{file.name}</span>
-                      {hasMeta && (
+                      {detail && (
                         <svg className={`w-3.5 h-3.5 text-zinc-600 shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                         </svg>
@@ -201,7 +177,7 @@ export default function FileTable({ files, loading, onDownloadStarted }: Props) 
                       )}
                     </div>
                   </div>
-                  {isExpanded && <MetaRow file={file} />}
+                  {isExpanded && <DetailRow file={file} />}
                 </td>
               </tr>
             );

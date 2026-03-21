@@ -26,10 +26,6 @@ class JackettSource(BaseSource):
                     size=t.size,
                     magnet_url=t.magnet_url,
                     seeders=t.seeders,
-                    genres=t.genres,
-                    description=t.description,
-                    grabs=t.grabs,
-                    uploaded_at=t.published_date,
                 )
             )
         return results
