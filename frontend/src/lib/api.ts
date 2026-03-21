@@ -59,6 +59,15 @@ export async function getNowPlaying(language?: string): Promise<TMDBMovie[]> {
   return res.json();
 }
 
+export async function getRecentlyDigital(language?: string): Promise<TMDBMovie[]> {
+  const params = new URLSearchParams();
+  if (language) params.set("language", language);
+  const qs = params.toString() ? `?${params}` : "";
+  const res = await fetch(`${API_BASE}/api/discover/recently-digital${qs}`);
+  if (!res.ok) throw new Error(`Recently digital failed: ${res.status}`);
+  return res.json();
+}
+
 export async function getPopular(language?: string): Promise<TMDBMovie[]> {
   const params = new URLSearchParams();
   if (language) params.set("language", language);

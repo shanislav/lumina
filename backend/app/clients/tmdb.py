@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 import httpx
 
 from app.models.schemas import TMDBMovie
@@ -61,6 +63,26 @@ class TMDBClient:
         resp = await self._http.get(
             f"{API_BASE}/movie/popular",
             params={"api_key": self._api_key, "language": language, "region": "CZ"},
+        )
+        resp.raise_for_status()
+        return await self._parse_movies(resp.json().get("results", []))
+
+    async def recently_digital(self, language: str = "cs-CZ", days: int = 90) -> list[TMDBMovie]:
+        """Movies with digital/streaming release in the last N days."""
+        today = date.today()
+        date_from = (today - timedelta(days=days)).isoformat()
+        date_to = today.isoformat()
+        resp = await self._http.get(
+            f"{API_BASE}/discover/movie",
+            params={
+                "api_key": self._api_key,
+                "language": language,
+                "region": "CZ",
+                "with_release_type": "4",  # 4 = digital
+                "release_date.gte": date_from,
+                "release_date.lte": date_to,
+                "sort_by": "popularity.desc",
+            },
         )
         resp.raise_for_status()
         return await self._parse_movies(resp.json().get("results", []))

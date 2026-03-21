@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { TMDBMovie, getTrending, getNowPlaying, getPopular } from "@/lib/api";
+import { TMDBMovie, getTrending, getNowPlaying, getPopular, getRecentlyDigital } from "@/lib/api";
 import DownloadPanel from "@/components/DownloadPanel";
 
 interface Section {
@@ -13,6 +13,7 @@ interface Section {
 }
 
 const SECTIONS: Section[] = [
+  { title: "Nedavno online", fetcher: getRecentlyDigital },
   { title: "Trending tento tyden", fetcher: getTrending },
   { title: "Prave v kinech", fetcher: getNowPlaying },
   { title: "Popularni", fetcher: getPopular },
