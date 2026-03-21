@@ -70,8 +70,8 @@ export default function FileTable({ files, loading, onDownloadStarted }: Props) 
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-zinc-800 text-zinc-400 text-left">
-            <th className="py-2 px-3 font-medium w-16">Zdroj</th>
             <th className="py-2 px-3 font-medium">Název</th>
+            <th className="py-2 px-3 font-medium w-16">Zdroj</th>
             <th className="py-2 px-3 font-medium w-20">Kvalita</th>
             <th className="py-2 px-3 font-medium w-16">Lang</th>
             <th className="py-2 px-3 font-medium w-20">Velikost</th>
@@ -89,6 +89,9 @@ export default function FileTable({ files, loading, onDownloadStarted }: Props) 
                 key={`${file.source}-${file.source_id}-${file.ident}`}
                 className="border-b border-zinc-800/50 hover:bg-zinc-900/50"
               >
+                <td className="py-2 px-3 text-zinc-200 max-w-md truncate">
+                  {file.name}
+                </td>
                 <td className="py-2 px-3">
                   {link ? (
                     <a href={link} target="_blank" rel="noopener noreferrer" title="Otevřít na zdroji">
@@ -97,9 +100,6 @@ export default function FileTable({ files, loading, onDownloadStarted }: Props) 
                   ) : (
                     <SourceBadge source={file.source} seeders={file.seeders} />
                   )}
-                </td>
-                <td className="py-2 px-3 text-zinc-200 max-w-md truncate">
-                  {file.name}
                 </td>
                 <td className="py-2 px-3">
                   <span className="inline-block rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono">
