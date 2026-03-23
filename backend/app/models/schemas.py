@@ -69,6 +69,10 @@ class DownloadRequest(BaseModel):
     magnet_url: str | None = None
     target_folder: str | None = None
     content_type: str = "movie"  # "movie" or "tv"
+    # Fields for automation tracking
+    tmdb_id: int | None = None
+    title: str | None = ""
+    year: int | None = 0
 
 
 # --- Source CRUD models ---
@@ -95,3 +99,17 @@ class SourceResponse(BaseModel):
     config: dict
     created_at: str
     updated_at: str
+
+# --- Automation & Integration models ---
+
+class Automation(BaseModel):
+    id: int
+    type: str
+    name: str
+    enabled: bool
+    config: dict
+
+
+class AutomationUpdate(BaseModel):
+    enabled: bool | None = None
+    config: dict | None = None

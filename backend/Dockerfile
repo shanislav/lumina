@@ -1,13 +1,16 @@
 FROM python:3.11-slim
-
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-WORKDIR /app
+# Install system dependencies for MediaInfo
+RUN apt-get update && apt-get install -y     libmediainfo0v5     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies first (cached layer)
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+WORKDIR /app
+COPY pyproject.toml uv.lock* ./
+RUN uv sync --no-dev --no-install-project
 
 COPY app/ app/
+RUN uv sync --no-dev
 
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENV PATH="/app/.venv/bin:$PATH"
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

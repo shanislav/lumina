@@ -194,11 +194,12 @@ async def score_results(
     system_prompt = _build_system_prompt(languages or ["cs"])
 
     lines: list[str] = []
-    for f in files:
+    # Use enumerate because ScorableFile model does not have an index attribute
+    for i, f in enumerate(files):
         prefix_map = {"webshare": "[WS]", "fastshare": "[FS]", "jackett": "[T]"}
         prefix = prefix_map.get(f.source, f"[{f.source[:2].upper()}]")
         extra = f" ({f.seeders} seeders)" if f.seeders is not None else ""
-        lines.append(f"{f.index}. {prefix} {f.name} ({f.size} bytes){extra}")
+        lines.append(f"{i}. {prefix} {f.name} ({f.size} bytes){extra}")
 
     file_list_text = "\n".join(lines)
     user_prompt = f'Movie title: "{movie_title}"\n\nFiles:\n{file_list_text}'
@@ -276,7 +277,8 @@ def _fallback_scoring(
         all_tags = {"cz", "czech", "český", "dabing"}
 
     results: list[ScoredFile] = []
-    for f in files:
+    # Use enumerate because ScorableFile model does not have an index attribute
+    for i, f in enumerate(files):
         name_lower = f.name.lower()
         ext = "." + name_lower.rsplit(".", 1)[-1] if "." in name_lower else ""
         is_video = ext in video_exts or f.source == "jackett"

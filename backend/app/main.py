@@ -4,13 +4,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
-from app.routers import search, download, sources, settings, duplicates
+from app.tasks import ensure_monitor_running
+from app.routers import search, download, sources, settings, duplicates, integrations
 from app.sources.registry import SourceRegistry
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    ensure_monitor_running()
     await SourceRegistry.get().reload()
     yield
     await SourceRegistry.get().close_all()
@@ -30,6 +32,7 @@ app.include_router(download.router)
 app.include_router(sources.router)
 app.include_router(settings.router)
 app.include_router(duplicates.router)
+app.include_router(integrations.router)
 
 
 @app.get("/api/health")

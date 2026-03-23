@@ -183,6 +183,9 @@ function HomeContent() {
           </div>
           {!resultsCollapsed && (
             <FileTable
+            tmdb_id={selectedMovie?.tmdb_id}
+            title={selectedMovie?.title}
+            year={parseInt(selectedMovie?.year || "0")}
               files={files}
               loading={filesLoading}
               onDownloadStarted={() => setResultsCollapsed(true)}

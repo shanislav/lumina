@@ -6,6 +6,9 @@ import { ScoredFile, startDownload, formatSize } from "@/lib/api";
 interface Props {
   files: ScoredFile[];
   loading: boolean;
+  tmdb_id?: number;
+  title?: string;
+  year?: number;
   onDownloadStarted?: () => void;
 }
 
@@ -42,13 +45,13 @@ function sourceLink(file: ScoredFile): string | null {
   return null;
 }
 
-export default function FileTable({ files, loading, onDownloadStarted }: Props) {
+export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, title, year }: Props) {
   const [downloading, setDownloading] = useState<Record<string, string>>({});
 
   async function handleDownload(file: ScoredFile) {
     setDownloading((prev) => ({ ...prev, [file.ident]: "starting" }));
     try {
-      const result = await startDownload(file);
+      const result = await startDownload(file, undefined, tmdb_id, title, year);
       const id = result.gid || result.hash || "ok";
       setDownloading((prev) => ({ ...prev, [file.ident]: id }));
       onDownloadStarted?.();

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import aiosqlite
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.db")
 
 DB_PATH = Path("data/lumina.db")
 
@@ -38,8 +38,29 @@ async def init_db() -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL DEFAULT ''
             );
+
+            CREATE TABLE IF NOT EXISTS automations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                config TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE TABLE IF NOT EXISTS download_tracker (
+                id TEXT PRIMARY KEY,
+                tmdb_id INTEGER,
+                title TEXT,
+                year INTEGER,
+                backend TEXT,
+                status TEXT,
+                target_dir TEXT,
+                processed INTEGER DEFAULT 0
+            );
             """
         )
+        await db.execute("INSERT OR IGNORE INTO automations (type, name, enabled) VALUES ('radarr', 'Radarr', 0)")
+        await db.execute("INSERT OR IGNORE INTO automations (type, name, enabled) VALUES ('renamer', 'Renamer (Media Info)', 0)")
         await db.commit()
 
         # Auto-migrate from .env if tables are empty
@@ -67,6 +88,16 @@ async def _migrate_sources_from_env(db: aiosqlite.Connection) -> None:
         await db.execute(
             "INSERT INTO sources (type, name, config) VALUES (?, ?, ?)",
             ("webshare", "WebShare", config),
+        )
+        migrated += 1
+
+    fs_user = os.getenv("FASTSHARE_USERNAME", "")
+    fs_pass = os.getenv("FASTSHARE_PASSWORD", "")
+    if fs_user and fs_pass:
+        config = json.dumps({"login": fs_user, "password": fs_pass})
+        await db.execute(
+            "INSERT INTO sources (type, name, config) VALUES (?, ?, ?)",
+            ("fastshare", "FastShare", config),
         )
         migrated += 1
 
@@ -130,9 +161,9 @@ async def get_all_settings() -> dict[str, str]:
     """Read all settings from DB."""
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT key, value FROM settings")
-        rows = await cursor.fetchall()
-        return {row["key"]: row["value"] for row in rows}
+        async with db.execute("SELECT key, value FROM settings") as cursor:
+            rows = await cursor.fetchall()
+            return {row["key"]: row["value"] for row in rows}
     finally:
         await db.close()
 
@@ -147,6 +178,48 @@ async def set_settings(updates: dict[str, str]) -> None:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+        await db.commit()
+    finally:
+        await db.close()
+
+# --- Automation & Tracking helpers ---
+
+async def get_automations():
+    """Fetch all configured automations."""
+    db = await get_db()
+    try:
+        async with db.execute("SELECT id, type, name, enabled, config FROM automations") as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "id": r[0], "type": r[1], "name": r[2],
+                    "enabled": bool(r[3]), "config": json.loads(r[4])
+                }
+                for r in rows
+            ]
+    finally:
+        await db.close()
+
+async def update_automation(type_name: str, enabled: bool = None, config: dict = None):
+    """Update automation status or configuration."""
+    db = await get_db()
+    try:
+        if enabled is not None:
+            await db.execute("UPDATE automations SET enabled = ? WHERE type = ?", (1 if enabled else 0, type_name))
+        if config is not None:
+            await db.execute("UPDATE automations SET config = ? WHERE type = ?", (json.dumps(config), type_name))
+        await db.commit()
+    finally:
+        await db.close()
+
+async def track_download(id: str, tmdb_id: int, title: str, year: int, backend: str, target_dir: str):
+    """Record a new download for background monitoring."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "INSERT OR REPLACE INTO download_tracker (id, tmdb_id, title, year, backend, status, target_dir) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (id, tmdb_id, title, year, backend, "active", target_dir)
+        )
         await db.commit()
     finally:
         await db.close()

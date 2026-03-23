@@ -93,6 +93,8 @@ class Aria2Client:
             "completed_length": int(result.get("completedLength", 0)),
             "download_speed": int(result.get("downloadSpeed", 0)),
             "filename": filename,
+            # Keep full files data to allow retrieving absolute path in post-processing
+            "files": result.get("files", []),
         }
 
     async def force_remove(self, gid: str) -> bool:

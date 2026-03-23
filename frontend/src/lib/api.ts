@@ -107,6 +107,9 @@ export async function searchFiles(query: string, language?: string): Promise<Sco
 export async function startDownload(
   file: ScoredFile,
   targetFolder?: string,
+  tmdb_id?: number,
+  title?: string,
+  year?: number,
   contentType: "movie" | "tv" = "movie",
 ): Promise<{
   gid?: string;
@@ -122,8 +125,11 @@ export async function startDownload(
       file_ident: file.ident,
       source: file.source,
       source_id: file.source_id,
-      magnet_url: file.magnet_url,
       target_folder: targetFolder,
+      tmdb_id: tmdb_id,
+      title: title,
+      year: year,
+      magnet_url: file.magnet_url,
       content_type: contentType,
     }),
   });
@@ -265,6 +271,36 @@ export async function getLanguages(): Promise<LanguageOption[]> {
   const res = await fetch(`${API_BASE}/api/settings/languages`);
   if (!res.ok) throw new Error(`Failed to load languages: ${res.status}`);
   return res.json();
+}
+
+// --- Integrations ---
+
+export interface Automation {
+  id: number;
+  type: "radarr" | "renamer";
+  name: string;
+  enabled: boolean;
+  config: Record<string, string>;
+}
+
+export async function getIntegrations(): Promise<Automation[]> {
+  const res = await fetch(`${API_BASE}/api/integrations`);
+  if (!res.ok) throw new Error(`Failed to load integrations: ${res.status}`);
+  return res.json();
+}
+
+export async function getIntegrationOptions(type: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/integrations/${type}/options`);
+  return res.json();
+}
+
+export async function updateIntegration(type: string, data: { enabled?: boolean; config?: Record<string, string> }): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/integrations/${type}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Failed to update integration: ${res.status}`);
 }
 
 // --- Duplicates ---

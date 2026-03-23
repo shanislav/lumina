@@ -50,4 +50,10 @@ async def get_effective_settings() -> dict[str, str]:
         "qbittorrent_password": db_settings.get("qbittorrent_password") or env.qbittorrent_password,
         "min_relevance_score": db_settings.get("min_relevance_score") or "70",
         "languages": db_settings.get("languages") or "cs",
+        "radarr_api_key": db_settings.get("radarr_api_key") or "",
+        "radarr_url": db_settings.get("radarr_url") or "",
+        "radarr_root_folder": db_settings.get("radarr_root_folder") or "/data/movies",
+        "radarr_profile_id": db_settings.get("radarr_profile_id") or "1",
+        "radarr_blackhole_path": db_settings.get("radarr_blackhole_path") or "/downloads/radarr_inbox",
+        "radarr_auto_add": db_settings.get("radarr_auto_add") or "false",
     }
