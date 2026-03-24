@@ -56,6 +56,7 @@ async def run_post_processing(download_id: str, tmdb_id: int, title: str, year: 
         
         try:
             shutil.move(current_path, new_path)
+            os.chmod(new_path, 0o664)
             current_path = str(new_path)
         except Exception as e:
             logger.error("Renaming failed for %s: %s", title, e)
@@ -74,6 +75,8 @@ async def run_post_processing(download_id: str, tmdb_id: int, title: str, year: 
                 if cfg.get("blackhole_path"):
                     dest = Path(cfg["blackhole_path"]) / Path(current_path).name
                     dest.parent.mkdir(parents=True, exist_ok=True)
+                    try: os.chmod(dest.parent, 0o775)
+                    except: pass
                     shutil.move(current_path, dest)
                     os.chmod(dest, 0o664)
                     await radarr.trigger_blackhole_scan(cfg["blackhole_path"])
@@ -85,7 +88,7 @@ async def run_post_processing(download_id: str, tmdb_id: int, title: str, year: 
 async def _monitor_loop():
     """Background loop that runs as long as there are unprocessed downloads."""
     global _monitor_running
-    logger.info("Background monitor started")
+    logger.info("Background monitor started (On-demand)")
     
     while True:
         try:
@@ -103,25 +106,36 @@ async def _monitor_loop():
 
                 for d in tracked:
                     did, tmdb_id, title, year, backend = d["id"], d["tmdb_id"], d["title"], d["year"], d["backend"]
-                    completed_path = None
                     
-                    if backend == "aria2":
-                        aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
-                        try:
-                            s = await aria2.get_status(did)
-                            if s.get("status") == "complete":
-                                files = s.get("files", [])
-                                if files: completed_path = files[0]["path"]
-                        finally:
-                            await aria2.close()
-                    
-                    if completed_path and Path(completed_path).exists():
-                        logger.info("Download completed: %s. Starting post-processing.", title)
-                        await run_post_processing(did, tmdb_id, title, year, completed_path)
-                        cur.execute("UPDATE download_tracker SET processed = 1, status = 'complete' WHERE id = ?", (did,))
-                        conn.commit()
+                    try:
+                        completed_path = None
+                        if backend == "aria2":
+                            aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
+                            try:
+                                s = await aria2.get_status(did)
+                                if s.get("status") == "complete":
+                                    files = s.get("files", [])
+                                    if files: completed_path = files[0]["path"]
+                            except Exception as ae:
+                                if "not found" in str(ae):
+                                    logger.warning("GID %s not found in Aria2, marking as processed to unblock", did)
+                                    cur.execute("UPDATE download_tracker SET processed = 1, status = 'not_found' WHERE id = ?", (did,))
+                                    conn.commit()
+                                    continue
+                                raise ae
+                            finally:
+                                await aria2.close()
+                        
+                        if completed_path and Path(completed_path).exists():
+                            logger.info("Download completed: %s. Starting post-processing.", title)
+                            await run_post_processing(did, tmdb_id, title, year, completed_path)
+                            cur.execute("UPDATE download_tracker SET processed = 1, status = 'complete' WHERE id = ?", (did,))
+                            conn.commit()
+                    except Exception as sub_e:
+                        logger.error("Error processing %s: %s", title, sub_e)
+                        
         except Exception as e:
-            logger.error("Monitor loop error: %s", e)
+            logger.error("Global monitor loop error: %s", e)
             
         await asyncio.sleep(20)
 

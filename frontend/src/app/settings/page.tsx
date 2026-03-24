@@ -229,9 +229,56 @@ export default function SettingsPage() {
               </div>
             ))}
             <div className="flex justify-end">
-              <button onClick={handleSettingsSave} className="rounded bg-violet-600 px-6 py-2 text-sm font-bold text-white hover:bg-violet-500 transition-colors">Save All</button>
+              <button onClick={handleSettingsSave} disabled={!settingsDirty || settingsSaving} className="rounded bg-violet-600 px-6 py-2 text-sm font-bold text-white hover:bg-violet-500 transition-colors disabled:opacity-40">
+                {settingsSaving ? "Saving..." : "Save All"}
+              </button>
             </div>
           </div>
+        )}
+      </section>
+
+      {/* ========== LANGUAGES ========== */}
+      <section className="w-full space-y-4">
+        <h2 className="text-lg font-semibold text-zinc-200 border-b border-zinc-800 pb-2">
+          Preferred Languages
+        </h2>
+        <p className="text-sm text-zinc-500">
+          Select languages for dubbing detection and TMDB metadata. The search dropdown lets you filter by a specific language.
+        </p>
+        {allLanguages.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {allLanguages.map((lang) => {
+              const enabledCodes = (settings.languages || "cs").split(",").map((c) => c.trim()).filter(Boolean);
+              const isSelected = enabledCodes.includes(lang.code);
+              return (
+                <button
+                  key={lang.code}
+                  onClick={() => {
+                    let next: string[];
+                    if (isSelected) {
+                      next = enabledCodes.filter((c) => c !== lang.code);
+                    } else {
+                      next = [...enabledCodes, lang.code];
+                    }
+                    if (next.length === 0) next = ["cs"];
+                    handleSettingChange("languages", next.join(","));
+                  }}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                    isSelected
+                      ? "bg-violet-600 text-white"
+                      : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
+                  }`}
+                >
+                  {FLAG[lang.code] || ""} {lang.label} <span className="opacity-60">{lang.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {settingsDirty && (
+          <p className="text-xs text-amber-400">
+            Don&apos;t forget to save settings above.
+          </p>
         )}
       </section>
 
