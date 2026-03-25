@@ -81,7 +81,7 @@ const INTEGRATION_TYPES = [
   },
 ];
 
-const SETTINGS_SECTIONS = [
+const GENERAL_SECTIONS = [
   {
     title: "API klíče",
     icon: "🔑",
@@ -115,6 +115,9 @@ const SETTINGS_SECTIONS = [
       { key: "qbittorrent_password", label: "Password", type: "password" },
     ],
   },
+];
+
+const SEARCH_SECTIONS = [
   {
     title: "Vyhledávání",
     icon: "🔍",
@@ -122,6 +125,15 @@ const SETTINGS_SECTIONS = [
       { key: "min_relevance_score", label: "Minimální skóre relevance", type: "range", hint: "Soubory s nižším skóre se nezobrazí (0 = vše, 100 = pouze perfektní shoda)" },
     ],
   },
+];
+
+type SettingsTab = "obecne" | "vyhledavani" | "automatizace" | "zdroje";
+
+const TABS: { key: SettingsTab; label: string }[] = [
+  { key: "obecne", label: "Obecné" },
+  { key: "vyhledavani", label: "Vyhledávání" },
+  { key: "automatizace", label: "Automatizace" },
+  { key: "zdroje", label: "Zdroje" },
 ];
 
 export default function SettingsPage() {
@@ -139,6 +151,7 @@ export default function SettingsPage() {
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
+  const [activeTab, setActiveTab] = useState<SettingsTab>("obecne");
   const [allLanguages, setAllLanguages] = useState<LanguageOption[]>([]);
   const [browsingField, setBrowsingField] = useState<string | null>(null);
 
@@ -194,6 +207,53 @@ export default function SettingsPage() {
     }
   }
 
+  function renderSettingsSections(sections: typeof GENERAL_SECTIONS) {
+    return sections.map((section) => (
+      <div key={section.title} className="rounded-lg border border-zinc-800 bg-zinc-900 p-5 space-y-4">
+        <h3 className="text-sm font-medium text-zinc-300 flex items-center gap-2"><span>{section.icon}</span>{section.title}</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {section.fields.map((field) => (
+            <div key={field.key}>
+              <label className="block text-xs text-zinc-500 mb-1">{field.label}</label>
+              {field.type === "folder" ? (
+                <div className="flex gap-2">
+                  <input type="text" value={settings[field.key] || ""} onChange={(e) => handleSettingChange(field.key, e.target.value)}
+                    className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none" />
+                  <button type="button" onClick={() => setBrowsingField(field.key)} className="rounded bg-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-600 transition-colors">Procházet</button>
+                </div>
+              ) : field.type === "range" ? (
+                <div className="flex items-center gap-3">
+                  <input type="range" min="0" max="100" step="5" value={settings[field.key] || "0"}
+                    onChange={(e) => handleSettingChange(field.key, e.target.value)}
+                    className="flex-1 accent-violet-500" />
+                  <span className="text-sm text-zinc-300 w-8 text-right">{settings[field.key] || "0"}</span>
+                </div>
+              ) : (
+                <input type={field.type === "password" ? "password" : "text"} value={settings[field.key] || ""} onChange={(e) => handleSettingChange(field.key, e.target.value)}
+                  className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none" />
+              )}
+              {field.hint && <p className="text-[10px] text-zinc-600 mt-1">{field.hint}</p>}
+            </div>
+          ))}
+        </div>
+      </div>
+    ));
+  }
+
+  function renderSaveButton() {
+    return (
+      <div className="flex justify-end gap-3">
+        {settingsSaved && <span className="text-green-400 text-sm self-center">✓ Uloženo</span>}
+        <button onClick={handleSettingsSave} disabled={settingsSaving || !settingsDirty}
+          className={`rounded px-6 py-2 text-sm font-bold text-white transition-colors shadow-lg shadow-violet-900/20 ${
+            settingsDirty ? "bg-violet-600 hover:bg-violet-500" : "bg-zinc-700 cursor-not-allowed"
+          }`}>
+          {settingsSaving ? "Ukládám..." : "Uložit vše"}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <main className="flex flex-col items-center gap-8 px-4 py-12 max-w-4xl mx-auto">
       <div className="flex items-center gap-4 w-full">
@@ -201,91 +261,86 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold text-zinc-100">Nastavení</h1>
       </div>
 
-      <section className="w-full space-y-6">
-        <h2 className="text-lg font-semibold text-zinc-200 border-b border-zinc-800 pb-2">Obecná konfigurace</h2>
-        {settingsLoading ? <p className="text-zinc-500">Načítám...</p> : (
-          <div className="space-y-4">
-            {SETTINGS_SECTIONS.map((section) => (
-              <div key={section.title} className="rounded-lg border border-zinc-800 bg-zinc-900 p-5 space-y-4">
-                <h3 className="text-sm font-medium text-zinc-300 flex items-center gap-2"><span>{section.icon}</span>{section.title}</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {section.fields.map((field) => (
-                    <div key={field.key}>
-                      <label className="block text-xs text-zinc-500 mb-1">{field.label}</label>
-                      {field.type === "folder" ? (
-                        <div className="flex gap-2">
-                          <input type="text" value={settings[field.key] || ""} onChange={(e) => handleSettingChange(field.key, e.target.value)}
-                            className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none" />
-                          <button type="button" onClick={() => setBrowsingField(field.key)} className="rounded bg-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-600 transition-colors">Procházet</button>
-                        </div>
-                      ) : field.type === "range" ? (
-                        <div className="flex items-center gap-3">
-                          <input type="range" min="0" max="100" step="5" value={settings[field.key] || "0"}
-                            onChange={(e) => handleSettingChange(field.key, e.target.value)}
-                            className="flex-1 accent-violet-500" />
-                          <span className="text-sm text-zinc-300 w-8 text-right">{settings[field.key] || "0"}</span>
-                        </div>
-                      ) : (
-                        <input type={field.type === "password" ? "password" : "text"} value={settings[field.key] || ""} onChange={(e) => handleSettingChange(field.key, e.target.value)}
-                          className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none" />
-                      )}
-                      {field.hint && <p className="text-[10px] text-zinc-600 mt-1">{field.hint}</p>}
-                    </div>
-                  ))}
-                </div>
+      {/* Tabs */}
+      <div className="flex gap-1 bg-zinc-900 rounded-lg p-1 w-full border border-zinc-800">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setActiveTab(t.key)}
+            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+              activeTab === t.key
+                ? "bg-violet-600 text-white shadow"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* === Tab: Obecné === */}
+      {activeTab === "obecne" && (
+        <section className="w-full space-y-4">
+          {settingsLoading ? <p className="text-zinc-500">Načítám...</p> : (
+            <div className="space-y-4">
+              {renderSettingsSections(GENERAL_SECTIONS)}
+              {renderSaveButton()}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* === Tab: Vyhledávání === */}
+      {activeTab === "vyhledavani" && (
+        <section className="w-full space-y-4">
+          {settingsLoading ? <p className="text-zinc-500">Načítám...</p> : (
+            <div className="space-y-4">
+              {renderSettingsSections(SEARCH_SECTIONS)}
+
+              {/* Languages */}
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5 space-y-4">
+                <h3 className="text-sm font-medium text-zinc-300 flex items-center gap-2"><span>🌍</span>Preferované jazyky</h3>
+                <p className="text-[10px] text-zinc-600">Vyber jazyky pro detekci dabingu a TMDB metadata. Dropdown ve vyhledávání filtruje podle konkrétního jazyka.</p>
+                {allLanguages.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {allLanguages.map((lang) => {
+                      const enabledCodes = (settings.languages || "cs").split(",").map((c) => c.trim()).filter(Boolean);
+                      const isSelected = enabledCodes.includes(lang.code);
+                      return (
+                        <button
+                          key={lang.code}
+                          onClick={() => {
+                            let next: string[];
+                            if (isSelected) {
+                              next = enabledCodes.filter((c) => c !== lang.code);
+                            } else {
+                              next = [...enabledCodes, lang.code];
+                            }
+                            handleSettingChange("languages", next.join(","));
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                            isSelected
+                              ? "bg-violet-600/20 border-violet-500 text-violet-300"
+                              : "bg-zinc-800 border-zinc-700 text-zinc-500 hover:border-zinc-600"
+                          }`}
+                        >
+                          {FLAG[lang.code] || ""} {lang.label} <span className="opacity-60">{lang.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            ))}
-            {/* ========== LANGUAGES ========== */}
-            <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5 space-y-4">
-              <h3 className="text-sm font-medium text-zinc-300 flex items-center gap-2"><span>🌍</span>Preferované jazyky</h3>
-              <p className="text-[10px] text-zinc-600">Vyber jazyky pro detekci dabingu a TMDB metadata. Dropdown ve vyhledávání filtruje podle konkrétního jazyka.</p>
-              {allLanguages.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {allLanguages.map((lang) => {
-                    const enabledCodes = (settings.languages || "cs").split(",").map((c) => c.trim()).filter(Boolean);
-                    const isSelected = enabledCodes.includes(lang.code);
-                    return (
-                      <button
-                        key={lang.code}
-                        onClick={() => {
-                          let next: string[];
-                          if (isSelected) {
-                            next = enabledCodes.filter((c) => c !== lang.code);
-                          } else {
-                            next = [...enabledCodes, lang.code];
-                          }
-                          handleSettingChange("languages", next.join(","));
-                        }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                          isSelected
-                            ? "bg-violet-600/20 border-violet-500 text-violet-300"
-                            : "bg-zinc-800 border-zinc-700 text-zinc-500 hover:border-zinc-600"
-                        }`}
-                      >
-                        {FLAG[lang.code] || ""} {lang.label} <span className="opacity-60">{lang.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
 
-            <div className="flex justify-end gap-3">
-              {settingsSaved && <span className="text-green-400 text-sm self-center">✓ Uloženo</span>}
-              <button onClick={handleSettingsSave} disabled={settingsSaving || !settingsDirty}
-                className={`rounded px-6 py-2 text-sm font-bold text-white transition-colors shadow-lg shadow-violet-900/20 ${
-                  settingsDirty ? "bg-violet-600 hover:bg-violet-500" : "bg-zinc-700 cursor-not-allowed"
-                }`}>
-                {settingsSaving ? "Ukládám..." : "Uložit vše"}
-              </button>
+              {renderSaveButton()}
             </div>
-          </div>
-        )}
-      </section>
+          )}
+        </section>
+      )}
 
-      <section className="w-full space-y-4">
-        <h2 className="text-lg font-semibold text-zinc-200 border-b border-zinc-800 pb-2">Automatizace a integrace</h2>
-        <div className="w-full space-y-3">
+      {/* === Tab: Automatizace === */}
+      {activeTab === "automatizace" && (
+        <section className="w-full space-y-4">
           {integrations.map((int) => (
             <div key={int.type} className="flex items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3">
               <button onClick={async () => { await updateIntegration(int.type, { enabled: !int.enabled }); loadIntegrations(); }}
@@ -299,15 +354,16 @@ export default function SettingsPage() {
               <button onClick={() => setEditIntegrationType(int.type)} className="text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 px-3 py-1 rounded hover:bg-zinc-800 transition-colors">Upravit</button>
             </div>
           ))}
-        </div>
-      </section>
+          {integrations.length === 0 && <p className="text-zinc-500 text-sm">Žádné integrace</p>}
+        </section>
+      )}
 
-      <section className="w-full space-y-4">
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-          <h2 className="text-lg font-semibold text-zinc-200">Zdroje souborů</h2>
-          <button onClick={() => setShowAdd(true)} className="rounded bg-zinc-800 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-700 transition-colors">+ Přidat zdroj</button>
-        </div>
-        <div className="w-full space-y-3">
+      {/* === Tab: Zdroje === */}
+      {activeTab === "zdroje" && (
+        <section className="w-full space-y-4">
+          <div className="flex justify-end">
+            <button onClick={() => setShowAdd(true)} className="rounded bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 transition-colors">+ Přidat zdroj</button>
+          </div>
           {sources.map((source) => (
             <div key={source.id} className="flex items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3">
               <button onClick={async () => { await updateSource(source.id, { enabled: !source.enabled }); loadSources(); }}
@@ -320,15 +376,16 @@ export default function SettingsPage() {
               </div>
               <div className="flex items-center gap-3">
                 <button onClick={() => handleTest(source.id)} className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors">
-                  {testResults[source.id] === null ? "..." : testResults[source.id] === true ? "OK" : testResults[source.id] === false ? "Error" : "Test"}
+                  {testResults[source.id] === null ? "..." : testResults[source.id] === true ? "OK" : testResults[source.id] === false ? "Chyba" : "Test"}
                 </button>
                 <button onClick={() => setEditId(source.id)} className="text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 px-3 py-1 rounded hover:bg-zinc-800 transition-colors">Upravit</button>
                 <button onClick={async () => { if (confirm("Opravdu smazat tento zdroj?")) { await deleteSource(source.id); await loadSources(); } }} className="text-xs text-red-500 hover:text-red-400 transition-colors">Smazat</button>
               </div>
             </div>
           ))}
-        </div>
-      </section>
+          {sources.length === 0 && <p className="text-zinc-500 text-sm">Žádné zdroje — přidej WebShare, FastShare nebo Jackett</p>}
+        </section>
+      )}
 
       {showAdd && (
         <AddSourceModal
