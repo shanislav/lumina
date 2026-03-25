@@ -125,12 +125,12 @@ export default function DiscoverPage() {
               <h2 className="text-lg font-semibold text-zinc-200 mb-4">
                 {section.title}
               </h2>
-              <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-zinc-700">
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
                 {items.map((movie) => (
                   <button
                     key={movie.tmdb_id}
                     onClick={() => setSelectedMovie(movie)}
-                    className="group flex-shrink-0 w-36 rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-violet-500 transition-colors text-left"
+                    className="group rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-violet-500 transition-colors text-left"
                   >
                     <div className="aspect-[2/3] relative bg-zinc-800">
                       {movie.poster_url ? (
@@ -138,7 +138,7 @@ export default function DiscoverPage() {
                           src={movie.poster_url}
                           alt={movie.title}
                           fill
-                          sizes="144px"
+                          sizes="(max-width: 640px) 33vw, (max-width: 768px) 25vw, (max-width: 1024px) 20vw, 12.5vw"
                           className="object-cover group-hover:opacity-80 transition-opacity"
                         />
                       ) : (
