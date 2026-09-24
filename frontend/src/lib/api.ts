@@ -367,6 +367,28 @@ export async function getIntegrations(): Promise<Automation[]> {
   return res.json();
 }
 
+export interface PlexTestResult {
+  ok: boolean;
+  error?: string;
+  sections: { title: string; type: string; locations: string[] }[];
+  library_root?: string;
+  plex_path?: string | null;
+  section?: string | null;
+}
+
+export async function testPlex(url: string, token: string, path_map: string): Promise<PlexTestResult> {
+  try {
+    const res = await fetch(`${API_BASE}/api/plex/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, token, path_map }),
+    });
+    return await res.json();
+  } catch (e) {
+    return { ok: false, error: String(e), sections: [] };
+  }
+}
+
 export async function updateIntegration(type: string, data: { enabled?: boolean; config?: Record<string, string> }): Promise<void> {
   const res = await fetch(`${API_BASE}/api/integrations/${type}`, {
     method: "PUT",

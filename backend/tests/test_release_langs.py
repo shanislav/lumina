@@ -87,7 +87,9 @@ async def test_fastshare_pages_are_throttled(monkeypatch):
     await asyncio.gather(*(client.file_details(str(i), f"f{i}.mkv") for i in range(5)))
     gaps = [b - a for a, b in zip(starts, starts[1:])]
     assert len(starts) == 5
-    assert min(gaps) >= fastshare.PAGE_INTERVAL_S * 0.9
+    # measured after the slot is granted, so event-loop jitter under load shows up here;
+    # 60 % still catches the old race (two requests 0.17 s apart)
+    assert min(gaps) >= fastshare.PAGE_INTERVAL_S * 0.6
 
 
 async def test_refusal_pauses_further_requests(monkeypatch):

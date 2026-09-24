@@ -15,6 +15,8 @@ import {
   testSourceConfig,
   getIntegrations,
   updateIntegration,
+  testPlex,
+  type PlexTestResult,
   getAppSettings,
   updateAppSettings,
   getLanguages,
@@ -78,6 +80,17 @@ const INTEGRATION_TYPES = [
     icon: "📄",
     description: "Když je zapnuto, Lumina u každého spárovaného filmu hned zapíše aktuální movie.nfo (TMDB/IMDB ID, technické údaje, stav) a staré NFO ve složce smaže. Slouží i jako záloha databáze Luminy.",
     fields: [],
+  },
+  {
+    type: "plex",
+    label: "Plex (obnovení knihovny)",
+    icon: "🟧",
+    description: "Po importu, přejmenování nebo vrácení změny řekne Plexu, ať projde jen změněné složky filmů. Není potřeba, když má Plex zapnuté „Automaticky prohledat knihovnu při změnách“ a změny vidí.",
+    fields: [
+      { key: "url", label: "Plex URL", type: "text", placeholder: "http://plex:32400" },
+      { key: "token", label: "Plex token", type: "password", hint: "Plex Web → libovolný film → ⋯ → Získat informace → Zobrazit XML → hodnota X-Plex-Token v adrese" },
+      { key: "path_map", label: "Mapování cest (volitelné)", type: "text", placeholder: "/data/Video=/mnt/share/Video", hint: "Jen když Plex vidí knihovnu pod jinou cestou a automatika ji nenajde: cesta v Lumině=cesta v Plexu" },
+    ],
   },
 ];
 
@@ -518,6 +531,7 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
   const typeDef = INTEGRATION_TYPES.find((t) => t.type === type);
   const [config, setConfig] = useState(integration.config);
   const [browsingField, setBrowsingField] = useState<string | null>(null);
+  const [plexTest, setPlexTest] = useState<PlexTestResult | "loading" | null>(null);
 
   const DEFAULT_FORMAT = "{title} ({year}) [{res} {codec} {hdr}] [{langs}] {tmdb-{tmdb_id}}";
 
@@ -571,6 +585,25 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
                 {f.hint && <p className="text-[10px] text-zinc-600 mt-1">{f.hint}</p>}
               </div>
             ))}
+            {type === "plex" && (
+              <div className="rounded-lg bg-zinc-950 p-3 border border-zinc-800/50 space-y-2">
+                <button type="button" disabled={!config.url || !config.token || plexTest === "loading"}
+                  onClick={async () => { setPlexTest("loading"); setPlexTest(await testPlex(config.url, config.token, config.path_map || "")); }}
+                  className="rounded bg-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-600 disabled:opacity-40">
+                  {plexTest === "loading" ? "Zkouším…" : "Vyzkoušet spojení"}
+                </button>
+                {plexTest && plexTest !== "loading" && (plexTest.ok ? (
+                  <div className="text-xs space-y-1">
+                    {plexTest.section
+                      ? <p className="text-green-400">✓ Knihovna filmů <b>{plexTest.library_root}</b> = Plex „{plexTest.section}“ ({plexTest.plex_path})</p>
+                      : <p className="text-amber-400">Spojení funguje, ale knihovnu {plexTest.library_root || "(nenastavena)"} jsem v Plexu nenašel — nastav mapování cest.</p>}
+                    <ul className="text-zinc-500">
+                      {plexTest.sections.map((s) => <li key={s.title}>{s.type === "movie" ? "🎬" : "📺"} {s.title}: {s.locations.join(", ")}</li>)}
+                    </ul>
+                  </div>
+                ) : <p className="text-xs text-red-400">✗ {plexTest.error}</p>)}
+              </div>
+            )}
             {type === "renamer" && (
               <div className="mt-4 space-y-4">
                 <div className="rounded-lg bg-zinc-950 p-3 border border-zinc-800/50"><label className="text-[10px] uppercase font-bold text-zinc-600 block mb-2">Náhled (složka / soubor)</label><code className="text-xs text-violet-400 break-all">{getPreview()}</code></div>
