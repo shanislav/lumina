@@ -172,6 +172,7 @@ _REASONING_PARAMS = {
     "openai/gpt-oss": {"reasoning_effort": "low"},
     "qwen/": {"reasoning_format": "hidden"},
 }
+MAX_AI_FILES = 40
 _NON_VIDEO_EXTS = {".srt", ".sub", ".idx", ".ass", ".ssa", ".nfo", ".txt", ".jpg", ".jpeg", ".png", ".sfv", ".md5", ".url"}
 
 
@@ -214,14 +215,22 @@ async def score_results(
     if not files:
         return []
 
+    # Keep the AI request within the free-tier token budget: only the most promising files go
+    # to the model, the rest get the local name-based score.
+    overflow: list[ScorableFile] = []
+    if len(files) > MAX_AI_FILES:
+        files = sorted(files, key=lambda f: (-_title_match_score(movie_title, f.name), -f.size))
+        files, overflow = files[:MAX_AI_FILES], files[MAX_AI_FILES:]
+
     # Obvious non-movies are scored locally — no need to spend tokens on them.
     local = [f for f in files if _is_obviously_irrelevant(f)]
     files = [f for f in files if not _is_obviously_irrelevant(f)]
     local_scored = _fallback_scoring(local, languages, query=movie_title)
+    overflow_scored = _fallback_scoring(overflow, languages, query=movie_title)
     for s in local_scored:
         s.relevance_score = min(s.relevance_score, 10)
     if not files:
-        return local_scored
+        return local_scored + overflow_scored
 
     prefix_map = {"webshare": "[WS]", "fastshare": "[FS]", "jackett": "[T]"}
     lines = []
@@ -261,7 +270,7 @@ async def score_results(
         scored_data = _parse_scores(content)
     except (json.JSONDecodeError, ValueError, TypeError):
         logger.error("Groq returned invalid JSON: %s", content[:500])
-        return _fallback_scoring(files, languages, query=movie_title) + local_scored
+        return _fallback_scoring(files, languages, query=movie_title) + local_scored + overflow_scored
 
     results: list[ScoredFile] = []
     for idx, quality, dubbed, relevance in scored_data:
@@ -283,6 +292,7 @@ async def score_results(
             )
 
     results.extend(local_scored)
+    results.extend(overflow_scored)
     results.sort(key=lambda r: (-r.relevance_score, -r.size))
     return results
 

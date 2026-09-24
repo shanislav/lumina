@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import unicodedata
 
 from fastapi import APIRouter
 
@@ -128,6 +129,45 @@ def _build_alt_queries(query: str, original_title: str = "") -> list[str]:
     return alts
 
 
+# Direct-download sources also return archives, torrents, subtitles, disc images … — only
+# playable video files make sense for the library.
+DDL_VIDEO_EXTS = {"mkv", "mp4", "avi", "m4v", "ts", "m2ts", "wmv", "mov", "mpg", "mpeg", "webm", "divx", "ogm"}
+MAX_DDL_QUERIES = 3
+
+
+def _is_video_name(name: str) -> bool:
+    if "." not in name:
+        return True  # no extension → cannot tell, keep
+    return name.rsplit(".", 1)[-1].lower() in DDL_VIDEO_EXTS
+
+
+def _norm(text: str) -> str:
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", ascii_text)).strip()
+
+
+def _clean_title(text: str) -> str:
+    text = re.sub(r"\b(19|20)\d{2}\b", "", text)
+    text = re.sub(r"[^\w\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _ddl_queries(query: str, original_title: str = "", en_title: str = "") -> list[str]:
+    """Queries for WebShare/FastShare. Uploaders mostly use the short local title ("Podfukáři 3"),
+    sometimes the full one or the English one — one query alone misses most files."""
+    no_year = re.sub(r"\b(19|20)\d{2}\b", "", query).strip()
+    main = re.split(r"\s*[:–—]\s*|\s+-\s+", no_year)[0]
+    queries: list[str] = []
+    seen: set[str] = set()
+    for candidate in (main, no_year, en_title, original_title):
+        cleaned = _clean_title(candidate or "")
+        key = _norm(cleaned)
+        if len(key) >= 2 and key not in seen:
+            seen.add(key)
+            queries.append(cleaned)
+    return queries[:MAX_DDL_QUERIES] or [query]
+
+
 def _to_scorable(results: list[SearchResult]) -> list[ScorableFile]:
     """Convert unified SearchResults into ScorableFiles for the scorer."""
     return [
@@ -169,6 +209,7 @@ async def search_files(
     all_queries.extend(alt_queries)
 
     # Fetch English title from TMDB if we have tmdb_id (for non-EN content)
+    en_title = ""
     if tmdb_id:
         try:
             client = TMDBClient(cfg["tmdb_api_key"])
@@ -204,22 +245,16 @@ async def search_files(
             )
             return []
 
-    # DDL sources get cleaned query (no year, no punctuation — DDL search is fuzzy)
+    # DDL sources get a few cleaned variants (short local title, full local title, English title);
     # Jackett gets ALL query variants (EN title, stripped diacritics, etc.)
-    ddl_query = re.sub(r"[^\w\s]", " ", query)  # strip : ; ' etc.
-    ddl_query = re.sub(r"\b\d{4}\b", "", ddl_query)  # strip year
-    ddl_query = re.sub(r"\s+", " ", ddl_query).strip()
-    if not ddl_query:
-        ddl_query = query
+    ddl_queries = _ddl_queries(query, original_title or "", en_title)
+    logger.info("DDL queries: %s", ddl_queries)
 
     tasks = []
     for source in sources:
-        if source.source_type == SourceType.JACKETT:
-            for q in unique_queries:
-                tasks.append(_safe_search(source, q))
-        else:
-            # DDL: cleaned query (no year, no punctuation)
-            tasks.append(_safe_search(source, ddl_query))
+        queries = unique_queries if source.source_type == SourceType.JACKETT else ddl_queries
+        for q in queries:
+            tasks.append(_safe_search(source, q))
     logger.info(
         "Dispatching %d search tasks across %d sources: %s",
         len(tasks), len(sources), ", ".join(f"{s.source_type.value}:{s.source_id}" for s in sources),
@@ -229,11 +264,17 @@ async def search_files(
     # Merge and deduplicate by ident
     seen_idents: set[str] = set()
     all_results: list[SearchResult] = []
+    skipped = 0
     for batch in results_per_task:
         for r in batch:
+            if r.source_type != SourceType.JACKETT and not _is_video_name(r.name):
+                skipped += 1
+                continue
             if r.ident not in seen_idents:
                 seen_idents.add(r.ident)
                 all_results.append(r)
+    if skipped:
+        logger.info("Skipped %d non-video DDL results (archives, torrents, subtitles, ...)", skipped)
 
     logger.info(
         "Search '%s': %d unique results from %d sources × %d queries",
@@ -247,7 +288,9 @@ async def search_files(
 
     try:
         groq_model = cfg["groq_model"]
-        scored = await score_results(query, scorable, cfg["groq_api_key"], languages=languages, model=groq_model)
+        # Give the model every name of the movie, so English-named files are not rated as unrelated.
+        ai_title = query if not en_title or _norm(en_title) in _norm(query) else f"{query} (also known as: {en_title})"
+        scored = await score_results(ai_title, scorable, cfg["groq_api_key"], languages=languages, model=groq_model)
     except Exception as e:
         logger.warning("AI scoring failed, using fallback: %s", e)
         scored = _fallback_scoring(scorable, languages=languages, query=query)
