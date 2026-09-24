@@ -1,4 +1,4 @@
-from app.modules.search.router import _ddl_queries, _is_video_name
+from app.core.offers.search import ddl_queries as _ddl_queries, is_video_name as _is_video_name
 
 
 def test_ddl_queries_short_full_and_english_title():
@@ -37,7 +37,7 @@ def test_fastshare_names_are_unescaped(monkeypatch):
 
 def test_year_guard():
     from app.core.film_match import years_mismatch as _years_mismatch
-    from app.modules.search.evaluate import year_of
+    from app.core.offers.evaluate import year_of
 
     assert year_of("Cosy Dens 1999") == 1999
     assert _years_mismatch("Den co den 2018 BluRay 1080p x264CZ EN DTS.mkv", 1999)

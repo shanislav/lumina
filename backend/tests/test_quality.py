@@ -8,7 +8,7 @@ import pytest
 
 from app.core.film_match import judge
 from app.core.quality import Prefs, facts_from_media, facts_from_name, score
-from app.modules.search.evaluate import MovieContext, evaluate, recommended_key
+from app.core.offers.evaluate import MovieContext, evaluate, recommended_key
 
 DATA = json.loads((Path(__file__).parent / "fixtures_search_real.json").read_text(encoding="utf-8"))
 CTX = {

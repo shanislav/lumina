@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from app.config import movies_library_dir
 from app.core import naming, quality
 from app.core.quality import prefs_from_settings
-from app.modules.library import importer, organize
+from app.modules.library import importer, organize, upgrades
 from app.modules.library.notify import emit_movie_updated
 
 logger = logging.getLogger(__name__)
@@ -420,3 +420,26 @@ async def undo_operations(batch_id: str):
         return {"undone": undone}
     finally:
         await db.close()
+
+
+# ─── BETTER VERSIONS (background) ───
+
+class UpgradeCheckRequest(BaseModel):
+    tmdb_ids: list[int]
+
+
+@router.post("/upgrades/check")
+async def check_upgrades(body: UpgradeCheckRequest):
+    """Look for better versions of these movies in the background (one by one, politely)."""
+    return upgrades.enqueue(body.tmdb_ids)
+
+
+@router.get("/upgrades/status")
+async def upgrades_status():
+    return upgrades.status()
+
+
+@router.get("/upgrades")
+async def upgrade_results():
+    """Last check per movie: {tmdb_id: {status better|none|error, upgrades, best, checked_at, ...}}."""
+    return await upgrades.results()

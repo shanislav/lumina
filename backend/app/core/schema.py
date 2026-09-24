@@ -33,7 +33,11 @@ CREATE TABLE IF NOT EXISTS automations (
 );
 """
 
-CORE = Module(name="core", title="Core", order=0, required=True, migrations=[CORE_V1])
+# v2: cache of source file details — used by app/core/offers (was created by the search module,
+# hence IF NOT EXISTS; the search module keeps its copy of the migration in its history)
+from app.core.offers.details import SOURCE_FILE_DETAILS  # noqa: E402
+
+CORE = Module(name="core", title="Core", order=0, required=True, migrations=[CORE_V1, SOURCE_FILE_DETAILS])
 
 
 def seed_automation(type_name: str, name: str) -> str:
