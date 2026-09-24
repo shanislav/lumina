@@ -237,7 +237,7 @@ class TMDBClient:
         """Movie details needed for matching: runtime, original language and titles in all languages."""
         resp = await self._http.get(
             f"{API_BASE}/movie/{tmdb_id}",
-            params={"api_key": self._api_key, "language": language, "append_to_response": "translations"},
+            params={"api_key": self._api_key, "language": language, "append_to_response": "translations,alternative_titles"},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -254,6 +254,13 @@ class TMDBClient:
                 titles_by_lang[lang] = title
         titles = {data.get("title", ""), data.get("original_title", "")}
         titles.update(t for lang, t in titles_by_lang.items() if lang in ("cs", "sk", "en"))
+        # Alternative titles from the countries whose release names we meet ("Dune: Part One"
+        # for "Dune" 2021 — the subtitle came later, uploaders use it).
+        alternative = [
+            (a.get("title") or "").strip()
+            for a in (data.get("alternative_titles") or {}).get("titles", [])
+            if a.get("iso_3166_1") in ("US", "GB", "CZ", "SK")
+        ]
         return {
             "tmdb_id": tmdb_id,
             "title": data.get("title", ""),
@@ -265,6 +272,7 @@ class TMDBClient:
             "overview": data.get("overview", ""),
             "poster_url": f"{IMG_BASE}{data['poster_path']}" if data.get("poster_path") else None,
             "titles": sorted(t for t in titles if t),
+            "alternative_titles": sorted({t for t in alternative if t} - titles),
             "titles_by_lang": titles_by_lang,
         }
 

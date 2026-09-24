@@ -162,8 +162,9 @@ def _build_system_prompt(languages: list[str]) -> str:
         '- quality: "2160p"|"1080p"|"720p"|"SD"|"unknown"\n'
         "- relevance 0-100 answers ONLY \"is this file the full movie?\" — NOT its quality or size: "
         "any copy of the right film scores 80-100 even if small, old or low resolution (quality is "
-        "filtered separately). Other films, sequels/prequels, TV episodes, samples, extras, soundtracks, "
-        "subtitles 0-20. Unsure whether it is the same film 40-60.\n"
+        "filtered separately). Another part of the same series (\"Part Two\" when the film is Part One, "
+        "\"2\", a remake with another year), TV series or episodes of the same universe, samples, extras, "
+        "soundtracks, subtitles 0-20. Unsure whether it is the same film 40-60.\n"
         "No explanation."
     )
 

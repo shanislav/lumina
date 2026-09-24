@@ -67,7 +67,13 @@ def test_samotari_upscaled_4k_below_real_1080p():
     ("Duna - Dune (2021).mkv", "yes"),
     ("Dune.Part.One.2021.Hybrid.2160p.UHD.BluRay.REMUX.DV.mkv", "yes"),
     ("Dune Part Two 2024 2160p.mkv", "no"),            # other year
-    ("Dune.Part.Two.mkv", "unsure"),                   # → AI
+    ("Dune.Part.Two.mkv", "no"),                       # other part
+    ("Dune - Part Two(2160p).mp4", "no"),
+    ("Children of Dune E02.mkv", "no"),                # mini-series episode
+    ("dune_part_one.mkv", "yes"),
+    ("Duna 1 - Dune - Part One (2021).mkv", "yes"),
+    ("Duna Cast druha.mkv", "no"),
+    ("Dune Directors Cut.mkv", "unsure"),              # → AI
     ("Pelíšky.avi", "no"),                             # other name
     ("Duna Proroctví - Dune Prophecy S01E05 CZ DABING.mkv", "no"),   # TV episode
     ("Dune 1x03.mkv", "no"),

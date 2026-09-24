@@ -18,7 +18,17 @@ from app.core.release_name import parse_name
 
 STOPWORDS = {"the", "a", "an", "of", "and", "a", "i", "la", "le", "les", "der", "die", "das", "el", "il"}
 _YEAR = re.compile(r"(?<!\d)(19[0-9]{2}|20[0-9]{2})(?!\d)")
-_EPISODE = re.compile(r"(?<![a-z0-9])s\d{1,2}[ ._-]?e\d{1,3}(?![0-9])|(?<![a-z0-9])\d{1,2}x\d{2}(?![0-9])", re.IGNORECASE)
+_EPISODE = re.compile(
+    r"(?<![a-z0-9])s\d{1,2}[ ._-]?e\d{1,3}(?![0-9])"   # S01E05
+    r"|(?<![a-z0-9])\d{1,2}x\d{2}(?![0-9])"             # 1x05
+    r"|(?<![a-z0-9])e(p)?\d{2,3}(?![0-9a-z])",           # E02, Ep02 (mini-series parts)
+    re.IGNORECASE,
+)
+# Words that make a name another part of a series when the film's own names do not have them.
+SEQUEL_MARKERS = {"2", "3", "4", "5", "6", "ii", "iii", "iv", "two", "three", "four", "five",
+                  "druha", "druhy", "treti", "ctvrta", "ctvrty", "second", "third"}
+# Extra words that only say "the first part" ("Duna 1 - Dune Part One") — still the film.
+FIRST_PART = {"1", "one", "i", "prvni", "first", "part", "cast", "dil"}
 LENGTH_TOLERANCE = 0.06
 LENGTH_MIN_DIFF_MIN = 8
 
@@ -74,10 +84,15 @@ def judge(name: str, titles: list[str], year: int | None = None,
     extra = file_words - all_title_words
     if not file_words & all_title_words:
         return Verdict("no", ["jiný název"])
+    other_part = extra & SEQUEL_MARKERS
+    if other_part:
+        return Verdict("no", [f"jiný díl ({' '.join(sorted(other_part))})"])
     if length:
         return Verdict("length", [length])
     if covered and not extra:
         return Verdict("yes", ["název sedí"])
+    if covered and extra <= FIRST_PART:
+        return Verdict("yes", ["název sedí (1. díl)"])
     if covered:
         return Verdict("unsure", [f"navíc: {' '.join(sorted(extra))}"])
     return Verdict("unsure", ["název sedí jen částečně"])

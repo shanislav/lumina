@@ -245,7 +245,8 @@ async def search_files(
                 ctx.runtime = full.get("runtime") or 0
                 ctx.year = full.get("year") or ctx.year
                 ctx.titles = [full.get("title", ""), full.get("original_title", ""),
-                              *(by_lang.get(l, "") for l in ("cs", "sk", "en"))]
+                              *(by_lang.get(l, "") for l in ("cs", "sk", "en")),
+                              *full.get("alternative_titles", [])]
             else:
                 en_title = await client.get_english_title(tmdb_id, media_type or "movie")
         except Exception as e:
@@ -343,7 +344,8 @@ async def search_files(
                                  source_id=row["source_id"], ident=row["ident"], seeders=row["seeders"])
                     for i, row in enumerate(unclear)]
         try:
-            scored = await score_results(" / ".join(ctx.titles), scorable, cfg["groq_api_key"],
+            ai_names = " / ".join(ctx.titles) + (f" ({ctx.year})" if ctx.year else "")
+            scored = await score_results(ai_names, scorable, cfg["groq_api_key"],
                                          languages=list(prefs.local_langs), model=cfg["groq_model"])
             by_ident = {x.ident: x.relevance_score for x in scored}
             min_score = int(cfg.get("min_relevance_score", "70"))
