@@ -41,6 +41,7 @@ async def get_effective_settings() -> dict[str, str]:
     return {
         "tmdb_api_key": db_settings.get("tmdb_api_key") or env.tmdb_api_key,
         "groq_api_key": db_settings.get("groq_api_key") or env.groq_api_key,
+        "groq_model": db_settings.get("groq_model") or "llama-3.3-70b-versatile",
         "aria2_rpc_url": db_settings.get("aria2_rpc_url") or env.aria2_rpc_url,
         "aria2_rpc_secret": db_settings.get("aria2_rpc_secret") or env.aria2_rpc_secret,
         "plex_media_dir": db_settings.get("plex_media_dir") or env.plex_media_dir,
