@@ -10,7 +10,7 @@ import aiosqlite
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from app.config import get_effective_settings
+from app.config import get_effective_settings, movies_library_dir
 from app.db import DB_PATH, get_db
 
 logger = logging.getLogger(__name__)
@@ -140,9 +140,9 @@ async def _ensure_table() -> None:
 
 @router.post("/scan")
 async def scan_for_duplicates() -> dict:
-    """Scan plex_media_dir for video files and detect duplicates."""
+    """Scan the movie library folder for video files and detect duplicates."""
     cfg = await get_effective_settings()
-    media_dir = cfg["plex_media_dir"]
+    media_dir = movies_library_dir(cfg)
 
     if not os.path.isdir(media_dir):
         raise HTTPException(400, f"Media directory not found: {media_dir}")
@@ -218,7 +218,7 @@ async def ai_scan_for_duplicates() -> dict:
     await _ensure_table()
 
     # First do a normal scan to refresh file list
-    media_dir = cfg["plex_media_dir"]
+    media_dir = movies_library_dir(cfg)
     if not os.path.isdir(media_dir):
         raise HTTPException(400, f"Media directory not found: {media_dir}")
 

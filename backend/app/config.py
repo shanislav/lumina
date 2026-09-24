@@ -46,6 +46,8 @@ async def get_effective_settings() -> dict[str, str]:
         "aria2_rpc_secret": db_settings.get("aria2_rpc_secret") or env.aria2_rpc_secret,
         "plex_media_dir": db_settings.get("plex_media_dir") or env.plex_media_dir,
         "tv_media_dir": db_settings.get("tv_media_dir") or env.tv_media_dir,
+        "movies_library_dir": db_settings.get("movies_library_dir") or "",
+        "tv_library_dir": db_settings.get("tv_library_dir") or "",
         "qbittorrent_url": db_settings.get("qbittorrent_url") or env.qbittorrent_url,
         "qbittorrent_username": db_settings.get("qbittorrent_username") or env.qbittorrent_username,
         "qbittorrent_password": db_settings.get("qbittorrent_password") or env.qbittorrent_password,
@@ -58,3 +60,13 @@ async def get_effective_settings() -> dict[str, str]:
         "radarr_blackhole_path": db_settings.get("radarr_blackhole_path") or "/downloads/radarr_inbox",
         "radarr_auto_add": db_settings.get("radarr_auto_add") or "false",
     }
+
+
+def movies_library_dir(cfg: dict[str, str]) -> str:
+    """Folder with the movie library. Falls back to the movie download folder."""
+    return cfg.get("movies_library_dir") or cfg.get("plex_media_dir", "")
+
+
+def tv_library_dir(cfg: dict[str, str]) -> str:
+    """Folder with the TV library. Falls back to the TV download folder."""
+    return cfg.get("tv_library_dir") or cfg.get("tv_media_dir", "")
