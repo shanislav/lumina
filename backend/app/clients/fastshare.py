@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from app.core.mediainfo import normalize_language
+from app.core.throttle import Throttle
 
 logger = logging.getLogger(__name__)
 
@@ -248,21 +249,19 @@ class FastShareClient:
     async def file_details(self, file_id: str, name: str) -> dict | None:
         """Technical info from the public file page (the KODI API has no detail call).
 
-        Polite on purpose: at most PAGE_CONCURRENCY pages at once with a pause between
-        requests, no login cookie, and callers cache the result — a file is read once.
+        Polite on purpose (PAGE_THROTTLE): few pages at once with a pause between them,
+        no login cookie, a cool-down when FastShare refuses, and callers cache the
+        result — a file is read once.
         """
+        if PAGE_THROTTLE.cooling_down:
+            return None
         url = f"https://fastshare.cloud/{file_id}/{page_slug(name)}"
-        async with _page_limit:
-            global _last_page_at
-            # Starts are scheduled one at a time, so two waiting requests cannot both
-            # read the same "last start" and fire together.
-            async with _page_schedule:
-                wait = _last_page_at + PAGE_INTERVAL_S - asyncio.get_running_loop().time()
-                if wait > 0:
-                    await asyncio.sleep(wait)
-                _last_page_at = asyncio.get_running_loop().time()
+        async with PAGE_THROTTLE.slot():
             async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": UA}) as client:
                 resp = await client.get(url)
+        if resp.status_code in (403, 429):
+            PAGE_THROTTLE.trip()
+            return None
         if resp.status_code != 200:
             return None
         return parse_file_page(resp.text)
@@ -271,11 +270,8 @@ class FastShareClient:
         await self._http.aclose()
 
 
-PAGE_CONCURRENCY = 2
 PAGE_INTERVAL_S = 0.4
-_page_limit = asyncio.Semaphore(PAGE_CONCURRENCY)
-_page_schedule = asyncio.Lock()
-_last_page_at = 0.0
+PAGE_THROTTLE = Throttle("FastShare pages", concurrency=2, interval=PAGE_INTERVAL_S, cooldown=600)
 
 
 def page_slug(name: str) -> str:

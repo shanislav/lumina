@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 CACHE_DAYS = 90
 MAX_FILES_PER_REQUEST = 20
-# Parallel detail requests per source (FastShare additionally throttles inside its client).
-PER_SOURCE_CONCURRENCY = 4
+# Parallel detail requests per source — the clients throttle further (app/core/throttle.py).
+PER_SOURCE_CONCURRENCY = 2
 
 SOURCE_FILE_DETAILS = """
 CREATE TABLE IF NOT EXISTS source_file_details (

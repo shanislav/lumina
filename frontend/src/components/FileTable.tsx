@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ScoredFile, startDownload, formatSize, OwnedVersion, LibraryAction, versionLabel, FileDetails, getFileDetails } from "@/lib/api";
 
 interface Props {
@@ -57,17 +57,60 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
   // Real tracks from the sources, loaded for the top rows only (each file is asked once, then cached server-side).
   const [details, setDetails] = useState<Record<string, FileDetails | null>>({});
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+
+  useEffect(() => setFilters(loadFilters()), []);
+  function updateFilters(patch: Partial<Filters>) {
+    const next = { ...filters, ...patch };
+    setFilters(next);
+    try { localStorage.setItem(FILTERS_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+  }
+
+  // Details are asked in small batches only for rows that need them (the server caches them per file
+  // and throttles WebShare/FastShare), never for all results at once.
+  async function loadDetails(rows: ScoredFile[]) {
+    const batch = rows.filter((f) => DETAIL_SOURCES.has(f.source) && !(keyOf(f) in details)).slice(0, DETAILS_ROWS);
+    if (!batch.length) return;
+    setDetailsLoading(true);
+    try {
+      const d = await getFileDetails(batch.map((f) => ({ source_id: f.source_id, ident: f.ident, name: f.name })));
+      setDetails((prev) => ({ ...prev, ...d }));
+    } finally {
+      setDetailsLoading(false);
+    }
+  }
 
   useEffect(() => {
-    const top = files.filter((f) => f.source === "webshare" || f.source === "fastshare").slice(0, DETAILS_ROWS);
-    if (!top.length) return;
-    let cancelled = false;
-    setDetailsLoading(true);
-    getFileDetails(top.map((f) => ({ source_id: f.source_id, ident: f.ident, name: f.name })))
-      .then((d) => { if (!cancelled) setDetails(d); })
-      .finally(() => { if (!cancelled) setDetailsLoading(false); });
-    return () => { cancelled = true; };
+    setDetails({});
+    loadDetails(files);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files]);
+
+  const { view, hiddenUnverified } = useMemo(() => {
+    const facts = (f: ScoredFile) => rowFacts(f, details[keyOf(f)]);
+    const pass = (f: ScoredFile) => {
+      const x = facts(f);
+      if (filters.sources.length && !filters.sources.includes(f.source)) return false;
+      if (filters.qualities.length && !filters.qualities.includes(x.quality)) return false;
+      if (filters.audio === "local" && !x.localAudio) return false;
+      if (filters.audio === "local_or_subs" && !x.localAudio && !x.localSubs) return false;
+      return true;
+    };
+    const shown = files.filter(pass);
+    // hidden only because we do not know their languages yet → worth verifying
+    const hidden = files.filter((f) => !pass(f) && !facts(f).verified && DETAIL_SOURCES.has(f.source));
+    const sorted = [...shown].sort((a, b) => {
+      const fa = facts(a), fb = facts(b);
+      if (filters.sort === "size") return b.size - a.size;
+      if (filters.sort === "quality") return (QUALITY_ORDER[fb.quality] ?? 0) - (QUALITY_ORDER[fa.quality] ?? 0) || b.size - a.size;
+      // recommended: verified CZ/SK audio first, then CZ/SK from the name, then AI relevance
+      const rank = (x: ReturnType<typeof facts>) => (x.localAudio ? (x.verified ? 2 : 1) : 0);
+      return rank(fb) - rank(fa) || b.relevance_score - a.relevance_score || b.size - a.size;
+    });
+    return { view: sorted, hiddenUnverified: hidden };
+  }, [files, details, filters]);
+
+  const unverifiedInView = view.filter((f) => DETAIL_SOURCES.has(f.source) && !(keyOf(f) in details));
 
   function handleDownload(file: ScoredFile) {
     // Movie already in the library → ask: another version, or replace one?
@@ -137,6 +180,16 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
           </div>
         </div>
       )}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-3 text-xs">
+        <FilterGroup label="Zvuk" value={filters.audio} onChange={(v) => updateFilters({ audio: v as AudioFilter })}
+          options={[["all", "Vše"], ["local", "CZ/SK zvuk"], ["local_or_subs", "CZ/SK zvuk nebo titulky"]]} />
+        <MultiGroup label="Kvalita" values={filters.qualities} onChange={(v) => updateFilters({ qualities: v })}
+          options={[["2160p", "4K"], ["1080p", "1080p"], ["720p", "720p"], ["SD", "SD"]]} />
+        <MultiGroup label="Zdroj" values={filters.sources} onChange={(v) => updateFilters({ sources: v })}
+          options={[["webshare", "WS"], ["fastshare", "FS"], ["jackett", "Torrent"]]} />
+        <FilterGroup label="Řadit" value={filters.sort} onChange={(v) => updateFilters({ sort: v as SortMode })}
+          options={[["recommended", "Doporučené"], ["quality", "Kvalita"], ["size", "Velikost"]]} />
+      </div>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-zinc-800 text-zinc-400 text-left">
@@ -152,7 +205,7 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
           </tr>
         </thead>
         <tbody>
-          {files.map((file) => {
+          {view.map((file) => {
             const dlState = downloading[file.ident];
             const link = sourceLink(file);
 
@@ -225,6 +278,21 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
           })}
         </tbody>
       </table>
+      <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-zinc-500">
+        <span>Zobrazeno {view.length} z {files.length}</span>
+        {hiddenUnverified.length > 0 && (
+          <span>· {hiddenUnverified.length} skrytých zatím neověřených (jazyk jen podle názvu)</span>
+        )}
+        {(unverifiedInView.length > 0 || hiddenUnverified.length > 0) && (
+          <button
+            onClick={() => loadDetails([...unverifiedInView, ...hiddenUnverified])}
+            disabled={detailsLoading}
+            className="rounded border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+          >
+            {detailsLoading ? "Ověřuji…" : `Ověřit další (${Math.min(DETAILS_ROWS, unverifiedInView.length + hiddenUnverified.length)})`}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -274,6 +342,86 @@ function LanguageCell({ file, details }: { file: ScoredFile; details?: FileDetai
           tit: {subs.map((l) => <Lang key={`s${l}`} code={l} verified={subsVerified} sub />)}
         </span>
       )}
+    </div>
+  );
+}
+
+// ── filters ──
+
+type AudioFilter = "all" | "local" | "local_or_subs";
+type SortMode = "recommended" | "quality" | "size";
+interface Filters {
+  audio: AudioFilter;
+  qualities: string[]; // empty = all
+  sources: string[];   // empty = all
+  sort: SortMode;
+}
+const DEFAULT_FILTERS: Filters = { audio: "all", qualities: [], sources: [], sort: "recommended" };
+const FILTERS_KEY = "lumina.fileFilters";
+const DETAIL_SOURCES = new Set(["webshare", "fastshare"]);
+const QUALITY_ORDER: Record<string, number> = { "2160p": 4, "1080p": 3, "720p": 2, SD: 1 };
+
+function loadFilters(): Filters {
+  try {
+    return { ...DEFAULT_FILTERS, ...JSON.parse(localStorage.getItem(FILTERS_KEY) || "{}") };
+  } catch {
+    return DEFAULT_FILTERS;
+  }
+}
+
+function keyOf(f: ScoredFile): string {
+  return `${f.source_id}:${f.ident}`;
+}
+
+function normalizeQuality(q: string): string {
+  const v = (q || "").toLowerCase();
+  if (v.includes("2160") || v.includes("4k") || v.includes("uhd")) return "2160p";
+  if (v.includes("1080")) return "1080p";
+  if (v.includes("720")) return "720p";
+  if (v.includes("576") || v.includes("480") || v === "sd") return "SD";
+  return "";
+}
+
+/** What we know about a row: verified from the source when loaded, otherwise from the name. */
+function rowFacts(f: ScoredFile, d?: FileDetails | null) {
+  const verified = !!d && d.audio.some((a) => a.lang);
+  const audio = verified ? d!.audio.map((a) => a.lang) : f.audio_langs ?? [];
+  const subs = d && d.subtitles.length ? d.subtitles : f.subtitle_langs ?? [];
+  return {
+    verified,
+    quality: resolutionLabel(d) || normalizeQuality(f.quality),
+    localAudio: audio.some((l) => LOCAL.has(l)),
+    localSubs: subs.some((l) => LOCAL.has(l)),
+  };
+}
+
+function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick}
+      className={`px-2 py-0.5 rounded-full border transition-colors ${active ? "border-violet-500 bg-violet-600/20 text-violet-200" : "border-zinc-800 text-zinc-400 hover:text-zinc-200"}`}>
+      {children}
+    </button>
+  );
+}
+
+function FilterGroup({ label, value, options, onChange }: { label: string; value: string; options: [string, string][]; onChange: (v: string) => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-zinc-500 mr-1">{label}:</span>
+      {options.map(([v, l]) => <Chip key={v} active={value === v} onClick={() => onChange(v)}>{l}</Chip>)}
+    </div>
+  );
+}
+
+function MultiGroup({ label, values, options, onChange }: { label: string; values: string[]; options: [string, string][]; onChange: (v: string[]) => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-zinc-500 mr-1">{label}:</span>
+      <Chip active={values.length === 0} onClick={() => onChange([])}>Vše</Chip>
+      {options.map(([v, l]) => (
+        <Chip key={v} active={values.includes(v)}
+          onClick={() => onChange(values.includes(v) ? values.filter((x) => x !== v) : [...values, v])}>{l}</Chip>
+      ))}
     </div>
   );
 }

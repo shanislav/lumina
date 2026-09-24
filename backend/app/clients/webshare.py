@@ -6,11 +6,13 @@ import httpx
 from passlib.hash import md5_crypt
 
 from app.core.mediainfo import normalize_language
+from app.core.throttle import Throttle
 from app.models.schemas import WebShareFile
 
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://webshare.cz/api"
+FILE_INFO_THROTTLE = Throttle("WebShare file_info", concurrency=2, interval=0.3, cooldown=300)
 
 
 class WebShareClient:
@@ -121,9 +123,19 @@ class WebShareClient:
         return link
 
     async def file_info(self, ident: str) -> dict | None:
-        """Technical info WebShare keeps about a file (official API, no page scraping)."""
+        """Technical info WebShare keeps about a file (official API, no page scraping).
+
+        WebShare answers 403 to bursts (seen at 45 calls, 4 in parallel), so calls go
+        through FILE_INFO_THROTTLE and pause for a while after a refusal.
+        """
+        if FILE_INFO_THROTTLE.cooling_down:
+            return None
         token = await self._ensure_token()
-        resp = await self._http.post(f"{API_BASE}/file_info/", data={"ident": ident, "wst": token})
+        async with FILE_INFO_THROTTLE.slot():
+            resp = await self._http.post(f"{API_BASE}/file_info/", data={"ident": ident, "wst": token})
+        if resp.status_code in (403, 429):
+            FILE_INFO_THROTTLE.trip()
+            return None
         resp.raise_for_status()
         root = ET.fromstring(resp.text)
         if root.findtext("status") != "OK":

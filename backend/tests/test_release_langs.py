@@ -82,9 +82,33 @@ async def test_fastshare_pages_are_throttled(monkeypatch):
         return FakeResp()
 
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
-    monkeypatch.setattr(fastshare, "_last_page_at", 0.0)
+    monkeypatch.setattr(fastshare, "PAGE_THROTTLE", fastshare.Throttle("test", 2, fastshare.PAGE_INTERVAL_S))
     client = fastshare.FastShareClient("u", "p")
     await asyncio.gather(*(client.file_details(str(i), f"f{i}.mkv") for i in range(5)))
     gaps = [b - a for a, b in zip(starts, starts[1:])]
     assert len(starts) == 5
     assert min(gaps) >= fastshare.PAGE_INTERVAL_S * 0.9
+
+
+async def test_refusal_pauses_further_requests(monkeypatch):
+    """After a 403 the service is left alone — no more requests until the cool-down passes."""
+    import httpx
+
+    from app.clients import fastshare
+
+    calls = []
+
+    class Refused:
+        status_code = 403
+        text = ""
+
+    async def fake_get(self, url, *args, **kwargs):
+        calls.append(url)
+        return Refused()
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(fastshare, "PAGE_THROTTLE", fastshare.Throttle("test", 2, 0.0, cooldown=60))
+    client = fastshare.FastShareClient("u", "p")
+    assert await client.file_details("1", "a.mkv") is None
+    assert await client.file_details("2", "b.mkv") is None
+    assert len(calls) == 1
