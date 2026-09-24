@@ -530,6 +530,60 @@ export async function fixMovieMatch(movieId: number, tmdbId: number): Promise<vo
   });
 }
 
+// --- Library: fix names on disk ---
+
+export interface OrganizeOp {
+  kind: "video" | "sidecar" | "other";
+  src: string;
+  dst: string;
+}
+
+export interface OrganizePlan {
+  movie_ids: number[];
+  tmdb_id: number;
+  title: string;
+  year: number | null;
+  folder: string;
+  target_folder: string;
+  ops: OrganizeOp[];
+  conflicts: string[];
+  remove_folder: boolean;
+}
+
+export interface OrganizeResult {
+  batch_id: string | null;
+  done: { title: string; ops: number }[];
+  failed: { movie_id: number; error: string }[];
+}
+
+export async function getOrganizePlan(movieId: number): Promise<OrganizePlan> {
+  const res = await fetch(`${API_BASE}/api/library/movies/${movieId}/organize`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getOrganizePlanAll(): Promise<OrganizePlan[]> {
+  const res = await fetch(`${API_BASE}/api/library/organize`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function applyOrganize(movieIds: number[]): Promise<OrganizeResult> {
+  const res = await fetch(`${API_BASE}/api/library/organize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ movie_ids: movieIds }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function undoOrganize(batchId: string): Promise<{ undone: number }> {
+  const res = await fetch(`${API_BASE}/api/library/operations/${batchId}/undo`, { method: "POST" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 // --- Utilities ---
 
 export function formatSize(bytes: number): string {

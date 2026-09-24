@@ -84,14 +84,27 @@ const INTEGRATION_TYPES = [
     label: "Renamer (Media Info)",
     icon: "📝",
     fields: [
-      { 
-        key: "format", 
-        label: "Filename Format", 
-        type: "text", 
-        placeholder: "{title} ({year}) [{source}-{res} {codec}] [{langs}] {tmdb-{id}}",
+      { key: "language", label: "Jazyk názvů", type: "select", options: [
+        { value: "en", label: "Angličtina" }, { value: "cs", label: "Čeština" }, { value: "sk", label: "Slovenčina" },
+        { value: "orig", label: "Originální název" }, { value: "de", label: "Němčina" },
+      ], hint: "V jakém jazyce se pojmenují složky a soubory filmů (když TMDB překlad nemá: angličtina → originál)" },
+      { key: "keep_local_original", label: "České a slovenské filmy v originále", type: "checkbox", default: "true", hint: "Pelíšky zůstanou Pelíšky, ne „Cosy Dens“" },
+      { key: "folder_format", label: "Složka", type: "text", default: "{year}/{title} ({year})", hint: "Relativně ke knihovně filmů, / odděluje podsložky" },
+      {
+        key: "format",
+        label: "Soubor",
+        type: "text",
+        placeholder: "{title} ({year}) [{res} {codec} {hdr}] [{langs}] {tmdb-{tmdb_id}}",
       },
       { key: "use_mediainfo", label: "Use MediaInfo", type: "checkbox", hint: "Extract resolution and codec from file" },
     ],
+  },
+  {
+    type: "nfo",
+    label: "NFO soubory (záloha knihovny)",
+    icon: "📄",
+    description: "Když je zapnuto, Lumina u každého spárovaného filmu hned zapíše aktuální movie.nfo (TMDB/IMDB ID, technické údaje, stav) a staré NFO ve složce smaže. Slouží i jako záloha databáze Luminy.",
+    fields: [],
   },
 ];
 
@@ -519,27 +532,34 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [browsingField, setBrowsingField] = useState<string | null>(null);
 
-  const DEFAULT_FORMAT = "{title} ({year}) [{source}-{res} {codec}] [{langs}] {tmdb-{id}}";
+  const DEFAULT_FORMAT = "{title} ({year}) [{res} {codec} {hdr}] [{langs}] {tmdb-{tmdb_id}}";
 
   useEffect(() => {
     if (type === "radarr" || type === "sonarr") {
       setLoadingOptions(true);
       getIntegrationOptions(type).then(data => { setOptions(data); setLoadingOptions(false); });
     }
-    if (type === "renamer" && !config.format) { setConfig({ ...config, format: DEFAULT_FORMAT }); }
+    const defaults: Record<string, string> = {};
+    for (const f of (typeDef?.fields ?? []) as any[]) {
+      if (f.default !== undefined && config[f.key] === undefined) defaults[f.key] = f.default;
+    }
+    if (type === "renamer" && !config.format) defaults.format = DEFAULT_FORMAT;
+    if (Object.keys(defaults).length) setConfig({ ...config, ...defaults });
   }, [type, config.format]);
 
   const TAGS = [
     { tag: "{title}", desc: "Movie Title" }, { tag: "{year}", desc: "Release Year" },
     { tag: "{res}", desc: "Resolution" }, { tag: "{source}", desc: "Source (WEBDL...)" },
     { tag: "{codec}", desc: "Codec" }, { tag: "{langs}", desc: "Languages" },
-    { tag: "{id}", desc: "TMDB ID" },
+    { tag: "{hdr}", desc: "HDR / DV" }, { tag: "{tmdb-{tmdb_id}}", desc: "TMDB ID tag (Plex)" },
   ];
 
   const getPreview = () => {
-    let p = config.format || DEFAULT_FORMAT;
-    p = p.replace("{title}", "Avatar").replace("{year}", "2009").replace("{res}", "1080p").replace("{source}", "BluRay").replace("{codec}", "x264").replace("{langs}", "CS+EN").replace("{id}", "19995");
-    return p + ".mkv";
+    const fill = (t: string) => t
+      .replace("{tmdb-{tmdb_id}}", "{tmdb-19995}").replace("{tmdb-{id}}", "{tmdb-19995}")
+      .replaceAll("{title}", "Avatar").replaceAll("{year}", "2009").replace("{res}", "2160p").replace("{source}", "BluRay")
+      .replace("{codec}", "x265").replace("{hdr}", "HDR10").replace("{langs}", "CS+EN").replace("{tmdb_id}", "19995").replace("{imdb_id}", "tt0499549");
+    return fill(config.folder_format || "{year}/{title} ({year})") + "/" + fill(config.format || DEFAULT_FORMAT) + ".mkv";
   };
 
   return (
@@ -547,6 +567,7 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm">
         <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
           <h2 className="text-xl font-bold text-zinc-100">{typeDef?.label} Settings</h2>
+          {(typeDef as any)?.description && <p className="mt-2 text-sm text-zinc-400">{(typeDef as any).description}</p>}
           <div className="mt-6 space-y-4">
             {typeDef?.fields.map((f: any) => (
               <div key={f.key}>
@@ -555,6 +576,7 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
                   <select value={config[f.key] || ""} onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
                     className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none">
                     <option value="">-- Vybrat --</option>
+                    {f.options?.map((opt: any) => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
                     {f.option_key === "root_folders" && options.root_folders?.map((opt: any) => (<option key={opt.id} value={opt.path}>{opt.path}</option>))}
                     {f.option_key === "quality_profiles" && options.quality_profiles?.map((opt: any) => (<option key={opt.id} value={opt.id}>{opt.name}</option>))}
                   </select>
@@ -570,7 +592,7 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
             ))}
             {type === "renamer" && (
               <div className="mt-4 space-y-4">
-                <div className="rounded-lg bg-zinc-950 p-3 border border-zinc-800/50"><label className="text-[10px] uppercase font-bold text-zinc-600 block mb-2">Filename Preview</label><code className="text-xs text-violet-400 break-all">{getPreview()}</code></div>
+                <div className="rounded-lg bg-zinc-950 p-3 border border-zinc-800/50"><label className="text-[10px] uppercase font-bold text-zinc-600 block mb-2">Náhled (složka / soubor)</label><code className="text-xs text-violet-400 break-all">{getPreview()}</code></div>
                 <div className="grid grid-cols-2 gap-2">{TAGS.map(t => (<div key={t.tag} className="flex flex-col gap-0.5"><span className="text-[10px] font-mono text-violet-300">{t.tag}</span><span className="text-[9px] text-zinc-500">{t.desc}</span></div>))}</div>
               </div>
             )}
