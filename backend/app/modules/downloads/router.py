@@ -52,8 +52,8 @@ async def start_download(req: DownloadRequest) -> dict:
                 headers=download_info.get("headers"),
             )
             _download_sources[gid] = source_label
-            from app.db import track_download
-            from app.tasks import ensure_monitor_running
+            from app.modules.downloads.store import track_download
+            from app.modules.downloads.monitor import ensure_monitor_running
             await track_download(gid, req.tmdb_id, req.title, req.year, "aria2", target_dir, req.content_type or "movie")
             ensure_monitor_running()
             return {
@@ -79,8 +79,8 @@ async def start_download(req: DownloadRequest) -> dict:
         try:
             torrent_hash = await qbt.add_torrent(req.magnet_url, save_path=target_dir)
             _download_sources[torrent_hash] = source_label
-            from app.db import track_download
-            from app.tasks import ensure_monitor_running
+            from app.modules.downloads.store import track_download
+            from app.modules.downloads.monitor import ensure_monitor_running
             await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie")
             ensure_monitor_running()
             return {

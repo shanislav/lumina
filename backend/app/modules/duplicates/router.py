@@ -101,43 +101,6 @@ def _detect_language(filename: str) -> str:
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
-async def _ensure_table() -> None:
-    """Create duplicates table if not exists."""
-    db = await get_db()
-    try:
-        await db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS scanned_files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT NOT NULL UNIQUE,
-                filename TEXT NOT NULL,
-                normalized_title TEXT NOT NULL,
-                year TEXT NOT NULL DEFAULT '',
-                size INTEGER NOT NULL DEFAULT 0,
-                quality TEXT NOT NULL DEFAULT 'unknown',
-                language TEXT NOT NULL DEFAULT '-',
-                modified_at TEXT NOT NULL DEFAULT '',
-                ai_group TEXT NOT NULL DEFAULT '',
-                scanned_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-            """
-        )
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_scanned_norm_title "
-            "ON scanned_files (normalized_title, year)"
-        )
-        # Add ai_group column if table already exists without it
-        try:
-            await db.execute(
-                "ALTER TABLE scanned_files ADD COLUMN ai_group TEXT NOT NULL DEFAULT ''"
-            )
-        except Exception:
-            pass  # column already exists
-        await db.commit()
-    finally:
-        await db.close()
-
-
 @router.post("/scan")
 async def scan_for_duplicates() -> dict:
     """Scan the movie library folder for video files and detect duplicates."""
@@ -146,8 +109,6 @@ async def scan_for_duplicates() -> dict:
 
     if not os.path.isdir(media_dir):
         raise HTTPException(400, f"Media directory not found: {media_dir}")
-
-    await _ensure_table()
 
     # Walk the directory tree
     found_files: list[dict] = []
@@ -214,8 +175,6 @@ async def ai_scan_for_duplicates() -> dict:
     groq_key = cfg.get("groq_api_key", "")
     if not groq_key:
         raise HTTPException(400, "Groq API key not configured")
-
-    await _ensure_table()
 
     # First do a normal scan to refresh file list
     media_dir = movies_library_dir(cfg)
@@ -399,8 +358,6 @@ async def get_duplicates(mode: str = "simple") -> dict:
     mode=simple: group by normalized title + year (mechanical)
     mode=ai: group by AI-detected groups (must run ai-scan first)
     """
-    await _ensure_table()
-
     db = await get_db()
     try:
         if mode == "ai":
