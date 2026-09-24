@@ -601,6 +601,49 @@ export async function searchTMDBForFix(movieId: number, query: string): Promise<
   return res.json();
 }
 
+// --- Library: better versions (background check) ---
+
+export interface UpgradeCheck {
+  owned_id: number | null;
+  owned_score: number;
+  status: "better" | "none" | "error";
+  upgrades: number;
+  best: { name?: string; source?: string; quality_score?: number; quality_summary?: string; verified?: boolean; size?: number };
+  error: string;
+  checked_at: string;
+}
+
+export interface UpgradeJob {
+  running: boolean;
+  total: number;
+  done: number;
+  current: string;
+  found: number;
+  queued: number;
+}
+
+export async function checkUpgrades(tmdbIds: number[]): Promise<UpgradeJob> {
+  const res = await fetch(`${API_BASE}/api/library/upgrades/check`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tmdb_ids: tmdbIds }),
+  });
+  if (!res.ok) throw new Error(`Upgrade check failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getUpgradeJob(): Promise<UpgradeJob> {
+  const res = await fetch(`${API_BASE}/api/library/upgrades/status`);
+  if (!res.ok) throw new Error(`Upgrade status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getUpgrades(): Promise<Record<string, UpgradeCheck>> {
+  const res = await fetch(`${API_BASE}/api/library/upgrades`);
+  if (!res.ok) return {};
+  return res.json();
+}
+
 export async function updateVersion(movieId: number, data: { note?: string; preferred?: boolean }): Promise<void> {
   const res = await fetch(`${API_BASE}/api/library/movies/${movieId}`, {
     method: "PATCH",

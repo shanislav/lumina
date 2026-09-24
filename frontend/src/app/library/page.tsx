@@ -26,6 +26,11 @@ import {
   searchTMDBForFix,
   fixMovieMatch,
   updateVersion,
+  checkUpgrades,
+  getUpgradeJob,
+  getUpgrades,
+  UpgradeCheck,
+  UpgradeJob,
   formatSize,
 } from "@/lib/api";
 import DownloadPanel from "@/components/DownloadPanel";
@@ -70,7 +75,7 @@ const hasPart = (m: LibraryMovie, prefix: string, maxPoints = 0) =>
 const LOW_BITRATE_FLAG_POINTS = -15;
 const hasLocalAudio = (m: LibraryMovie) => /\b(CS|SK)\b/i.test(m.language || "");
 
-type QualityFlag = "weak" | "2160p" | "1080p" | "720p" | "sd" | "h265" | "h264" | "old_codec" | "hdr"
+type QualityFlag = "has_better" | "weak" | "2160p" | "1080p" | "720p" | "sd" | "h265" | "h264" | "old_codec" | "hdr"
   | "low_bitrate" | "upscale" | "no_local";
 
 const QUALITY_FLAGS: { key: QualityFlag; label: string; title: string; warn?: boolean; test: (m: LibraryMovie, g: MovieGroup) => boolean }[] = [
@@ -122,6 +127,27 @@ export default function LibraryPage() {
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [movieFilter, setMovieFilter] = useState<MovieFilter>("all");
   const [qualityFlag, setQualityFlag] = useState<QualityFlag | null>(null);
+  // background check for better versions (library/upgrades.py)
+  const [upgradeChecks, setUpgradeChecks] = useState<Record<string, UpgradeCheck>>({});
+  const [upgradeJob, setUpgradeJob] = useState<UpgradeJob | null>(null);
+  useEffect(() => {
+    getUpgrades().then(setUpgradeChecks).catch(() => {});
+    getUpgradeJob().then(setUpgradeJob).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!upgradeJob?.running) return;
+    const t = setTimeout(async () => {
+      try {
+        setUpgradeJob(await getUpgradeJob());
+        setUpgradeChecks(await getUpgrades());
+      } catch { /* next tick */ }
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [upgradeJob]);
+  const betterOf = (g: MovieGroup) => {
+    const c = upgradeChecks[String(g.main.tmdb_id)];
+    return c?.status === "better" ? c : null;
+  };
   const [librarySort, setLibrarySort] = useState<LibrarySort>("default");
   const [summary, setSummary] = useState<Partial<Record<LibraryStatus, number>>>({});
   const scanning = !!scan?.running;
@@ -205,9 +231,11 @@ export default function LibraryPage() {
     for (const g of identified) {
       const best = bestVersion(g);
       for (const f of QUALITY_FLAGS) if (f.test(best, g)) counts[f.key] = (counts[f.key] ?? 0) + 1;
+      if (betterOf(g)) counts.has_better = (counts.has_better ?? 0) + 1;
     }
     return counts;
-  }, [identified]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identified, upgradeChecks]);
   const librarySize = useMemo(() => movies.reduce((sum, m) => sum + (m.file_size || 0), 0), [movies]);
   const visibleGroups = useMemo(() => {
     let list =
@@ -216,6 +244,7 @@ export default function LibraryPage() {
       : groups.filter((g) => g.main.status === movieFilter);
     const flag = QUALITY_FLAGS.find((f) => f.key === qualityFlag);
     if (flag) list = list.filter((g) => identified.includes(g) && flag.test(bestVersion(g), g));
+    if (qualityFlag === "has_better") list = list.filter((g) => betterOf(g));
     const score = (g: MovieGroup) => bestVersion(g).quality_score ?? 0;
     const size = (g: MovieGroup) => g.versions.reduce((s, v) => s + (v.file_size || 0), 0);
     const added = (g: MovieGroup) => g.versions.reduce((a, v) => (v.added_at > a ? v.added_at : a), "");
@@ -224,7 +253,8 @@ export default function LibraryPage() {
     if (librarySort === "size_desc") list = [...list].sort((a, b) => size(b) - size(a));
     if (librarySort === "added_desc") list = [...list].sort((a, b) => added(b).localeCompare(added(a)));
     return list;
-  }, [groups, multiVersion, movieFilter, qualityFlag, librarySort, identified]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, multiVersion, movieFilter, qualityFlag, librarySort, identified, upgradeChecks]);
   const [versionsOf, setVersionsOf] = useState<MovieGroup | null>(null);
 
   function openMovie(movie: LibraryMovie) {
@@ -441,6 +471,30 @@ export default function LibraryPage() {
               </span>
             </summary>
             <div className="px-4 pb-3 pt-1 space-y-2">
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                <button
+                  disabled={!!upgradeJob?.running || visibleGroups.filter((g) => identified.includes(g)).length === 0}
+                  onClick={async () => {
+                    const ids = visibleGroups.filter((g) => identified.includes(g)).map((g) => g.main.tmdb_id);
+                    setUpgradeJob(await checkUpgrades(ids));
+                  }}
+                  title="Prohledá zdroje pro každý zobrazený film (postupně, šetrně k WS/FS) a porovná s tvou verzí"
+                  className="rounded bg-violet-600 px-3 py-1 font-medium text-white hover:bg-violet-500 disabled:opacity-40"
+                >
+                  Hledat lepší verze ({Math.min(visibleGroups.filter((g) => identified.includes(g)).length, 200)})
+                </button>
+                {upgradeJob?.running ? (
+                  <span className="text-violet-300 animate-pulse">
+                    Hledám {upgradeJob.done}/{upgradeJob.total}{upgradeJob.current ? ` · ${upgradeJob.current}` : ""} · nalezeno {upgradeJob.found}
+                  </span>
+                ) : (flagCounts.has_better ?? 0) > 0 ? (
+                  <button onClick={() => setQualityFlag(qualityFlag === "has_better" ? null : "has_better")}
+                    className={`px-2.5 py-1 rounded-full border ${qualityFlag === "has_better"
+                      ? "border-violet-500 bg-violet-600/20 text-violet-200" : "border-green-800 text-green-300 hover:text-green-200"}`}>
+                    ⬆ Má lepší verzi <span className="font-mono">{flagCounts.has_better}</span>
+                  </button>
+                ) : null}
+              </div>
               <div className="flex flex-wrap gap-2 text-xs">
                 {QUALITY_FLAGS.map((f) => (
                   <button key={f.key} title={f.title} disabled={!flagCounts[f.key]}
@@ -470,7 +524,7 @@ export default function LibraryPage() {
             </select>
             {qualityFlag && (
               <button onClick={() => setQualityFlag(null)} className="ml-2 text-violet-300 hover:text-violet-200">
-                × {QUALITY_FLAGS.find((f) => f.key === qualityFlag)?.label}
+                × {qualityFlag === "has_better" ? "Má lepší verzi" : QUALITY_FLAGS.find((f) => f.key === qualityFlag)?.label}
               </button>
             )}
           </div>
@@ -511,6 +565,15 @@ export default function LibraryPage() {
                       {STATUS_BADGE[movie.status]!.label}
                     </span>
                   )}
+                  {betterOf({ key, main: movie, versions }) && (() => {
+                    const c = betterOf({ key, main: movie, versions })!;
+                    return (
+                      <span title={`Lepší verze: ${c.best.quality_summary ?? ""} (${c.best.quality_score}) — ${c.best.name ?? ""}\nKontrola ${c.checked_at}`}
+                        className="absolute top-7 left-1 px-1.5 py-0.5 rounded bg-green-800/90 text-green-100 text-[10px] font-bold">
+                        ⬆ +{(c.best.quality_score ?? 0) - c.owned_score}
+                      </span>
+                    );
+                  })()}
                   {versions.length > 1 && (
                     <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-violet-700/90 text-white text-[10px] font-bold">
                       {versions.length} verze
@@ -731,6 +794,20 @@ export default function LibraryPage() {
                   Aktuálně: <span className="text-zinc-200">{fixingMovie.title} ({fixingMovie.year})</span> · TMDB {fixingMovie.tmdb_id} · skóre {fixingMovie.confidence}
                 </p>
               ) : null}
+              {(() => {
+                const c = upgradeChecks[String(fixingMovie.tmdb_id)];
+                if (!c || !(fixingMovie.status === "matched" || fixingMovie.status === "manual")) return null;
+                return c.status === "better" ? (
+                  <p className="text-green-300 text-xs">
+                    ⬆ Nalezena lepší verze: {c.best.quality_summary} · kvalita {c.owned_score} → {c.best.quality_score}
+                    {c.upgrades > 1 ? ` (a ${c.upgrades - 1} další)` : ""} · kontrola {c.checked_at}
+                  </p>
+                ) : c.status === "none" ? (
+                  <p className="text-zinc-500 text-xs">Lepší verze nenalezena (kontrola {c.checked_at})</p>
+                ) : (
+                  <p className="text-red-400 text-xs">Kontrola selhala: {c.error}</p>
+                );
+              })()}
               {(fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <input
