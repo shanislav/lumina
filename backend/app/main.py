@@ -10,6 +10,7 @@ from app.db import init_db
 from app.sources.registry import SourceRegistry
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per HTTP call is too noisy
 logger = logging.getLogger("app")
 
 ALL_MODULES = registry.discover()
