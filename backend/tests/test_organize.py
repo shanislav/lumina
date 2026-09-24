@@ -133,3 +133,24 @@ async def test_nfo_module_disabled_does_nothing(library):
         await db.close()
     folder = library / "2017" / "Blade Runner 2049 (2017)"
     assert sorted(p.name for p in folder.iterdir() if p.suffix == ".nfo") == ["Blade Runner 2049 (2017) [-720p].nfo"]
+
+
+async def test_undo_with_nfo_module_leaves_no_empty_folder(library):
+    await update_automation("nfo", enabled=True)
+    await update_automation("renamer", config={"folder_format": "{year}/{title} ({year}) new"})
+    root = str(library)
+    db = await get_db()
+    try:
+        plan = await organize.plan_movie(db, NoTMDB(), 1, root)
+        batch = await organize.apply_plan(db, plan, root)
+        await emit_movie_updated(db, 1)                     # nfo module writes movie.nfo in the new folder
+        new_folder = library / "2017" / "Blade Runner 2049 (2017) new"
+        assert (new_folder / "movie.nfo").exists()
+        await organize.undo_batch(db, batch, root)
+        await emit_movie_updated(db, 1)                     # …and in the restored folder
+    finally:
+        await db.close()
+    assert not new_folder.exists()
+    old_folder = library / "2017" / "Blade Runner 2049 (2017)"
+    assert (old_folder / "Blade Runner (1982) [Bluray-720p x264] [CS+EN].mkv").exists()
+    assert (old_folder / "movie.nfo").exists()

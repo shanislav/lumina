@@ -207,6 +207,31 @@ def _ensure_dir(path: str) -> None:
         pass
 
 
+def _drop_lumina_leftovers(folder: str) -> None:
+    """Remove NFO files written by Lumina from a folder that has nothing else left in it
+    (after an undo the NFO module has already written a fresh one next to the restored video)."""
+    try:
+        entries = os.listdir(folder)
+    except OSError:
+        return
+    leftovers = [os.path.join(folder, e) for e in entries]
+    if not leftovers or not all(p.lower().endswith(".nfo") and _written_by_lumina(p) for p in leftovers):
+        return
+    for p in leftovers:
+        try:
+            os.remove(p)
+        except OSError:
+            return
+
+
+def _written_by_lumina(path: str) -> bool:
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return "<lumina>" in f.read(65536)
+    except OSError:
+        return False
+
+
 def _remove_empty_dirs(folder: str, root: str) -> None:
     """Remove folder and its empty parents up to (not including) the library root."""
     root = os.path.normpath(root)
@@ -264,6 +289,7 @@ async def undo_batch(db, batch_id: str, root: str) -> int:
     )
     ops = await cursor.fetchall()
     undone = 0
+    touched_folders: set[str] = set()
     for op in ops:
         if not os.path.exists(op["dst"]) or os.path.exists(op["src"]):
             logger.warning("Cannot undo %s → %s (file moved meanwhile)", op["dst"], op["src"])
@@ -275,7 +301,11 @@ async def undo_batch(db, batch_id: str, root: str) -> int:
             (op["src"], os.path.basename(op["src"]), os.stat(op["src"]).st_mtime, op["dst"]),
         )
         await db.execute("UPDATE file_operations SET status = 'undone' WHERE id = ?", (op["id"],))
-        _remove_empty_dirs(os.path.dirname(op["dst"]), root)
+        touched_folders.add(os.path.dirname(op["dst"]))
         undone += 1
     await db.commit()
+    # Folders created by the batch may still hold an NFO the nfo module wrote there.
+    for folder in touched_folders:
+        _drop_lumina_leftovers(folder)
+        _remove_empty_dirs(folder, root)
     return undone
