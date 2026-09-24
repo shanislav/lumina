@@ -18,6 +18,7 @@ from app.core.release_name import parse_name
 
 STOPWORDS = {"the", "a", "an", "of", "and", "a", "i", "la", "le", "les", "der", "die", "das", "el", "il"}
 _YEAR = re.compile(r"(?<!\d)(19[0-9]{2}|20[0-9]{2})(?!\d)")
+_EPISODE = re.compile(r"(?<![a-z0-9])s\d{1,2}[ ._-]?e\d{1,3}(?![0-9])|(?<![a-z0-9])\d{1,2}x\d{2}(?![0-9])", re.IGNORECASE)
 LENGTH_TOLERANCE = 0.06
 LENGTH_MIN_DIFF_MIN = 8
 
@@ -53,6 +54,8 @@ def length_verdict(duration_s: int, runtime_min: int) -> str | None:
 
 def judge(name: str, titles: list[str], year: int | None = None,
           duration_s: int = 0, runtime_min: int = 0) -> Verdict:
+    if _EPISODE.search(name):
+        return Verdict("no", ["epizoda seriálu"])
     if years_mismatch(name, year):
         found = ", ".join(sorted(set(_YEAR.findall(name))))
         return Verdict("no", [f"jiný rok ({found})"])

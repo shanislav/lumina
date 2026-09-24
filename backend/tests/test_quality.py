@@ -69,6 +69,8 @@ def test_samotari_upscaled_4k_below_real_1080p():
     ("Dune Part Two 2024 2160p.mkv", "no"),            # other year
     ("Dune.Part.Two.mkv", "unsure"),                   # → AI
     ("Pelíšky.avi", "no"),                             # other name
+    ("Duna Proroctví - Dune Prophecy S01E05 CZ DABING.mkv", "no"),   # TV episode
+    ("Dune 1x03.mkv", "no"),
 ])
 def test_film_match(name, status):
     assert judge(name, ["Duna", "Dune", "Dune: Part One"], 2021).status == status
