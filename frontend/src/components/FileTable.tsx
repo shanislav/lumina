@@ -38,8 +38,10 @@ function sourceLink(file: ScoredFile): string | null {
   if (file.source === "fastshare") {
     const ext = file.name.match(/\.[^.]+$/)?.[0] || "";
     const noExt = file.name.replace(/\.[^.]+$/, "");
-    const noDiacritics = noExt.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const slug = noDiacritics.toLowerCase().replace(/[^a-z0-9.]+/g, "-").replace(/^-|-$/g, "");
+    const noDiacritics = noExt.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+    // FastShare keeps a trailing "-" before the extension ("Film (2009).mkv" -> "film-2009-.mkv");
+    // trimming it leads to a page without file details. Only the leading "-" is trimmed.
+    const slug = noDiacritics.toLowerCase().replace(/[^a-z0-9.]+/g, "-").replace(/^-/, "");
     return `https://fastshare.cloud/${file.ident}/${slug}${ext.toLowerCase()}`;
   }
   if (file.source === "webshare") return `https://webshare.cz/file/${file.ident}/`;
