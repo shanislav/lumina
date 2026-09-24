@@ -33,3 +33,15 @@ def test_fastshare_names_are_unescaped(monkeypatch):
     monkeypatch.setattr(client._http, "get", fake_get)
     files = asyncio.run(client.search("x"))
     assert files[0].name == "Now.You.See.Me.Now.You.Don't.2025.mkv"
+
+
+def test_year_guard():
+    from app.modules.search.router import _year_of, _years_mismatch
+
+    assert _year_of("Cosy Dens 1999") == 1999
+    assert _years_mismatch("Den co den 2018 BluRay 1080p x264CZ EN DTS.mkv", 1999)
+    assert not _years_mismatch("Pelíšky (1999).avi", 1999)
+    assert not _years_mismatch("Pelíšky.avi", 1999)                         # no year → no opinion
+    assert not _years_mismatch("1917.2019.1080p.BluRay.mkv", 2019)          # title with a number
+    assert not _years_mismatch("2001.A.Space.Odyssey.1968.mkv", 1968)
+    assert not _years_mismatch("Matrix.2000.remaster.mkv", 1999)            # ±1

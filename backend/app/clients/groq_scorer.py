@@ -160,8 +160,10 @@ def _build_system_prompt(languages: list[str]) -> str:
         "Entries are prefixed [WS]/[FS] (direct download) or [T] (torrent, with seeders).\n"
         "Reply ONLY with a JSON array, one item per file: [index, quality, relevance]\n"
         '- quality: "2160p"|"1080p"|"720p"|"SD"|"unknown"\n'
-        "- relevance 0-100: is it the actual full movie? subtitles, samples, extras, soundtracks or other "
-        "movies of a series 0-20; full movie matching the title 70-100. More seeders is a plus.\n"
+        "- relevance 0-100 answers ONLY \"is this file the full movie?\" — NOT its quality or size: "
+        "any copy of the right film scores 80-100 even if small, old or low resolution (quality is "
+        "filtered separately). Other films, sequels/prequels, TV episodes, samples, extras, soundtracks, "
+        "subtitles 0-20. Unsure whether it is the same film 40-60.\n"
         "No explanation."
     )
 

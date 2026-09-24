@@ -172,6 +172,19 @@ def _ddl_queries(query: str, original_title: str = "", en_title: str = "") -> li
     return queries[:MAX_DDL_QUERIES] or [query]
 
 
+_YEAR = re.compile(r"(?<!\d)(19[0-9]{2}|20[0-9]{2})(?!\d)")
+
+
+def _year_of(query: str) -> int | None:
+    years = _YEAR.findall(query)
+    return int(years[-1]) if years else None
+
+
+def _years_mismatch(name: str, movie_year: int) -> bool:
+    years = [int(y) for y in _YEAR.findall(name)]
+    return bool(years) and all(abs(y - movie_year) > 1 for y in years)
+
+
 def _to_scorable(results: list[SearchResult]) -> list[ScorableFile]:
     """Convert unified SearchResults into ScorableFiles for the scorer."""
     return [
@@ -304,6 +317,14 @@ async def search_files(
     except Exception as e:
         logger.warning("AI scoring failed, using fallback: %s", e)
         scored = _fallback_scoring(scorable, languages=languages, query=query)
+
+    # Deterministic guard against AI slips: a file whose name carries years, none of them the
+    # movie's (±1), is another film ("Den co den 2018" for Pelíšky 1999). Titles with a number
+    # ("1917", "2001: …") stay fine — one matching year is enough.
+    movie_year = _year_of(query)
+    for s in scored:
+        if movie_year and _years_mismatch(s.name, movie_year):
+            s.relevance_score = min(s.relevance_score, 30)
 
     # Languages from the name, deterministically — "dubbed" means audio in a wanted language
     # other than English (English is the original of most films, not a dub).
