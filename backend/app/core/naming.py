@@ -16,10 +16,11 @@ DEFAULT_TITLE_LANGUAGE = "en"
 LOCAL_LANGUAGES = {"cs", "sk"}
 
 _ILLEGAL = re.compile(r'[<>"/\\|?*\x00-\x1f]')
-_SOURCE = re.compile(r"\b(remux|blu-?ray|bdrip|brrip|web-?dl|webrip|hdtv|dvdrip|dvd|hdrip|tvrip)\b", re.IGNORECASE)
-_SOURCE_LABEL = {"bluray": "BluRay", "blu-ray": "BluRay", "bdrip": "BDRip", "brrip": "BRRip", "web-dl": "WEB-DL",
-                 "webdl": "WEB-DL", "webrip": "WEBRip", "hdtv": "HDTV", "dvdrip": "DVDRip", "dvd": "DVD",
-                 "hdrip": "HDRip", "tvrip": "TVRip", "remux": "REMUX"}
+_SOURCE = re.compile(r"\b(remux|blu-?ray|bdrip|brrip|web-?dl|webrip|hdtv|sdtv|dvdrip|dvd|hdrip|tvrip)\b", re.IGNORECASE)
+# Radarr-style labels — the existing library is named this way, so names change as little as possible.
+_SOURCE_LABEL = {"bluray": "Bluray", "blu-ray": "Bluray", "bdrip": "Bluray", "brrip": "Bluray", "web-dl": "WEBDL",
+                 "webdl": "WEBDL", "webrip": "WEBRip", "hdtv": "HDTV", "sdtv": "SDTV", "dvdrip": "DVD", "dvd": "DVD",
+                 "hdrip": "HDTV", "tvrip": "SDTV", "remux": "Remux"}
 _HDR_IN_NAME = [("DV", re.compile(r"\b(dv|dovi|dolby[ .]?vision)\b|uhdrdv", re.IGNORECASE)),
                 ("HDR10+", re.compile(r"hdr10\+|hdr10plus", re.IGNORECASE)),
                 ("HDR", re.compile(r"\bhdr(10)?\b", re.IGNORECASE))]
