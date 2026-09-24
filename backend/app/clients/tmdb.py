@@ -215,5 +215,49 @@ class TMDBClient:
             "poster_url": f"{IMG_BASE}{data['poster_path']}" if data.get("poster_path") else None,
         }
 
+    async def search_movie_raw(self, title: str, year: int | None = None, language: str = "cs-CZ") -> list[dict]:
+        """Search movies; returns raw TMDB result dicts (id, title, original_title, release_date, ...)."""
+        params = {"api_key": self._api_key, "query": title, "language": language, "include_adult": False}
+        if year:
+            params["primary_release_year"] = year
+        resp = await self._http.get(f"{API_BASE}/search/movie", params=params)
+        resp.raise_for_status()
+        return resp.json().get("results", [])
+
+    async def find_by_imdb(self, imdb_id: str) -> int | None:
+        resp = await self._http.get(
+            f"{API_BASE}/find/{imdb_id}",
+            params={"api_key": self._api_key, "external_source": "imdb_id"},
+        )
+        resp.raise_for_status()
+        results = resp.json().get("movie_results", [])
+        return results[0]["id"] if results else None
+
+    async def get_movie_full(self, tmdb_id: int, language: str = "cs-CZ") -> dict:
+        """Movie details needed for matching: runtime, original language and titles in all languages."""
+        resp = await self._http.get(
+            f"{API_BASE}/movie/{tmdb_id}",
+            params={"api_key": self._api_key, "language": language, "append_to_response": "translations"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        release = data.get("release_date", "") or ""
+        titles = {data.get("title", ""), data.get("original_title", "")}
+        for tr in data.get("translations", {}).get("translations", []):
+            if tr.get("iso_639_1") in ("cs", "sk", "en"):
+                titles.add((tr.get("data") or {}).get("title", ""))
+        return {
+            "tmdb_id": tmdb_id,
+            "title": data.get("title", ""),
+            "original_title": data.get("original_title", ""),
+            "year": int(release[:4]) if len(release) >= 4 else None,
+            "runtime": data.get("runtime") or 0,
+            "original_language": data.get("original_language", ""),
+            "imdb_id": data.get("imdb_id") or "",
+            "overview": data.get("overview", ""),
+            "poster_url": f"{IMG_BASE}{data['poster_path']}" if data.get("poster_path") else None,
+            "titles": sorted(t for t in titles if t),
+        }
+
     async def close(self) -> None:
         await self._http.aclose()

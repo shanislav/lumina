@@ -9,7 +9,11 @@ import {
   LibraryShow,
   LibraryShowDetail,
   TMDBSearchResult,
+  ScanStatus,
+  LibraryStatus,
   scanLibrary,
+  getScanStatus,
+  getLibrarySummary,
   getLibraryMovies,
   getLibraryShows,
   getShowDetail,
@@ -20,6 +24,20 @@ import {
 import DownloadPanel from "@/components/DownloadPanel";
 
 type Tab = "filmy" | "serialy";
+type MovieFilter = "all" | "review" | "unmatched";
+
+const STATUS_BADGE: Record<LibraryStatus, { label: string; cls: string; title: string } | null> = {
+  matched: null,
+  manual: { label: "✓", cls: "bg-sky-900/80 text-sky-300", title: "Vybráno ručně" },
+  review: { label: "?", cls: "bg-orange-900/80 text-orange-300", title: "Na kontrolu" },
+  unmatched: { label: "!", cls: "bg-red-900/80 text-red-300", title: "Nespárováno" },
+};
+
+function formatDuration(seconds: number): string {
+  if (!seconds) return "";
+  const m = Math.round(seconds / 60);
+  return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+}
 
 const QUALITY_COLORS: Record<string, string> = {
   "2160p": "bg-amber-900/60 text-amber-300",
@@ -35,8 +53,11 @@ export default function LibraryPage() {
   const [movies, setMovies] = useState<LibraryMovie[]>([]);
   const [shows, setShows] = useState<LibraryShow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState(false);
+  const [scan, setScan] = useState<ScanStatus | null>(null);
   const [scanResult, setScanResult] = useState<string | null>(null);
+  const [movieFilter, setMovieFilter] = useState<MovieFilter>("all");
+  const [summary, setSummary] = useState<Partial<Record<LibraryStatus, number>>>({});
+  const scanning = !!scan?.running;
   const [selectedShow, setSelectedShow] = useState<LibraryShowDetail | null>(null);
   const [showLoading, setShowLoading] = useState(false);
   const [fixingMovie, setFixingMovie] = useState<LibraryMovie | null>(null);
@@ -47,9 +68,10 @@ export default function LibraryPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [m, s] = await Promise.all([getLibraryMovies(), getLibraryShows()]);
+      const [m, s, sum] = await Promise.all([getLibraryMovies(), getLibraryShows(), getLibrarySummary()]);
       setMovies(m);
       setShows(s);
+      setSummary(sum);
     } catch {
       // ignore
     } finally {
@@ -59,23 +81,44 @@ export default function LibraryPage() {
 
   useEffect(() => {
     loadData();
+    getScanStatus().then((st) => st.running && setScan(st)).catch(() => {});
   }, [loadData]);
 
-  async function handleScan() {
-    setScanning(true);
+  // Poll the background scan while it runs
+  useEffect(() => {
+    if (!scan?.running) return;
+    const timer = setInterval(async () => {
+      try {
+        const st = await getScanStatus();
+        setScan(st);
+        if (!st.running) {
+          const s = st.stats;
+          setScanResult(
+            st.error
+              ? `Chyba při skenování: ${st.error}`
+              : s
+                ? `Hotovo: ${s.movies_found} souborů — ${s.matched} spárováno, ${s.review} na kontrolu, ${s.unmatched} nespárováno · ${s.shows_found} seriálů (${s.episodes_matched} epizod)`
+                : "Hotovo"
+          );
+          loadData();
+        }
+      } catch {
+        // ignore, next tick retries
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [scan?.running, loadData]);
+
+  async function handleScan(force = false) {
     setScanResult(null);
     try {
-      const result = await scanLibrary();
-      setScanResult(
-        `Nalezeno ${result.movies_matched} filmu a ${result.shows_found} serialu (${result.episodes_matched} epizod)`
-      );
-      await loadData();
-    } catch (e) {
-      setScanResult("Chyba pri skenovani");
-    } finally {
-      setScanning(false);
+      setScan(await scanLibrary(force));
+    } catch {
+      setScanResult("Chyba při spuštění skenování");
     }
   }
+
+  const visibleMovies = movieFilter === "all" ? movies : movies.filter((m) => m.status === movieFilter);
 
   async function handleShowClick(show: LibraryShow) {
     setShowLoading(true);
@@ -113,14 +156,39 @@ export default function LibraryPage() {
           </Link>
           <h1 className="text-2xl font-bold text-zinc-100">Knihovna</h1>
         </div>
-        <button
-          onClick={handleScan}
-          disabled={scanning}
-          className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-700 text-white text-sm font-medium transition-colors"
-        >
-          {scanning ? "Skenuji..." : "Skenovat"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => handleScan(true)}
+            disabled={scanning}
+            title="Znovu ověří i už spárované filmy (ručně vybrané zůstanou)"
+            className="px-3 py-2 rounded-lg border border-zinc-700 hover:border-zinc-500 disabled:opacity-40 text-zinc-300 text-sm transition-colors"
+          >
+            Ověřit vše
+          </button>
+          <button
+            onClick={() => handleScan(false)}
+            disabled={scanning}
+            className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-700 text-white text-sm font-medium transition-colors"
+          >
+            {scanning ? "Skenuji..." : "Skenovat"}
+          </button>
+        </div>
       </div>
+
+      {scanning && scan && (
+        <div className="rounded-lg bg-zinc-900 border border-zinc-800 px-4 py-3 space-y-2">
+          <div className="flex justify-between text-sm text-zinc-300">
+            <span>{scan.phase === "tv" ? "Seriály…" : `Filmy ${scan.done ?? 0} / ${scan.total ?? 0}`}</span>
+            <span className="text-zinc-500 truncate ml-4">{scan.current}</span>
+          </div>
+          <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-violet-600 transition-all"
+              style={{ width: `${scan.total ? ((scan.done ?? 0) / scan.total) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {scanResult && (
         <div className="rounded-lg bg-violet-900/20 border border-violet-800 px-4 py-3 text-violet-300 text-sm">
@@ -157,11 +225,35 @@ export default function LibraryPage() {
             Zadne filmy. Klikni &quot;Skenovat&quot; pro nacteni knihovny.
           </div>
         ) : (
+          <div className="space-y-4">
+          <div className="flex flex-wrap gap-2 text-sm">
+            {([
+              ["all", `Vše (${movies.length})`],
+              ["review", `Na kontrolu (${summary.review ?? 0})`],
+              ["unmatched", `Nespárované (${summary.unmatched ?? 0})`],
+            ] as [MovieFilter, string][]).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setMovieFilter(key)}
+                className={`px-3 py-1 rounded-full border transition-colors ${
+                  movieFilter === key
+                    ? "border-violet-500 bg-violet-600/20 text-violet-200"
+                    : "border-zinc-800 text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {visibleMovies.length === 0 && (
+            <div className="text-center py-8 text-zinc-500 text-sm">Nic k zobrazení.</div>
+          )}
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-            {movies.map((movie) => (
+            {visibleMovies.map((movie) => (
               <div
                 key={movie.id}
-                className="group rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-violet-500 transition-colors"
+                onClick={() => { setFixingMovie(movie); setFixQuery(movie.filename.replace(/\.[^.]+$/, "")); setFixResults([]); }}
+                className="group cursor-pointer rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-violet-500 transition-colors"
               >
                 <div className="aspect-[2/3] relative bg-zinc-800">
                   {movie.poster_url ? (
@@ -182,9 +274,17 @@ export default function LibraryPage() {
                       {movie.quality}
                     </span>
                   )}
-                  {movie.matched_by === "filename" && (
-                    <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-orange-900/80 text-orange-300 text-[9px] font-bold">
-                      ?
+                  {STATUS_BADGE[movie.status] && (
+                    <span
+                      title={STATUS_BADGE[movie.status]!.title}
+                      className={`absolute top-1 left-1 px-1.5 py-0.5 rounded text-[9px] font-bold ${STATUS_BADGE[movie.status]!.cls}`}
+                    >
+                      {STATUS_BADGE[movie.status]!.label}
+                    </span>
+                  )}
+                  {movie.media?.hdr && movie.media.hdr !== "SDR" && (
+                    <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-yellow-300 text-[9px] font-bold">
+                      {movie.media.hdr}
                     </span>
                   )}
                 </div>
@@ -194,17 +294,11 @@ export default function LibraryPage() {
                     {movie.year && <span>{movie.year}</span>}
                     <span>{formatSize(movie.file_size)}</span>
                   </div>
-                  {movie.matched_by === "filename" && (
-                    <button
-                      onClick={() => { setFixingMovie(movie); setFixQuery(movie.filename.replace(/\.[^.]+$/, "")); setFixResults([]); }}
-                      className="mt-1 text-[10px] text-orange-400 hover:text-orange-300 transition-colors"
-                    >
-                      Opravit match
-                    </button>
-                  )}
+                  {movie.language && <p className="text-[10px] text-zinc-500 truncate">{movie.language}</p>}
                 </div>
               </div>
             ))}
+          </div>
           </div>
         )
       ) : selectedShow ? (
@@ -361,10 +455,77 @@ export default function LibraryPage() {
       {/* Fix Match Modal */}
       {fixingMovie && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setFixingMovie(null)}>
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-lg w-full mx-4 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-zinc-100">Opravit match</h3>
-            <p className="text-sm text-zinc-400 truncate">Soubor: {fixingMovie.filename}</p>
-            <p className="text-sm text-zinc-500">Aktualne: <span className="text-zinc-300">{fixingMovie.title} ({fixingMovie.year})</span></p>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-2xl w-full mx-4 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-zinc-100">
+              {fixingMovie.status === "review" ? "Na kontrolu" : fixingMovie.status === "unmatched" ? "Nespárováno" : "Film v knihovně"}
+            </h3>
+            <div className="text-sm space-y-1">
+              <p className="text-zinc-300 break-all">{fixingMovie.file_path || fixingMovie.filename}</p>
+              <p className="text-zinc-500">
+                {[
+                  formatDuration(fixingMovie.duration_s),
+                  fixingMovie.media?.width ? `${fixingMovie.media.width}×${fixingMovie.media.height}` : "",
+                  fixingMovie.media?.video_codec,
+                  fixingMovie.media?.hdr && fixingMovie.media.hdr !== "SDR" ? fixingMovie.media.hdr : "",
+                  formatSize(fixingMovie.file_size),
+                ].filter(Boolean).join(" · ")}
+              </p>
+              {(fixingMovie.media?.audio?.length ?? 0) > 0 && (
+                <p className="text-zinc-500">
+                  Zvuk: {fixingMovie.media.audio!.map((a) => `${(a.lang || "?").toUpperCase()} ${a.codec} ${a.channels}ch`).join(", ")}
+                </p>
+              )}
+              {(fixingMovie.media?.subtitles?.length ?? 0) > 0 && (
+                <p className="text-zinc-500">Titulky: {fixingMovie.media.subtitles!.map((l) => l.toUpperCase()).join(", ")}</p>
+              )}
+              {fixingMovie.tmdb_id ? (
+                <p className="text-zinc-500">
+                  Aktuálně: <span className="text-zinc-200">{fixingMovie.title} ({fixingMovie.year})</span> · TMDB {fixingMovie.tmdb_id} · skóre {fixingMovie.confidence}
+                </p>
+              ) : null}
+            </div>
+
+            {fixingMovie.candidates?.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">Kandidáti</p>
+                {fixingMovie.candidates.map((c) => (
+                  <button
+                    key={c.tmdb_id}
+                    onClick={async () => {
+                      await fixMovieMatch(fixingMovie.id, c.tmdb_id);
+                      setFixingMovie(null);
+                      loadData();
+                    }}
+                    className={`flex items-start gap-3 w-full p-2 rounded-lg text-left transition-colors hover:bg-zinc-800 ${
+                      c.tmdb_id === fixingMovie.tmdb_id ? "bg-zinc-800/60 ring-1 ring-violet-600/50" : ""
+                    }`}
+                  >
+                    {c.poster_url ? (
+                      <Image src={c.poster_url} alt="" width={40} height={60} className="rounded flex-shrink-0" />
+                    ) : (
+                      <div className="w-10 h-[60px] bg-zinc-700 rounded flex-shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="text-sm text-zinc-100 truncate">
+                          {c.title} <span className="text-zinc-500">({c.year ?? "?"})</span>
+                        </p>
+                        <span className={`text-xs font-mono flex-shrink-0 ${c.score >= 60 ? "text-green-400" : c.score >= 30 ? "text-orange-400" : "text-zinc-500"}`}>
+                          {c.score}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-500">
+                        {c.original_title !== c.title && <span>{c.original_title} · </span>}
+                        {c.runtime ? `${c.runtime} min · ` : ""}TMDB {c.tmdb_id}
+                      </p>
+                      <p className="text-[11px] text-zinc-400 mt-0.5">{c.reasons.join(" · ")}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <p className="text-xs uppercase tracking-wide text-zinc-500">Hledat na TMDB</p>
 
             <div className="flex gap-2">
               <input
