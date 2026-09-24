@@ -27,9 +27,8 @@ interface Props {
   upgradeFrom?: OwnedVersion | null;
 }
 
-/** An offer is an upgrade when its score is higher by at least this much ... */
-const UPGRADE_MIN_GAIN = 10;
-/** ... and it does not lose the Czech/Slovak audio the owned version has. */
+/** An offer is an upgrade when its score is higher than the owned version's and it does not
+ *  lose the Czech/Slovak audio the owned version has. */
 function hasLocalAudio(v: OwnedVersion): boolean {
   return v.language.toLowerCase().split(",").some((l) => l.trim() === "cs" || l.trim() === "sk");
 }
@@ -168,7 +167,7 @@ export default function FileTable({
     const isUpgrade = (f: ScoredFile): boolean => {
       if (!upgrade) return true;
       if ((f.film !== "yes" && f.film !== "unsure") || ownedSizes.has(f.size)) return false;
-      if (f.quality_score < (upgrade.quality_score ?? 0) + UPGRADE_MIN_GAIN) { hidden.quality += 1; return false; }
+      if (f.quality_score <= (upgrade.quality_score ?? 0)) { hidden.quality += 1; return false; }
       if (hasLocalAudio(upgrade) && f.lang_tier < 2) { hidden.language += 1; return false; }
       return true;
     };
@@ -286,11 +285,11 @@ export default function FileTable({
           </p>
           <label className="flex items-center gap-2 text-xs text-zinc-300">
             <input type="checkbox" checked={onlyBetter} onChange={(e) => setOnlyBetter(e.target.checked)} />
-            Jen lepší: kvalita aspoň o {UPGRADE_MIN_GAIN} bodů vyšší{hasLocalAudio(upgrade) ? ", s CZ/SK zvukem" : ""}
+            Jen lepší: vyšší kvalita{hasLocalAudio(upgrade) ? ", s CZ/SK zvukem" : ""}
           </label>
           {onlyBetter && (hiddenByUpgrade.quality > 0 || hiddenByUpgrade.language > 0) && (
             <p className="text-xs text-zinc-500">
-              Skryto: {hiddenByUpgrade.quality} bez dostatečně lepší kvality
+              Skryto: {hiddenByUpgrade.quality} bez lepší kvality
               {hiddenByUpgrade.language > 0 && <>, {hiddenByUpgrade.language} lepších bez CZ/SK zvuku</>}
               {verify.running && " · ještě ověřuji, čísla se můžou změnit"}
             </p>
