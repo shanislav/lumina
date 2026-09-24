@@ -59,7 +59,7 @@ def start_scan(force: bool = False) -> bool:
     _job.update({
         "running": True, "force": force, "phase": "movies", "total": 0, "done": 0, "current": "",
         "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None, "error": None,
-        "stats": {"movies_found": 0, "matched": 0, "review": 0, "unmatched": 0, "skipped": 0,
+        "stats": {"movies_found": 0, "matched": 0, "manual": 0, "review": 0, "unmatched": 0, "skipped": 0,
                   "removed": 0, "shows_found": 0, "episodes_matched": 0},
     })
     asyncio.create_task(_run(force))
