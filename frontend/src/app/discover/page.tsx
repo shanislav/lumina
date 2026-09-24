@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { TMDBMovie, getTrending, getRecentlyDigital, getRecentlyDigitalTV } from "@/lib/api";
+import { TMDBMovie, getTrending, getRecentlyDigital, getRecentlyDigitalTV, getOwned, OwnedVersion, versionLabel } from "@/lib/api";
 import DownloadPanel from "@/components/DownloadPanel";
 import MovieDetailModal from "@/components/MovieDetailModal";
 
@@ -32,6 +32,7 @@ export default function DiscoverPage() {
   const [filmLoading, setFilmLoading] = useState(true);
   const [tvLoading, setTvLoading] = useState(true);
   const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
+  const [owned, setOwned] = useState<Record<string, OwnedVersion[]>>({});
 
   useEffect(() => {
     Promise.all(
@@ -48,6 +49,8 @@ export default function DiscoverPage() {
       for (const [title, movies] of results) map[title] = movies;
       setFilmData(map);
       setFilmLoading(false);
+      const ids = Object.values(map).flat().map((m) => m.tmdb_id);
+      getOwned(ids.filter((id, i) => id && ids.indexOf(id) === i)).then(setOwned).catch(() => {});
     });
 
     Promise.all(
@@ -145,6 +148,14 @@ export default function DiscoverPage() {
                         <div className="flex items-center justify-center h-full text-zinc-600 text-xs">
                           Bez plakatu
                         </div>
+                      )}
+                      {tab === "filmy" && owned[String(movie.tmdb_id)] && (
+                        <span
+                          title={owned[String(movie.tmdb_id)].map(versionLabel).join("\n")}
+                          className="absolute bottom-1 left-1 right-1 rounded bg-emerald-900/90 px-1.5 py-0.5 text-[10px] font-medium text-emerald-200 truncate"
+                        >
+                          ✓ V knihovně · {owned[String(movie.tmdb_id)].map((v) => v.quality).join(" + ")}
+                        </span>
                       )}
                     </div>
                     <div className="p-2">
