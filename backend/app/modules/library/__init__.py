@@ -85,5 +85,8 @@ module = Module(
         # Radarr/Sonarr bridges removed — Lumina imports downloads itself
         "DELETE FROM automations WHERE type IN ('radarr', 'sonarr')",
         r"DELETE FROM settings WHERE key LIKE 'radarr\_%' ESCAPE '\' OR key LIKE 'sonarr\_%' ESCAPE '\'",
+        # the user's own words about a version ("pre deti — CZ dabing") and the version to prefer
+        add_column("library_movies", "note", "TEXT DEFAULT ''"),
+        add_column("library_movies", "preferred", "INTEGER DEFAULT 0"),
     ],
 )

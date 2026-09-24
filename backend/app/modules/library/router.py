@@ -41,7 +41,8 @@ async def scan_status():
 
 _MOVIE_COLUMNS = (
     "id, tmdb_id, title, original_title, year, poster_url, filename, file_size, quality, "
-    "language, added_at, matched_by, status, confidence, candidates, media, duration_s, file_path"
+    "language, added_at, matched_by, status, confidence, candidates, media, duration_s, file_path, "
+    "note, preferred"
 )
 
 
@@ -67,6 +68,8 @@ def _movie_row(r, prefs: quality.Prefs | None = None) -> dict:
         "media": media,
         "duration_s": r["duration_s"] or 0,
         "file_path": r["file_path"],
+        "note": r["note"] or "",
+        "preferred": bool(r["preferred"]),
     }
 
 
@@ -97,7 +100,7 @@ async def owned_versions(tmdb_ids: str):
     db = await get_db()
     try:
         cursor = await db.execute(
-            f"SELECT id, tmdb_id, filename, file_size, quality, language, media, duration_s, status "
+            f"SELECT id, tmdb_id, filename, file_size, quality, language, media, duration_s, status, note, preferred "
             f"FROM library_movies WHERE status IN ('matched', 'manual') AND tmdb_id IN ({','.join('?' for _ in ids)})",
             ids,
         )
@@ -111,6 +114,7 @@ async def owned_versions(tmdb_ids: str):
                 "language": r["language"], "duration_s": r["duration_s"] or 0,
                 "hdr": naming.hdr_label(media, r["filename"]), "codec": naming.codec_label(media),
                 "quality_score": q["quality_score"], "quality_summary": q["quality_summary"],
+                "note": r["note"] or "", "preferred": bool(r["preferred"]),
             })
         return result
     finally:
@@ -133,6 +137,32 @@ async def delete_library_movie(movie_id: int):
     db = await get_db()
     try:
         await db.execute("DELETE FROM library_movies WHERE id = ?", (movie_id,))
+        await db.commit()
+        return {"ok": True}
+    finally:
+        await db.close()
+
+
+class VersionUpdate(BaseModel):
+    note: str | None = None
+    preferred: bool | None = None
+
+
+@router.patch("/movies/{movie_id}")
+async def update_version(movie_id: int, body: VersionUpdate):
+    """Note on a version / mark it preferred (one preferred version per movie)."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT tmdb_id FROM library_movies WHERE id = ?", (movie_id,))
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Movie not found")
+        if body.note is not None:
+            await db.execute("UPDATE library_movies SET note = ? WHERE id = ?", (body.note.strip()[:200], movie_id))
+        if body.preferred is not None:
+            if body.preferred and row["tmdb_id"]:
+                await db.execute("UPDATE library_movies SET preferred = 0 WHERE tmdb_id = ?", (row["tmdb_id"],))
+            await db.execute("UPDATE library_movies SET preferred = ? WHERE id = ?", (int(body.preferred), movie_id))
         await db.commit()
         return {"ok": True}
     finally:

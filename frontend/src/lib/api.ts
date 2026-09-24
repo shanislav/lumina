@@ -467,6 +467,8 @@ export interface LibraryMovie {
   quality_score: number;
   quality_summary: string;
   quality_parts: [string, number][];
+  note: string;          // the user's words about this version
+  preferred: boolean;    // the version to prefer (one per movie)
 }
 
 export type LibraryStatus = "matched" | "review" | "unmatched" | "manual";
@@ -599,6 +601,15 @@ export async function searchTMDBForFix(movieId: number, query: string): Promise<
   return res.json();
 }
 
+export async function updateVersion(movieId: number, data: { note?: string; preferred?: boolean }): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/library/movies/${movieId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Update failed: ${res.status}`);
+}
+
 export async function fixMovieMatch(movieId: number, tmdbId: number): Promise<void> {
   await fetch(`${API_BASE}/api/library/movies/${movieId}/fix`, {
     method: "PUT",
@@ -620,6 +631,8 @@ export interface OwnedVersion {
   codec: string;
   quality_score?: number;
   quality_summary?: string;
+  note?: string;
+  preferred?: boolean;
 }
 
 /** What to do with an owned movie once a download finishes. */
@@ -634,7 +647,8 @@ export async function getOwned(tmdbIds: number[]): Promise<Record<string, OwnedV
 }
 
 export function versionLabel(v: OwnedVersion): string {
-  return [v.quality !== "unknown" ? v.quality : "", v.codec, v.hdr, v.language.replaceAll(",", "+")].filter(Boolean).join(" ");
+  const label = [v.quality !== "unknown" ? v.quality : "", v.codec, v.hdr, v.language.replaceAll(",", "+")].filter(Boolean).join(" ");
+  return `${v.preferred ? "★ " : ""}${label}${v.note ? ` „${v.note}“` : ""}`;
 }
 
 // --- Library: fix names on disk ---

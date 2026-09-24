@@ -150,3 +150,15 @@ async def test_length_mismatch_goes_to_review_and_deletes_nothing(setup, monkeyp
     assert old.exists()
     rows = _rows()
     assert rows[0] == (old.name, "matched") and rows[1][1] == "review"
+
+
+async def test_note_and_one_preferred_version(setup):
+    import importlib
+    lib = importlib.import_module("app.modules.library.router")  # the package exports the APIRouter as "router"
+    folder, old, new = setup
+    await events.emit("download.completed", _payload(new, {"mode": "version"}))
+    await lib.update_version(1, lib.VersionUpdate(note="  pre deti — CZ dabing ", preferred=True))
+    await lib.update_version(2, lib.VersionUpdate(preferred=True))
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("SELECT id, note, preferred FROM library_movies ORDER BY id").fetchall()
+    assert rows == [(1, "pre deti — CZ dabing", 0), (2, "", 1)]

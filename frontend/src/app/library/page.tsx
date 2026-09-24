@@ -25,6 +25,7 @@ import {
   getShowDetail,
   searchTMDBForFix,
   fixMovieMatch,
+  updateVersion,
   formatSize,
 } from "@/lib/api";
 import DownloadPanel from "@/components/DownloadPanel";
@@ -49,7 +50,9 @@ function groupMovies(movies: LibraryMovie[]): MovieGroup[] {
     groups.set(key, [...(groups.get(key) ?? []), m]);
   }
   return Array.from(groups, ([key, versions]) => {
-    versions.sort((a, b) => (QUALITY_RANK[b.quality] ?? 0) - (QUALITY_RANK[a.quality] ?? 0) || b.file_size - a.file_size);
+    // the preferred version leads (poster card, first in the list), then the best resolution
+    versions.sort((a, b) => Number(b.preferred) - Number(a.preferred)
+      || (QUALITY_RANK[b.quality] ?? 0) - (QUALITY_RANK[a.quality] ?? 0) || b.file_size - a.file_size);
     return { key, main: versions[0], versions };
   });
 }
@@ -728,6 +731,37 @@ export default function LibraryPage() {
                   Aktuálně: <span className="text-zinc-200">{fixingMovie.title} ({fixingMovie.year})</span> · TMDB {fixingMovie.tmdb_id} · skóre {fixingMovie.confidence}
                 </p>
               ) : null}
+              {(fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <input
+                    key={`note-${fixingMovie.id}`}
+                    defaultValue={fixingMovie.note}
+                    placeholder="Poznámka k verzi (např. pro děti — CZ dabing)"
+                    maxLength={200}
+                    onBlur={async (e) => {
+                      const note = e.target.value.trim();
+                      if (note === fixingMovie.note) return;
+                      await updateVersion(fixingMovie.id, { note });
+                      setFixingMovie({ ...fixingMovie, note });
+                      loadData();
+                    }}
+                    className="flex-1 min-w-[12rem] rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-violet-500"
+                  />
+                  <button
+                    onClick={async () => {
+                      const preferred = !fixingMovie.preferred;
+                      await updateVersion(fixingMovie.id, { preferred });
+                      setFixingMovie({ ...fixingMovie, preferred });
+                      loadData();
+                    }}
+                    title="Preferovaná verze filmu — v knihovně se zobrazí jako hlavní"
+                    className={`rounded px-2 py-1 text-xs border ${fixingMovie.preferred
+                      ? "border-yellow-600 text-yellow-300 bg-yellow-950/30" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+                  >
+                    {fixingMovie.preferred ? "★ Preferovaná verze" : "☆ Nastavit jako preferovanou"}
+                  </button>
+                </div>
+              )}
             </div>
 
             {fixingMovie.candidates?.length > 0 && (
@@ -878,6 +912,7 @@ export default function LibraryPage() {
               <button key={v.id} onClick={() => { setVersionsOf(null); openMovie(v); }}
                 className="w-full text-left rounded-lg border border-zinc-800 hover:border-violet-600 p-3 transition-colors">
                 <div className="flex flex-wrap items-center gap-2">
+                  {v.preferred && <span title="Preferovaná verze" className="text-yellow-400">★</span>}
                   <ScoreBadge score={v.quality_score} tip={v.quality_parts} />
                   <span className="text-xs text-zinc-300">{v.quality_summary}</span>
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${QUALITY_COLORS[v.quality] || QUALITY_COLORS.unknown}`}>{v.quality}</span>
@@ -887,6 +922,7 @@ export default function LibraryPage() {
                   <span className="text-xs text-zinc-500">{formatSize(v.file_size)}</span>
                   {v.duration_s > 0 && <span className="text-xs text-zinc-500">{formatDuration(v.duration_s)}</span>}
                 </div>
+                {v.note && <p className="text-xs text-violet-300 mt-1">„{v.note}“</p>}
                 <p className="text-[11px] text-zinc-500 mt-1 break-all">{v.filename}</p>
               </button>
             ))}
