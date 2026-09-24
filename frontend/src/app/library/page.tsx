@@ -61,7 +61,10 @@ function bestVersion(g: MovieGroup): LibraryMovie {
   return g.versions.reduce((a, b) => ((b.quality_score ?? 0) > (a.quality_score ?? 0) ? b : a));
 }
 
-const hasPart = (m: LibraryMovie, prefix: string) => (m.quality_parts ?? []).some(([label]) => label.startsWith(prefix));
+const hasPart = (m: LibraryMovie, prefix: string, maxPoints = 0) =>
+  (m.quality_parts ?? []).some(([label, points]) => label.startsWith(prefix) && points <= maxPoints);
+/** Only a clearly low bitrate is worth a flag (a small penalty is common for WEB-DL). */
+const LOW_BITRATE_FLAG_POINTS = -15;
 const hasLocalAudio = (m: LibraryMovie) => /\b(CS|SK)\b/i.test(m.language || "");
 
 type QualityFlag = "weak" | "2160p" | "1080p" | "720p" | "sd" | "h265" | "h264" | "old_codec" | "hdr"
@@ -77,9 +80,10 @@ const QUALITY_FLAGS: { key: QualityFlag; label: string; title: string; warn?: bo
   { key: "h264", label: "H.264", title: "Starší kodek, stejný obraz zabere asi 2× víc místa", test: (m) => /H\.264/.test(m.quality_summary || "") },
   { key: "old_codec", label: "XviD / MPEG-2 / VC-1", title: "Zastaralý kodek", warn: true, test: (m) => /XviD|MPEG-2|VC-1/.test(m.quality_summary || "") },
   { key: "hdr", label: "HDR / DV", title: "HDR10, HDR10+ nebo Dolby Vision", test: (m) => !!m.media?.hdr && m.media.hdr !== "SDR" },
-  { key: "low_bitrate", label: "Nízký bitrate", title: "Méně dat, než je pro rozlišení obvyklé", warn: true, test: (m) => hasPart(m, "nízký bitrate") },
+  { key: "low_bitrate", label: "Nízký bitrate", title: "Výrazně méně dat, než je pro rozlišení obvyklé (ztráta 15+ bodů)", warn: true, test: (m) => hasPart(m, "nízký bitrate", LOW_BITRATE_FLAG_POINTS) },
   { key: "upscale", label: "Upscale", title: "Uměle zvětšené 4K", warn: true, test: (m) => hasPart(m, "upscale") },
-  { key: "no_local", label: "Bez CZ/SK zvuku", title: "Žádná verze nemá český ani slovenský zvuk", warn: true, test: (_, g) => !g.versions.some(hasLocalAudio) },
+  { key: "no_local", label: "Bez CZ/SK zvuku", title: "Žádná verze nemá český ani slovenský zvuk (neznámý jazyk se nepočítá)", warn: true,
+    test: (_, g) => !g.versions.some(hasLocalAudio) && g.versions.some((v) => !!v.language) },
 ];
 
 type LibrarySort = "default" | "quality_asc" | "quality_desc" | "size_desc" | "added_desc";
