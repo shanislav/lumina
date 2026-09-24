@@ -90,12 +90,15 @@ export default function FileTable({
     });
   }
 
-  // Verify every WebShare/FastShare file in the background, in small batches. The server throttles
-  // both sources and caches every file, so this is polite and a repeated search costs nothing.
+  // Verify WebShare/FastShare files in the background, in small batches — only those that may be
+  // the film: junk ("no" by name, year, episode, other part) is not worth a request. Likely matches
+  // go first. The server throttles both sources and caches every file, so a repeated search is free.
   useEffect(() => {
     const gen = ++generation.current;
     setUpdates({});
-    const todo = files.filter((f) => DETAIL_SOURCES.has(f.source) && !f.verified);
+    const todo = files
+      .filter((f) => DETAIL_SOURCES.has(f.source) && !f.verified && f.film !== "no")
+      .sort((a, b) => Number(b.film === "yes") - Number(a.film === "yes"));
     setVerify({ done: 0, total: todo.length, running: todo.length > 0 });
     (async () => {
       for (let i = 0; i < todo.length; i += BATCH) {
