@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.config import get_effective_settings
+from app.config import get_effective_settings, movies_library_dir, tv_library_dir
 from app.clients.tmdb import TMDBClient
 from app.db import get_db
 from app.utils.tv_parser import (
@@ -210,8 +210,8 @@ def _scan_video_files(directory: str) -> list[dict]:
 async def scan_library():
     """Scan movie + TV directories, match with TMDB, store in DB."""
     cfg = await get_effective_settings()
-    movie_dir = cfg.get("plex_media_dir", "")
-    tv_dir = cfg.get("tv_media_dir", "")
+    movie_dir = movies_library_dir(cfg)
+    tv_dir = tv_library_dir(cfg)
     tmdb_key = cfg.get("tmdb_api_key", "")
 
     if not tmdb_key:

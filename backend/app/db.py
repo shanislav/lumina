@@ -2,8 +2,12 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import aiosqlite
+
+if TYPE_CHECKING:
+    from app.core.module import Module
 
 logger = logging.getLogger("app.db")
 
@@ -17,109 +21,15 @@ async def get_db() -> aiosqlite.Connection:
     return db
 
 
-async def init_db() -> None:
-    """Create tables and optionally migrate legacy .env credentials."""
+async def init_db(modules: list["Module"]) -> None:
+    """Run core + module migrations, then seed settings/sources from legacy .env."""
+    from app.core.migrations import run_migrations
+    from app.core.schema import CORE
+
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     db = await get_db()
     try:
-        await db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                name TEXT NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                config TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE TABLE IF NOT EXISTS automations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT UNIQUE NOT NULL,
-                name TEXT NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 0,
-                config TEXT NOT NULL DEFAULT '{}'
-            );
-
-            CREATE TABLE IF NOT EXISTS download_tracker (
-                id TEXT PRIMARY KEY,
-                tmdb_id INTEGER,
-                title TEXT,
-                year INTEGER,
-                backend TEXT,
-                status TEXT,
-                target_dir TEXT,
-                content_type TEXT DEFAULT 'movie',
-                processed INTEGER DEFAULT 0
-            );
-
-            CREATE TABLE IF NOT EXISTS library_movies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tmdb_id INTEGER,
-                title TEXT,
-                original_title TEXT,
-                year TEXT,
-                poster_url TEXT,
-                overview TEXT,
-                filename TEXT,
-                file_path TEXT UNIQUE,
-                file_size INTEGER DEFAULT 0,
-                quality TEXT DEFAULT '',
-                language TEXT DEFAULT '',
-                added_at TEXT,
-                scanned_at TEXT DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS library_shows (
-                tmdb_id INTEGER PRIMARY KEY,
-                title TEXT,
-                original_title TEXT,
-                year TEXT,
-                poster_url TEXT,
-                overview TEXT,
-                total_seasons INTEGER DEFAULT 0,
-                total_episodes INTEGER DEFAULT 0,
-                scanned_at TEXT DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS library_episodes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                show_tmdb_id INTEGER REFERENCES library_shows(tmdb_id) ON DELETE CASCADE,
-                season INTEGER,
-                episode INTEGER,
-                episode_title TEXT DEFAULT '',
-                air_date TEXT DEFAULT '',
-                filename TEXT DEFAULT '',
-                file_path TEXT DEFAULT '',
-                file_size INTEGER DEFAULT 0,
-                quality TEXT DEFAULT '',
-                language TEXT DEFAULT '',
-                has_file INTEGER DEFAULT 0,
-                UNIQUE(show_tmdb_id, season, episode)
-            );
-            """
-        )
-        await db.execute("INSERT OR IGNORE INTO automations (type, name, enabled) VALUES ('radarr', 'Radarr', 0)")
-        await db.execute("INSERT OR IGNORE INTO automations (type, name, enabled) VALUES ('sonarr', 'Sonarr', 0)")
-        await db.execute("INSERT OR IGNORE INTO automations (type, name, enabled) VALUES ('renamer', 'Renamer (Media Info)', 0)")
-
-        # Migrations for existing DBs
-        for migration in [
-            "ALTER TABLE download_tracker ADD COLUMN content_type TEXT DEFAULT 'movie'",
-            "ALTER TABLE library_movies ADD COLUMN matched_by TEXT DEFAULT 'filename'",
-        ]:
-            try:
-                await db.execute(migration)
-            except Exception:
-                pass  # column already exists
-
-        await db.commit()
+        await run_migrations(db, [CORE, *modules])
 
         # Auto-migrate from .env if tables are empty
         cursor = await db.execute("SELECT COUNT(*) FROM sources")
@@ -258,6 +168,10 @@ async def get_automations():
     finally:
         await db.close()
 
+async def get_automation(type_name: str) -> dict | None:
+    """Fetch one automation (enabled flag + config) by type."""
+    return next((a for a in await get_automations() if a["type"] == type_name), None)
+
 async def update_automation(type_name: str, enabled: bool = None, config: dict = None):
     """Update automation status or configuration."""
     db = await get_db()
@@ -266,18 +180,6 @@ async def update_automation(type_name: str, enabled: bool = None, config: dict =
             await db.execute("UPDATE automations SET enabled = ? WHERE type = ?", (1 if enabled else 0, type_name))
         if config is not None:
             await db.execute("UPDATE automations SET config = ? WHERE type = ?", (json.dumps(config), type_name))
-        await db.commit()
-    finally:
-        await db.close()
-
-async def track_download(id: str, tmdb_id: int, title: str, year: int, backend: str, target_dir: str, content_type: str = "movie"):
-    """Record a new download for background monitoring."""
-    db = await get_db()
-    try:
-        await db.execute(
-            "INSERT OR REPLACE INTO download_tracker (id, tmdb_id, title, year, backend, status, target_dir, content_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (id, tmdb_id, title, year, backend, "active", target_dir, content_type)
-        )
         await db.commit()
     finally:
         await db.close()

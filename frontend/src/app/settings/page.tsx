@@ -113,8 +113,16 @@ const GENERAL_SECTIONS = [
     title: "Stahování",
     icon: "📁",
     fields: [
-      { key: "plex_media_dir", label: "Složka pro filmy", type: "folder", hint: "Cílová složka pro filmy (v Docker kontejneru)" },
+      { key: "plex_media_dir", label: "Složka pro filmy", type: "folder", hint: "Kam se stahují filmy (v Docker kontejneru)" },
       { key: "tv_media_dir", label: "Složka pro seriály", type: "folder", hint: "Pokud prázdné, seriály se stahují do složky pro filmy" },
+    ],
+  },
+  {
+    title: "Knihovna",
+    icon: "🎞️",
+    fields: [
+      { key: "movies_library_dir", label: "Knihovna filmů", type: "folder", hint: "Kde leží hotová knihovna filmů (sken knihovny, duplicity). Pokud prázdné, použije se složka pro stahování filmů" },
+      { key: "tv_library_dir", label: "Knihovna seriálů", type: "folder", hint: "Kde leží hotová knihovna seriálů. Pokud prázdné, použije se složka pro stahování seriálů" },
     ],
   },
   {
