@@ -5,7 +5,10 @@ so e.g. a renamer can change ``payload["path"]`` before an importer moves the fi
 A failing handler is logged and skipped — it must never break other modules.
 
 Known events:
-    download.completed  {download_id, tmdb_id, title, year, content_type, path}
+    download.completed     {download_id, tmdb_id, title, year, content_type, path}
+                           handlers may change "path" (e.g. after renaming/moving the file)
+    library.collect_hints  {path, hints: [(tmdb_id, source), ...]}
+                           emitted per movie file during a library scan; handlers append hints
 """
 
 import logging

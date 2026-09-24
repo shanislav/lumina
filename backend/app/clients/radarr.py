@@ -15,6 +15,12 @@ class RadarrClient:
             headers={"X-Api-Key": self._api_key},
         )
 
+    async def get_movies(self) -> List[dict]:
+        """All movies known to Radarr (with movieFile when present)."""
+        resp = await self._http.get(f"{self._url}/api/v3/movie", timeout=120)
+        resp.raise_for_status()
+        return resp.json()
+
     async def get_movie_by_tmdb_id(self, tmdb_id: int) -> Optional[dict]:
         """Check if a movie exists in Radarr by its TMDB ID."""
         try:

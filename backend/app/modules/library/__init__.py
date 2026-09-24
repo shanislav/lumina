@@ -51,6 +51,14 @@ CREATE TABLE IF NOT EXISTS library_episodes (
 );
 """
 
+TMDB_CACHE = """
+CREATE TABLE IF NOT EXISTS tmdb_movies (
+    tmdb_id INTEGER PRIMARY KEY,
+    data TEXT NOT NULL,
+    fetched_at REAL NOT NULL
+);
+"""
+
 module = Module(
     name="library",
     title="Knihovna",
@@ -59,5 +67,14 @@ module = Module(
     migrations=[
         LIBRARY_V1,
         add_column("library_movies", "matched_by", "TEXT DEFAULT 'filename'"),
+        # v3+: identification with confidence + review queue (phase 1)
+        add_column("library_movies", "status", "TEXT DEFAULT 'matched'"),
+        add_column("library_movies", "confidence", "INTEGER DEFAULT 0"),
+        add_column("library_movies", "candidates", "TEXT DEFAULT '[]'"),
+        add_column("library_movies", "media", "TEXT DEFAULT '{}'"),
+        add_column("library_movies", "duration_s", "INTEGER DEFAULT 0"),
+        add_column("library_movies", "file_mtime", "REAL DEFAULT 0"),
+        add_column("library_movies", "imdb_id", "TEXT DEFAULT ''"),
+        TMDB_CACHE,
     ],
 )
