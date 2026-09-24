@@ -14,3 +14,22 @@ def test_ddl_queries_without_subtitle_and_duplicates():
 def test_only_video_files_from_ddl():
     names = ["a.mkv", "b.rar", "c.torrent", "d.srt", "e.iso", "f.part1.rar", "g.MP4", "h.001", "i.zip", "no-extension"]
     assert [n for n in names if _is_video_name(n)] == ["a.mkv", "g.MP4", "no-extension"]
+
+
+def test_fastshare_names_are_unescaped(monkeypatch):
+    import asyncio
+    from app.clients.fastshare import FastShareClient
+
+    class Resp:
+        def json(self):
+            return {"search": {"file": [{"id": "1", "filename": "Now.You.See.Me.Now.You.Don&#39;t.2025.mkv",
+                                         "data": {"value": "1"}}]}}
+
+    client = FastShareClient("u", "p")
+    client._hash = "x"
+
+    async def fake_get(*args, **kwargs):
+        return Resp()
+    monkeypatch.setattr(client._http, "get", fake_get)
+    files = asyncio.run(client.search("x"))
+    assert files[0].name == "Now.You.See.Me.Now.You.Don't.2025.mkv"

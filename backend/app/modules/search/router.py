@@ -147,6 +147,7 @@ def _norm(text: str) -> str:
 
 
 def _clean_title(text: str) -> str:
+    text = re.sub(r"['’ʼ]", "", text)  # "Don't" → "Dont", as in file names
     text = re.sub(r"\b(19|20)\d{2}\b", "", text)
     text = re.sub(r"[^\w\s]", " ", text)
     return re.sub(r"\s+", " ", text).strip()

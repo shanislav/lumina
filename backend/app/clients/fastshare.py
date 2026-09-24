@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 import unicodedata
@@ -132,7 +133,8 @@ class FastShareClient:
 
         files: list[FastShareFile] = []
         for item in file_list[:limit]:
-            filename = item.get("filename", "")
+            # the KODI API returns HTML-escaped names ("Don&#39;t") — breaks titles and the page slug
+            filename = html.unescape(item.get("filename", ""))
             download_url = item.get("download_url", "")
             file_id = str(item.get("id", ""))
             if not file_id:
