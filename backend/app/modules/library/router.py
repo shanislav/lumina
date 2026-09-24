@@ -164,6 +164,7 @@ async def update_version(movie_id: int, body: VersionUpdate):
                 await db.execute("UPDATE library_movies SET preferred = 0 WHERE tmdb_id = ?", (row["tmdb_id"],))
             await db.execute("UPDATE library_movies SET preferred = ? WHERE id = ?", (int(body.preferred), movie_id))
         await db.commit()
+        await emit_movie_updated(db, movie_id)   # the NFO backup carries note / preferred
         return {"ok": True}
     finally:
         await db.close()

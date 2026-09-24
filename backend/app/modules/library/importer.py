@@ -246,7 +246,10 @@ async def identify_movie(client: TMDBClient, db, video_path: str, videos_in_fold
     if (nfo and nfo.by_lumina and nfo.lumina_status == "manual" and ranked
             and ranked[0].candidate["tmdb_id"] == nfo.tmdb_id):
         status = "manual"
-    return {"status": status, "ranked": ranked}
+    restored = {}
+    if nfo and nfo.by_lumina and ranked and ranked[0].candidate["tmdb_id"] == nfo.tmdb_id:
+        restored = nfo.lumina_files.get(os.path.basename(video_path), {})
+    return {"status": status, "ranked": ranked, "restored": restored}
 
 
 async def _scan_movies(client: TMDBClient, db, root: str, force: bool) -> None:
@@ -328,6 +331,10 @@ async def _process_movie_file(client: TMDBClient, db, path: str, videos_in_folde
     else:
         values["file_path"] = path
         values["added_at"] = datetime.fromtimestamp(stat.st_mtime, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        restored = result.get("restored") or {}   # note / preferred from Lumina's NFO (lost DB)
+        if restored:
+            values["note"] = restored.get("note", "")
+            values["preferred"] = int(bool(restored.get("preferred")))
         columns = ", ".join(values)
         placeholders = ", ".join("?" for _ in values)
         cursor = await db.execute(f"INSERT INTO library_movies ({columns}) VALUES ({placeholders})", tuple(values.values()))

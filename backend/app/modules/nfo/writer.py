@@ -65,6 +65,10 @@ def build_nfo(payload: dict) -> str:
     add(lumina, "confidence", payload.get("confidence"))
     add(lumina, "matched_by", payload.get("matched_by"))
     add(lumina, "written", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    # the user's words about each version and the preferred one — restored by a library scan
+    for v in payload.get("versions") or []:
+        if v.get("note") or v.get("preferred"):
+            add(lumina, "file", v.get("note") or "", name=v["filename"], preferred=str(bool(v.get("preferred"))).lower())
 
     ET.indent(root)
     return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + ET.tostring(root, encoding="unicode") + "\n"

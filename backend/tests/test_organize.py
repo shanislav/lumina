@@ -185,3 +185,14 @@ async def test_foreign_named_subtitles_follow_the_video(library):
     assert dsts["whatever.ass"] == str(target / f"{stem}.ass")
     assert not plan["conflicts"]
 
+
+
+def test_nfo_keeps_note_and_preferred_version(tmp_path):
+    from app.modules.nfo.writer import build_nfo
+    xml = build_nfo({"tmdb_id": 335984, "tmdb": DETAILS, "media": MEDIA, "status": "matched",
+                     "versions": [{"filename": "a.mkv", "note": "pre deti — CZ dabing", "preferred": True},
+                                  {"filename": "b.mkv", "note": "", "preferred": False}]})
+    path = tmp_path / "movie.nfo"
+    path.write_text(xml, encoding="utf-8")
+    facts = read_nfo(str(path))
+    assert facts.lumina_files == {"a.mkv": {"note": "pre deti — CZ dabing", "preferred": True}}

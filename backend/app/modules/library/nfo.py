@@ -5,7 +5,7 @@ NFO files are only a hint — they can be wrong or stale (see docs/decisions/000
 
 import os
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -19,6 +19,8 @@ class NfoFacts:
     # NFO written by Lumina's nfo module (<lumina> block) — kept up to date, so it is trusted more
     by_lumina: bool = False
     lumina_status: str = ""
+    # {video file name: {"note", "preferred"}} written by Lumina's NFO module
+    lumina_files: dict = field(default_factory=dict)
 
 
 def find_nfo(video_path: str, videos_in_folder: int) -> str | None:
@@ -72,6 +74,10 @@ def read_nfo(path: str) -> NfoFacts | None:
     if lumina is not None:
         facts.by_lumina = True
         facts.lumina_status = (lumina.findtext("status") or "").strip()
+        for f in lumina.findall("file"):
+            if f.get("name"):
+                facts.lumina_files[f.get("name")] = {"note": (f.text or "").strip(),
+                                                     "preferred": f.get("preferred") == "true"}
     if not (facts.tmdb_id or facts.imdb_id):
         return None
     return facts

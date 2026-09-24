@@ -4,7 +4,8 @@ Event ``library.movie_updated`` payload:
     movie_id, status, confidence, matched_by, file_path, folder, media (MediaInfo dict),
     tmdb (cached TMDB details: title, original_title, year, runtime, imdb_id, overview, titles_by_lang, ...),
     folder_tmdb_ids (tmdb ids of all library videos in the same folder — tells whether
-    the folder belongs to this movie alone), folder_is_library_root
+    the folder belongs to this movie alone), folder_is_library_root,
+    versions ([{filename, note, preferred}] — this movie's files in the folder)
 """
 
 import json
@@ -37,6 +38,13 @@ async def emit_movie_updated(db, movie_id: int) -> None:
     except OSError:
         on_disk = list(known)
     folder_tmdb_ids = [known.get(path) for path in on_disk]
+    versions = []
+    if row.get("tmdb_id"):
+        cursor = await db.execute(
+            "SELECT filename, file_path, note, preferred FROM library_movies "
+            "WHERE tmdb_id = ? AND status IN ('matched', 'manual') ORDER BY id", (row["tmdb_id"],))
+        versions = [{"filename": r[0], "note": r[2] or "", "preferred": bool(r[3])}
+                    for r in await cursor.fetchall() if os.path.dirname(r[1]) == folder]
     root = movies_library_dir(await get_effective_settings())
 
     await events.emit("library.movie_updated", {
@@ -51,4 +59,5 @@ async def emit_movie_updated(db, movie_id: int) -> None:
         "tmdb": tmdb,
         "folder_tmdb_ids": folder_tmdb_ids,
         "folder_is_library_root": bool(root) and os.path.normpath(folder) == os.path.normpath(root),
+        "versions": versions,
     })
