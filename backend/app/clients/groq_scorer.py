@@ -147,46 +147,56 @@ LANGUAGE_CONFIG: dict[str, dict] = {
 
 
 def _build_system_prompt(languages: list[str]) -> str:
-    """Build Groq system prompt dynamically based on selected languages."""
-    lang_names = []
-    dubbing_hints = []
+    """Compact system prompt — Groq free tier allows ~8k tokens/min, so every token counts."""
+    hints = []
     for code in languages:
         cfg = LANGUAGE_CONFIG.get(code)
         if cfg:
-            lang_names.append(cfg["name"])
-            tags_str = ", ".join(cfg["tags"])
-            dubbing_hints.append(f"  - {cfg['name']}: look for tags: {tags_str}")
+            hints.append(f"{cfg['name']} ({', '.join(cfg['tags'][:5])})")
+    if not hints:
+        hints = ["Czech (cz, cze, czech, dabing)"]
+    return (
+        "Rate files for a movie download manager. Wanted audio languages: " + "; ".join(hints) + ".\n"
+        "Entries are prefixed [WS]/[FS] (direct download) or [T] (torrent, with seeders).\n"
+        "Reply ONLY with a JSON array, one item per file: [index, quality, dubbed, relevance]\n"
+        '- quality: "2160p"|"1080p"|"720p"|"SD"|"unknown"\n'
+        '- dubbed: 1 if the name suggests audio in a wanted language (also "multi"/"dual audio"), else 0\n'
+        "- relevance 0-100: is it the actual full movie? subtitles, samples, extras, soundtracks or other "
+        "movies of a series 0-20; full movie matching the title 70-100. More seeders is a plus.\n"
+        "No explanation."
+    )
 
-    if not lang_names:
-        lang_names = ["Czech"]
-        dubbing_hints = ["  - Czech: look for tags: cz, czech, český, dabing, dubbing, czdab, cze"]
 
-    lang_list = ", ".join(lang_names)
-    dubbing_block = "\n".join(dubbing_hints)
+# Extra request parameters that cut hidden reasoning tokens (they count against the rate limit).
+_REASONING_PARAMS = {
+    "openai/gpt-oss": {"reasoning_effort": "low"},
+    "qwen/": {"reasoning_format": "hidden"},
+}
+_NON_VIDEO_EXTS = {".srt", ".sub", ".idx", ".ass", ".ssa", ".nfo", ".txt", ".jpg", ".jpeg", ".png", ".sfv", ".md5", ".url"}
 
-    return f"""\
-You are a file-name analyzer for a movie/TV download manager.
-Given a movie title and a list of file/torrent names from multiple sources,
-analyze each entry and return a JSON array.
 
-Each entry is prefixed with [WS] (WebShare direct download), [FS] (FastShare direct download), or [T] (torrent).
-Torrent entries may include seeders count.
+def _is_obviously_irrelevant(f: ScorableFile) -> bool:
+    """Files that never need AI: subtitles/metadata/images and small samples."""
+    name = f.name.lower()
+    ext = "." + name.rsplit(".", 1)[-1] if "." in name else ""
+    if ext in _NON_VIDEO_EXTS:
+        return True
+    return "sample" in name and 0 < f.size < 300 * 1024 * 1024
 
-The user is interested in these languages: {lang_list}
 
-For EACH entry extract:
-- "index": the 0-based index of the entry in the input list
-- "quality": detected video quality (e.g. "4K", "2160p", "1080p", "720p", "480p", "SD", "unknown")
-- "is_dubbed": true if the file name suggests dubbing/audio in any of the user's preferred languages.
-  Language detection hints:
-{dubbing_block}
-  Also consider "multi" or "dual audio" tags that may include preferred languages.
-- "relevance_score": integer 0-100 rating how likely this entry is the actual movie content.
-  Score LOW (0-20) for: subtitles (.srt, .sub), samples, soundtracks, NFO files, screenshots, RAR parts that are not the main file.
-  Score HIGH (70-100) for: full movie files (.mkv, .avi, .mp4) or torrents whose name closely matches the query.
-  For torrents, higher seeders count is a positive quality signal.
-Return ONLY a valid JSON array, no markdown fences, no explanation.\
-"""
+def _parse_scores(content: str) -> list[tuple[int, str, bool, int]]:
+    """Accept the compact [index, quality, dubbed, relevance] format and the old object format."""
+    content = content.strip()
+    start, end = content.find("["), content.rfind("]")
+    data = json.loads(content[start:end + 1])
+    parsed = []
+    for entry in data:
+        if isinstance(entry, list) and len(entry) >= 4:
+            parsed.append((int(entry[0]), str(entry[1]), bool(entry[2]), int(entry[3])))
+        elif isinstance(entry, dict):
+            parsed.append((int(entry.get("index", -1)), str(entry.get("quality", "unknown")),
+                           bool(entry.get("is_dubbed", False)), int(entry.get("relevance_score", 50))))
+    return parsed
 
 
 async def score_results(
@@ -204,54 +214,57 @@ async def score_results(
     if not files:
         return []
 
-    system_prompt = _build_system_prompt(languages or ["cs"])
+    # Obvious non-movies are scored locally — no need to spend tokens on them.
+    local = [f for f in files if _is_obviously_irrelevant(f)]
+    files = [f for f in files if not _is_obviously_irrelevant(f)]
+    local_scored = _fallback_scoring(local, languages, query=movie_title)
+    for s in local_scored:
+        s.relevance_score = min(s.relevance_score, 10)
+    if not files:
+        return local_scored
 
-    lines: list[str] = []
-    # Use enumerate because ScorableFile model does not have an index attribute
+    prefix_map = {"webshare": "[WS]", "fastshare": "[FS]", "jackett": "[T]"}
+    lines = []
     for i, f in enumerate(files):
-        prefix_map = {"webshare": "[WS]", "fastshare": "[FS]", "jackett": "[T]"}
         prefix = prefix_map.get(f.source, f"[{f.source[:2].upper()}]")
-        extra = f" ({f.seeders} seeders)" if f.seeders is not None else ""
-        lines.append(f"{i}. {prefix} {f.name} ({f.size} bytes){extra}")
+        extra = f" {f.seeders}s" if f.seeders is not None else ""
+        lines.append(f"{i}. {prefix} {f.name} {f.size / 1e9:.1f}GB{extra}")
+    user_prompt = f'Movie: "{movie_title}"\n' + "\n".join(lines)
 
-    file_list_text = "\n".join(lines)
-    user_prompt = f'Movie title: "{movie_title}"\n\nFiles:\n{file_list_text}'
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _build_system_prompt(languages or ["cs"])},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 2048,
+    }
+    for prefix, params in _REASONING_PARAMS.items():
+        if model.startswith(prefix):
+            body.update(params)
 
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             GROQ_API_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.1,
-                "max_tokens": 4096,
-            },
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=body,
         )
         resp.raise_for_status()
 
-    content = resp.json()["choices"][0]["message"]["content"].strip()
-    if content.startswith("```"):
-        content = content.split("\n", 1)[1] if "\n" in content else content[3:]
-    if content.endswith("```"):
-        content = content[: content.rfind("```")]
-    content = content.strip()
+    payload = resp.json()
+    usage = payload.get("usage", {})
+    logger.info("Groq %s scored %d files, tokens=%s", model, len(files), usage.get("total_tokens"))
+    content = payload["choices"][0]["message"]["content"]
 
     try:
-        scored_data = json.loads(content)
-    except json.JSONDecodeError:
+        scored_data = _parse_scores(content)
+    except (json.JSONDecodeError, ValueError, TypeError):
         logger.error("Groq returned invalid JSON: %s", content[:500])
-        return _fallback_scoring(files, languages, query=movie_title)
+        return _fallback_scoring(files, languages, query=movie_title) + local_scored
 
     results: list[ScoredFile] = []
-    for entry in scored_data:
-        idx = entry.get("index", -1)
+    for idx, quality, dubbed, relevance in scored_data:
         if 0 <= idx < len(files):
             f = files[idx]
             results.append(
@@ -259,9 +272,9 @@ async def score_results(
                     ident=f.ident,
                     name=f.name,
                     size=f.size,
-                    quality=entry.get("quality", "unknown"),
-                    is_dubbed=bool(entry.get("is_dubbed", False)),
-                    relevance_score=int(entry.get("relevance_score", 50)),
+                    quality=quality,
+                    is_dubbed=dubbed,
+                    relevance_score=relevance,
                     source=f.source,
                     source_id=f.source_id,
                     magnet_url=f.magnet_url,
@@ -269,6 +282,7 @@ async def score_results(
                 )
             )
 
+    results.extend(local_scored)
     results.sort(key=lambda r: (-r.relevance_score, -r.size))
     return results
 
