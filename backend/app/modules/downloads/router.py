@@ -13,9 +13,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["download"])
 
-# In-memory mapping: gid/hash → source label (e.g. "FastShare", "WebShare", "Torrent")
-_download_sources: dict[str, str] = {}
-
 SOURCE_LABELS: dict[str, str] = {
     "webshare": "WebShare",
     "fastshare": "FastShare",
@@ -51,10 +48,9 @@ async def start_download(req: DownloadRequest) -> dict:
                 single_connection=True,
                 headers=download_info.get("headers"),
             )
-            _download_sources[gid] = source_label
             from app.modules.downloads.store import track_download
             from app.modules.downloads.monitor import ensure_monitor_running
-            await track_download(gid, req.tmdb_id, req.title, req.year, "aria2", target_dir, req.content_type or "movie", req.library_action)
+            await track_download(gid, req.tmdb_id, req.title, req.year, "aria2", target_dir, req.content_type or "movie", req.library_action, source_label)
             ensure_monitor_running()
             return {
                 "gid": gid,
@@ -78,10 +74,9 @@ async def start_download(req: DownloadRequest) -> dict:
         )
         try:
             torrent_hash = await qbt.add_torrent(req.magnet_url, save_path=target_dir)
-            _download_sources[torrent_hash] = source_label
             from app.modules.downloads.store import track_download
             from app.modules.downloads.monitor import ensure_monitor_running
-            await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie", req.library_action)
+            await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie", req.library_action, source_label)
             ensure_monitor_running()
             return {
                 "hash": torrent_hash,
@@ -98,8 +93,11 @@ async def start_download(req: DownloadRequest) -> dict:
 @router.get("/downloads")
 async def list_downloads() -> dict:
     """List all active + recent downloads from Aria2 and qBittorrent."""
+    from app.modules.downloads.store import source_labels
+
     cfg = await get_effective_settings()
     downloads: list[dict] = []
+    labels = await source_labels()
 
     # Aria2
     try:
@@ -108,18 +106,19 @@ async def list_downloads() -> dict:
             active = await aria2.tell_active()
             for d in active:
                 d["backend"] = "aria2"
-                d["source_label"] = _download_sources.get(d.get("gid", ""), "")
+                d["source_label"] = labels.get(d.get("gid", ""), "")
             downloads.extend(active)
 
             stopped = await aria2.tell_stopped(0, 10)
             for d in stopped:
                 d["backend"] = "aria2"
-                d["source_label"] = _download_sources.get(d.get("gid", ""), "")
+                d["source_label"] = labels.get(d.get("gid", ""), "")
             downloads.extend(stopped)
         finally:
             await aria2.close()
-    except Exception:
-        pass
+    except Exception as e:
+        # polled every few seconds — debug only, a stopped aria2 must not flood the log
+        logger.debug("Aria2 unavailable for the download list: %s", e)
 
     # qBittorrent
     if cfg.get("qbittorrent_url"):
@@ -147,12 +146,12 @@ async def list_downloads() -> dict:
                         "filename": t.get("name", ""),
                         "backend": "qbittorrent",
                         "progress": t.get("progress", 0),
-                        "source_label": _download_sources.get(h, "Torrent"),
+                        "source_label": labels.get(h, "Torrent"),
                     })
             finally:
                 await qbt.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("qBittorrent unavailable for the download list: %s", e)
 
     return {"downloads": downloads}
 
@@ -163,9 +162,6 @@ async def remove_download(
 ) -> dict:
     """Remove/cancel a download. Use active=true to cancel an in-progress download."""
     cfg = await get_effective_settings()
-
-    # Clean up source tracking
-    _download_sources.pop(identifier, None)
 
     if backend == "qbittorrent":
         if not cfg.get("qbittorrent_url"):

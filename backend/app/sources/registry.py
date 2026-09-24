@@ -84,6 +84,6 @@ class SourceRegistry:
         for s in self._sources:
             try:
                 await s.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Closing source %s failed: %s", s.source_id, e)
         self._sources = []

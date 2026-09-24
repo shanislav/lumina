@@ -21,6 +21,8 @@ module = Module(
         DOWNLOAD_TRACKER_V1,
         add_column("download_tracker", "content_type", "TEXT DEFAULT 'movie'"),
         add_column("download_tracker", "intent", "TEXT DEFAULT ''"),
+        # source label (WebShare / FastShare / Torrent) survives a restart
+        add_column("download_tracker", "source_label", "TEXT DEFAULT ''"),
     ],
     on_startup=[ensure_monitor_running],
 )
