@@ -68,8 +68,12 @@ _SUB_LANGS = {"cs", "sk", "en", "de", "fr", "pl", "hu", "es", "it", "ru", "uk", 
 
 def subtitle_suffix(name: str) -> str:
     """Language/forced part for a subtitle renamed to the video's stem: "Parasite.CZE.forced.srt"
-    -> ".cs.forced"; nothing recognisable -> "". Looks at the last words of the name only."""
-    words = [w for w in re.split(r"[.\s_\-\[\]()]+", os.path.splitext(name)[0].lower()) if w][-3:]
+    -> ".cs.forced"; nothing recognisable -> "". Looks at the last words of the name only, and
+    only after the last bracket: "[kor]" in "Film (2019) [WEBRip] [kor].ass" is the naming
+    scheme's audio tag, not the subtitle language."""
+    stem = os.path.splitext(name)[0].lower()
+    tail = re.split(r"[\])]", stem)[-1]
+    words = [w for w in re.split(r"[.\s_\-\[\]()]+", tail) if w][-3:]
     forced = "forced" in words
     lang = ""
     for w in reversed(words):

@@ -162,6 +162,8 @@ async def test_undo_with_nfo_module_leaves_no_empty_folder(library):
     ("Parasite.cz.srt", ".cs"),
     ("Parasite 2019 English.srt", ".en"),
     ("Parasite.HD.srt", ""),
+    ("Parasite (2021) [Webrip-1080p h264] [kor].ass", ""),        # audio tag of the old naming scheme
+    ("Parasite (2021) [Webrip-1080p] [kor].cze.srt", ".cs"),
 ])
 def test_subtitle_suffix(name, suffix):
     assert organize.subtitle_suffix(name) == suffix
