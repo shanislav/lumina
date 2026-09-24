@@ -76,7 +76,7 @@ class Facts:
     width: int = 0
     height: int = 0
     codec: str = ""
-    bitrate: int = 0          # bit/s (video, or overall when that is all we know)
+    bitrate: int = 0          # bit/s, overall (audio included) - what every source reports
     hdr: str = ""             # "", HDR10, HDR10+, DV, HLG
     audio: list[dict] = field(default_factory=list)   # [{lang, codec, channels}]
     audio_langs: list[str] = field(default_factory=list)
@@ -128,6 +128,42 @@ def facts_from_media(media: dict, name: str = "", size: int = 0) -> Facts:
     )
 
 
+# Rough bitrate of one audio track (bit/s). WebShare, FastShare and MediaInfo all report the
+# overall bitrate; a file with four DTS tracks carries ~6 Mb/s of sound that is not picture.
+def _track_bitrate(codec: str, channels: int) -> int:
+    c = (codec or "").lower()
+    surround = channels >= 6 or not channels
+    if any(x in c for x in LOSSLESS_AUDIO):
+        return 3_500_000
+    if "dts" in c or "dca" in c:
+        return 1_509_000 if surround else 768_000
+    if "a/52" in c or c in ("ac3", "ac-3"):                  # FastShare "ATSC A/52B (AC-3, E-AC-3)"
+        return 448_000 if surround else 192_000
+    if "eac3" in c or "e-ac-3" in c:
+        return 640_000 if surround else 256_000
+    if "aac" in c:
+        return 256_000 if surround else 128_000
+    if any(x in c for x in ("mp3", "mpeg audio", "opus", "vorbis")):
+        return 128_000
+    return 384_000 if surround else 192_000                  # unknown codec (FastShare: 2nd+ tracks)
+
+
+def audio_bitrate(f: Facts) -> int:
+    """Estimated bitrate of all audio tracks: from the tracks when known, else one track per
+    language in the name (at least one)."""
+    if f.audio:
+        return sum(_track_bitrate(a.get("codec", ""), a.get("channels") or 0) for a in f.audio)
+    return max(1, len(f.audio_langs)) * _track_bitrate("", 0)
+
+
+def video_bitrate(f: Facts) -> int:
+    """Overall bitrate minus the estimated audio: what the picture gets. Never below half of
+    the overall bitrate, so a wrong audio guess cannot sink a file."""
+    if not f.bitrate:
+        return 0
+    return max(f.bitrate - audio_bitrate(f), f.bitrate // 2)
+
+
 @dataclass
 class Prefs:
     local_langs: tuple[str, ...] = ("cs", "sk")
@@ -168,16 +204,17 @@ def score(f: Facts, prefs: Prefs | None = None) -> Score:
     parts.append((f.resolution, base))
     eff = EFFICIENCY.get(f.codec, 1.0)
     if f.bitrate:
-        eq = f.bitrate * eff
+        vb = video_bitrate(f)
+        eq = vb * eff
         good, excellent = GOOD[f.resolution], EXCELLENT[f.resolution]
         if eq < good:
             penalty = round(base * 0.6 * (1 - eq / good))
             if penalty:
-                parts.append((f"nízký bitrate {f.bitrate / 1e6:.1f} Mb/s", -penalty))
+                parts.append((f"nízký bitrate videa ~{vb / 1e6:.1f} Mb/s", -penalty))
         else:
             bonus = round(10 * min(1.0, (eq - good) / (excellent - good)))
             if bonus:
-                parts.append((f"bitrate {f.bitrate / 1e6:.1f} Mb/s", bonus))
+                parts.append((f"bitrate videa ~{vb / 1e6:.1f} Mb/s", bonus))
     else:
         parts.append(("bitrate neznámý", -round(base * 0.1)))
 

@@ -94,3 +94,18 @@ def test_max_size_and_hdr_preferences():
     no_hdr = score(facts_from_media(media, size=80e9), Prefs(hdr="avoid"))
     assert limited.score <= base.score - 25                             # −30, score is capped at 100
     assert no_hdr.score < base.score
+
+
+def test_video_bitrate_leaves_out_audio():
+    from app.core.quality import facts_from_media, video_bitrate
+    # Samotáři on WebShare: 28.6 Mb/s overall, four DTS tracks (2× 5.1, 2× stereo) ≈ 4.6 Mb/s of sound
+    four_dts = {"duration_s": 6543, "width": 1920, "height": 1080, "video_codec": "H264", "bitrate": 28589819,
+                "audio": [{"lang": "cs", "codec": "DTS", "channels": 6}] * 2 + [{"lang": "cs", "codec": "DTS", "channels": 2}] * 2}
+    assert 23.9e6 < video_bitrate(facts_from_media(four_dts, "Samotari.mkv")) < 24.1e6
+    # unverified: one track per language in the name
+    by_name = facts_from_name("Film.2020.1080p.CZ.SK.EN.mkv", size=4_500_000_000, duration_s=6000)
+    assert video_bitrate(by_name) == by_name.bitrate - 3 * 384_000
+    # a wrong guess never takes more than half
+    tiny = facts_from_media({"duration_s": 6000, "width": 720, "height": 400, "bitrate": 1_000_000,
+                             "audio": [{"lang": "en", "codec": "TrueHD", "channels": 8}]}, "x.mkv")
+    assert video_bitrate(tiny) == 500_000
