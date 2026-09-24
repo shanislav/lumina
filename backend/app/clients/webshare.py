@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 import httpx
 from passlib.hash import md5_crypt
 
+from app.core.mediainfo import normalize_language
 from app.models.schemas import WebShareFile
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,39 @@ class WebShareClient:
         if not link:
             raise RuntimeError(f"No download link for ident={ident}")
         return link
+
+    async def file_info(self, ident: str) -> dict | None:
+        """Technical info WebShare keeps about a file (official API, no page scraping)."""
+        token = await self._ensure_token()
+        resp = await self._http.post(f"{API_BASE}/file_info/", data={"ident": ident, "wst": token})
+        resp.raise_for_status()
+        root = ET.fromstring(resp.text)
+        if root.findtext("status") != "OK":
+            return None
+
+        def num(el, tag) -> int:
+            try:
+                return int(float(el.findtext(tag) or 0))
+            except ValueError:
+                return 0
+
+        video = root.find("video/stream")
+        audio = []
+        for stream in root.findall("audio/stream"):
+            audio.append({
+                "lang": normalize_language(stream.findtext("language")),
+                "codec": stream.findtext("format") or "",
+                "channels": num(stream, "channels"),
+            })
+        return {
+            "duration_s": num(root, "length"),
+            "width": num(video, "width") if video is not None else num(root, "width"),
+            "height": num(video, "height") if video is not None else num(root, "height"),
+            "video_codec": (video.findtext("format") if video is not None else root.findtext("format")) or "",
+            "bitrate": num(root, "bitrate"),
+            "audio": audio,
+            "subtitles": [],
+        }
 
     async def close(self) -> None:
         await self._http.aclose()

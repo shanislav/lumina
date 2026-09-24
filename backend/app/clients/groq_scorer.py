@@ -156,11 +156,10 @@ def _build_system_prompt(languages: list[str]) -> str:
     if not hints:
         hints = ["Czech (cz, cze, czech, dabing)"]
     return (
-        "Rate files for a movie download manager. Wanted audio languages: " + "; ".join(hints) + ".\n"
+        "Rate files for a movie download manager.\n"
         "Entries are prefixed [WS]/[FS] (direct download) or [T] (torrent, with seeders).\n"
-        "Reply ONLY with a JSON array, one item per file: [index, quality, dubbed, relevance]\n"
+        "Reply ONLY with a JSON array, one item per file: [index, quality, relevance]\n"
         '- quality: "2160p"|"1080p"|"720p"|"SD"|"unknown"\n'
-        '- dubbed: 1 if the name suggests audio in a wanted language (also "multi"/"dual audio"), else 0\n'
         "- relevance 0-100: is it the actual full movie? subtitles, samples, extras, soundtracks or other "
         "movies of a series 0-20; full movie matching the title 70-100. More seeders is a plus.\n"
         "No explanation."
@@ -186,7 +185,8 @@ def _is_obviously_irrelevant(f: ScorableFile) -> bool:
 
 
 def _parse_scores(content: str) -> list[tuple[int, str, bool, int]]:
-    """Accept the compact [index, quality, dubbed, relevance] format and the old object format."""
+    """Accept [index, quality, relevance], [index, quality, dubbed, relevance] and the old object format.
+    "dubbed" is ignored by callers — languages come from the name parser / the source itself."""
     content = content.strip()
     start, end = content.find("["), content.rfind("]")
     data = json.loads(content[start:end + 1])
@@ -194,6 +194,8 @@ def _parse_scores(content: str) -> list[tuple[int, str, bool, int]]:
     for entry in data:
         if isinstance(entry, list) and len(entry) >= 4:
             parsed.append((int(entry[0]), str(entry[1]), bool(entry[2]), int(entry[3])))
+        elif isinstance(entry, list) and len(entry) == 3:
+            parsed.append((int(entry[0]), str(entry[1]), False, int(entry[2])))
         elif isinstance(entry, dict):
             parsed.append((int(entry.get("index", -1)), str(entry.get("quality", "unknown")),
                            bool(entry.get("is_dubbed", False)), int(entry.get("relevance_score", 50))))

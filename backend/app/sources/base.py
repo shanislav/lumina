@@ -49,6 +49,14 @@ class BaseSource(ABC):
         """
         ...
 
+    async def get_details(self, ident: str, name: str) -> dict | None:
+        """Technical details of a file as the source knows them (optional).
+
+        Same shape as app.core.mediainfo.probe(): duration_s, width, height, video_codec,
+        bitrate, audio: [{lang, codec, channels}], subtitles: [lang]. None = not supported.
+        """
+        return None
+
     @abstractmethod
     async def test_connection(self) -> bool:
         """Validate credentials / reachability. Return True if OK."""

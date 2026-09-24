@@ -5,6 +5,7 @@ quality scoring, renamer). Reads only container headers — cheap even for large
 """
 
 import asyncio
+import unicodedata
 import logging
 from pathlib import Path
 
@@ -38,11 +39,27 @@ _LANG_MAP = {
 }
 
 
+# More ISO 639-2 codes seen on WebShare/FastShare, and Czech language names as FastShare
+# writes them ("česky", "anglicky") — matched without diacritics.
+_LANG_MAP.update({
+    "lit": "lt", "lav": "lv", "est": "et", "heb": "he", "ara": "ar", "hin": "hi", "tha": "th", "vie": "vi",
+    "srp": "sr", "hrv": "hr", "slv": "sl", "bul": "bg", "ind": "id", "may": "ms", "msa": "ms", "per": "fa", "fas": "fa",
+    "cesky": "cs", "cestina": "cs", "slovensky": "sk", "slovenstina": "sk", "anglicky": "en", "anglictina": "en",
+    "nemecky": "de", "polsky": "pl", "madarsky": "hu", "francouzsky": "fr", "spanelsky": "es", "italsky": "it",
+    "rusky": "ru", "ukrajinsky": "uk", "japonsky": "ja", "korejsky": "ko", "cinsky": "zh", "litevsky": "lt",
+    "lotyssky": "lv", "estonsky": "et", "hebrejsky": "he", "arabsky": "ar", "hindsky": "hi", "thajsky": "th",
+    "vietnamsky": "vi", "srbsky": "sr", "chorvatsky": "hr", "slovinsky": "sl", "bulharsky": "bg", "recky": "el",
+    "turecky": "tr", "holandsky": "nl", "svedsky": "sv", "dansky": "da", "norsky": "no", "finsky": "fi",
+    "rumunsky": "ro", "portugalsky": "pt",
+})
+
+
 def normalize_language(value: str | None) -> str:
-    """'cze' / 'ces' / 'Czech' / 'cs' / 'cs-CZ' → 'cs'. Unknown → ''."""
+    """'cze' / 'ces' / 'Czech' / 'česky' / 'cs' / 'cs-CZ' → 'cs'. Unknown → ''."""
     if not value:
         return ""
     v = str(value).strip().lower().split("-")[0].split("_")[0]
+    v = unicodedata.normalize("NFKD", v).encode("ascii", "ignore").decode()
     if len(v) == 2:
         return v
     return _LANG_MAP.get(v, "")

@@ -11,6 +11,9 @@ from app.clients.groq_scorer import score_results, _fallback_scoring
 from app.models.schemas import TMDBMovie, ScoredFile, ScorableFile
 from app.sources.base import SearchResult, SourceType
 from app.sources.registry import SourceRegistry
+from app.core.release_langs import parse_languages
+from app.modules.search.details import get_details
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -296,5 +299,29 @@ async def search_files(
         logger.warning("AI scoring failed, using fallback: %s", e)
         scored = _fallback_scoring(scorable, languages=languages, query=query)
 
+    # Languages from the name, deterministically — "dubbed" means audio in a wanted language
+    # other than English (English is the original of most films, not a dub).
+    wanted = [l for l in languages if l != "en"] or languages
+    for s in scored:
+        langs = parse_languages(s.name)
+        s.audio_langs, s.subtitle_langs = langs["audio"], langs["subtitles"]
+        s.is_dubbed = any(l in wanted for l in s.audio_langs)
+
     min_score = int(cfg.get("min_relevance_score", "70"))
     return [s for s in scored if s.relevance_score >= min_score]
+
+
+class DetailsFile(BaseModel):
+    source_id: int
+    ident: str
+    name: str
+
+
+class DetailsRequest(BaseModel):
+    files: list[DetailsFile]
+
+
+@router.post("/search/details")
+async def search_details(body: DetailsRequest) -> dict:
+    """Real audio/subtitle tracks and technical info of found files, from the sources themselves."""
+    return await get_details([f.model_dump() for f in body.files])

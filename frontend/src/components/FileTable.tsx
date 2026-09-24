@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { ScoredFile, startDownload, formatSize, OwnedVersion, LibraryAction, versionLabel } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { ScoredFile, startDownload, formatSize, OwnedVersion, LibraryAction, versionLabel, FileDetails, getFileDetails } from "@/lib/api";
 
 interface Props {
   files: ScoredFile[];
@@ -54,6 +54,20 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
   const [choosing, setChoosing] = useState<ScoredFile | null>(null);
   // same size to the byte = almost certainly the very file already in the library
   const ownedSizes = new Set(owned.map((v) => v.file_size));
+  // Real tracks from the sources, loaded for the top rows only (each file is asked once, then cached server-side).
+  const [details, setDetails] = useState<Record<string, FileDetails | null>>({});
+  const [detailsLoading, setDetailsLoading] = useState(false);
+
+  useEffect(() => {
+    const top = files.filter((f) => f.source === "webshare" || f.source === "fastshare").slice(0, DETAILS_ROWS);
+    if (!top.length) return;
+    let cancelled = false;
+    setDetailsLoading(true);
+    getFileDetails(top.map((f) => ({ source_id: f.source_id, ident: f.ident, name: f.name })))
+      .then((d) => { if (!cancelled) setDetails(d); })
+      .finally(() => { if (!cancelled) setDetailsLoading(false); });
+    return () => { cancelled = true; };
+  }, [files]);
 
   function handleDownload(file: ScoredFile) {
     // Movie already in the library → ask: another version, or replace one?
@@ -129,7 +143,9 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
             <th className="py-2 px-3 font-medium">Název</th>
             <th className="py-2 px-3 font-medium w-16">Zdroj</th>
             <th className="py-2 px-3 font-medium w-20">Kvalita</th>
-            <th className="py-2 px-3 font-medium w-16">Lang</th>
+            <th className="py-2 px-3 font-medium w-40">
+              Zvuk / titulky{detailsLoading && <span className="ml-1 text-zinc-600 animate-pulse">…</span>}
+            </th>
             <th className="py-2 px-3 font-medium w-20">Velikost</th>
             <th className="py-2 px-3 font-medium w-16">Skóre</th>
             <th className="py-2 px-3 font-medium w-28"></th>
@@ -164,15 +180,11 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
                 </td>
                 <td className="py-2 px-3">
                   <span className="inline-block rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono">
-                    {file.quality}
+                    {resolutionLabel(details[`${file.source_id}:${file.ident}`]) || file.quality}
                   </span>
                 </td>
                 <td className="py-2 px-3">
-                  {file.is_dubbed ? (
-                    <span className="text-green-400 font-bold text-xs">DUB</span>
-                  ) : (
-                    <span className="text-zinc-600">-</span>
-                  )}
+                  <LanguageCell file={file} details={details[`${file.source_id}:${file.ident}`]} />
                 </td>
                 <td className="py-2 px-3 text-zinc-400 font-mono text-xs">
                   {formatSize(file.size)}
@@ -213,6 +225,53 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const DETAILS_ROWS = 15;
+// Czech/Slovak audio is what this library is about — highlight it.
+const LOCAL = new Set(["cs", "sk"]);
+
+function resolutionLabel(d?: FileDetails | null): string {
+  if (!d || !d.width) return "";
+  if (d.width >= 3200 || d.height >= 1600) return "2160p";
+  if (d.width >= 1800 || d.height >= 900) return "1080p";
+  if (d.width >= 1200 || d.height >= 650) return "720p";
+  return "SD";
+}
+
+function Lang({ code, verified, sub }: { code: string; verified: boolean; sub?: boolean }) {
+  const local = LOCAL.has(code);
+  const base = "inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase mr-1 mb-0.5";
+  const style = sub
+    ? "bg-transparent text-zinc-400 border border-zinc-700"
+    : verified
+      ? local ? "bg-green-900/70 text-green-300" : "bg-zinc-700 text-zinc-200"
+      : local ? "border border-green-800 text-green-400/80" : "border border-zinc-700 text-zinc-400";
+  return <span className={`${base} ${style}`}>{code || "?"}</span>;
+}
+
+function LanguageCell({ file, details }: { file: ScoredFile; details?: FileDetails | null }) {
+  const verified = !!details && (details.audio.length > 0 || details.subtitles.length > 0);
+  const audio = verified ? details!.audio.map((a) => a.lang).filter(Boolean) : file.audio_langs ?? [];
+  const subs = verified ? details!.subtitles : file.subtitle_langs ?? [];
+  if (!audio.length && !subs.length) return <span className="text-zinc-600">-</span>;
+  const tip = verified
+    ? [
+        details!.audio.map((a) => [a.lang.toUpperCase(), a.codec, a.channels ? `${a.channels}ch` : ""].filter(Boolean).join(" ")).join(", "),
+        details!.video_codec, details!.bitrate ? `${Math.round(details!.bitrate / 1000)} kb/s` : "",
+      ].filter(Boolean).join(" · ")
+    : "Podle názvu souboru (neověřeno)";
+  return (
+    <div title={tip} className="leading-tight">
+      {verified ? <span className="text-green-500 text-[10px] mr-1">✓</span> : <span className="text-zinc-600 text-[10px] mr-1">?</span>}
+      {audio.map((l, i) => <Lang key={`a${i}${l}`} code={l} verified={verified} />)}
+      {subs.length > 0 && (
+        <span className="text-[10px] text-zinc-500 ml-0.5">
+          tit: {Array.from(new Set(subs)).map((l) => <Lang key={`s${l}`} code={l} verified={verified} sub />)}
+        </span>
+      )}
     </div>
   );
 }
