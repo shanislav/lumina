@@ -16,6 +16,9 @@ HINT_WEIGHTS = {"name_tag": 40, "nfo": 10, "nfo_imdb": 10, "radarr": 10}
 
 AUTO_MIN_SCORE = 60
 AUTO_MIN_MARGIN = 15
+# When both the file duration and TMDB runtime are known, an automatic match also
+# needs them to agree — a high score from names/hints alone is not enough.
+AUTO_MAX_DURATION_DIFF = 10
 LOCAL_LANGUAGES = {"cs", "sk"}
 
 
@@ -33,6 +36,7 @@ class Scored:
     candidate: dict
     score: int
     reasons: list[str]
+    duration_diff: float | None = None
 
 
 def _title_similarity(names: list[str], candidate_titles: list[str]) -> float:
@@ -48,6 +52,7 @@ def score_candidate(ev: FileEvidence, cand: dict) -> Scored:
     reasons: list[str] = []
 
     runtime = cand.get("runtime") or 0
+    diff = None
     if ev.duration_min and runtime:
         diff = abs(ev.duration_min - runtime)
         if diff <= 4:
@@ -102,7 +107,7 @@ def score_candidate(ev: FileEvidence, cand: dict) -> Scored:
         score += HINT_WEIGHTS.get(source, 0)
         reasons.append(f"tip: {source}")
 
-    return Scored(candidate=cand, score=score, reasons=reasons)
+    return Scored(candidate=cand, score=score, reasons=reasons, duration_diff=diff)
 
 
 def decide(scored: list[Scored]) -> tuple[str, list[Scored]]:
@@ -112,6 +117,7 @@ def decide(scored: list[Scored]) -> tuple[str, list[Scored]]:
         return "unmatched", ranked
     best = ranked[0].score
     second = ranked[1].score if len(ranked) > 1 else None
-    if best >= AUTO_MIN_SCORE and (second is None or best - second >= AUTO_MIN_MARGIN):
+    duration_ok = ranked[0].duration_diff is None or ranked[0].duration_diff <= AUTO_MAX_DURATION_DIFF
+    if best >= AUTO_MIN_SCORE and duration_ok and (second is None or best - second >= AUTO_MIN_MARGIN):
         return "matched", ranked
     return "review", ranked

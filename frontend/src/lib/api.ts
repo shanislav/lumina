@@ -371,7 +371,47 @@ export interface LibraryMovie {
   quality: string;
   language: string;
   added_at: string;
-  matched_by?: "nfo" | "filename" | "manual";
+  matched_by?: "nfo" | "filename" | "manual" | "auto";
+  status: LibraryStatus;
+  confidence: number;
+  candidates: MatchCandidate[];
+  media: MediaInfo;
+  duration_s: number;
+  file_path: string;
+}
+
+export type LibraryStatus = "matched" | "review" | "unmatched" | "manual";
+
+export interface MatchCandidate {
+  tmdb_id: number;
+  title: string;
+  original_title: string;
+  year: number | null;
+  runtime: number;
+  poster_url: string | null;
+  score: number;
+  reasons: string[];
+}
+
+export interface MediaInfo {
+  duration_s?: number;
+  width?: number;
+  height?: number;
+  video_codec?: string;
+  hdr?: string;
+  bitrate?: number;
+  audio?: { lang: string; codec: string; channels: number }[];
+  subtitles?: string[];
+}
+
+export interface ScanStatus {
+  running: boolean;
+  phase?: "movies" | "tv" | "done";
+  total?: number;
+  done?: number;
+  current?: string;
+  error?: string | null;
+  stats?: { movies_found: number; matched: number; review: number; unmatched: number; skipped: number; removed: number; shows_found: number; episodes_matched: number };
 }
 
 export interface TMDBSearchResult {
@@ -420,9 +460,21 @@ export interface LibraryShowDetail {
   seasons: LibrarySeason[];
 }
 
-export async function scanLibrary(): Promise<{ movies_found: number; movies_matched: number; shows_found: number; episodes_matched: number }> {
-  const res = await fetch(`${API_BASE}/api/library/scan`, { method: "POST" });
+export async function scanLibrary(force = false): Promise<ScanStatus & { started: boolean }> {
+  const res = await fetch(`${API_BASE}/api/library/scan?force=${force}`, { method: "POST" });
   if (!res.ok) throw new Error(`Scan failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getScanStatus(): Promise<ScanStatus> {
+  const res = await fetch(`${API_BASE}/api/library/scan/status`);
+  if (!res.ok) throw new Error(`Scan status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getLibrarySummary(): Promise<Partial<Record<LibraryStatus, number>>> {
+  const res = await fetch(`${API_BASE}/api/library/movies/summary`);
+  if (!res.ok) return {};
   return res.json();
 }
 

@@ -12,8 +12,9 @@ def run(ev, *cands):
     return decide([score_candidate(ev, c) for c in cands])
 
 
-def test_wrong_nfo_is_outvoted_by_duration_and_year():
-    # Folder renamed by tMM to "Blade Runner 2049 (2017)", NFO says 2049, file is the 1982 film (117 min).
+def test_wrong_hint_is_outvoted_by_duration_and_year():
+    # Hypothetical: NFO points to 2049, but the file is 117 min long → the 1982 film.
+    # (In the real library it was the other way round: Radarr named a 163 min file "(1982)".)
     ev = FileEvidence(
         titles=["Blade Runner", "Blade Runner 2049"], years={1982, 2017}, duration_min=117,
         audio_langs={"cs", "en"}, hints={335984: ["nfo"]},
@@ -64,3 +65,11 @@ def test_name_tag_is_trusted():
 
 def test_no_candidates_is_unmatched():
     assert decide([])[0] == "unmatched"
+
+
+def test_duration_mismatch_blocks_auto_match():
+    # Real case "Saints (2014)": file 98 min, best candidate 79 min, strong NFO hint → still review.
+    ev = FileEvidence(titles=["Saints"], years={2014}, duration_min=98, hints={509510: ["nfo", "nfo_imdb"]})
+    status, ranked = run(ev, movie(509510, "Sveci", 2014, 79, titles=["Sveci", "Saints"]), movie(652203, "Saints", 2014, 8))
+    assert ranked[0].candidate["tmdb_id"] == 509510
+    assert status == "review"
