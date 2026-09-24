@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import "./globals.css";
+import NavLinks from "@/components/NavLinks";
 
 export const metadata: Metadata = {
   title: "Lumina",
@@ -28,26 +29,7 @@ export default function RootLayout({
               <Image src="/favicon.svg" alt="" width={24} height={24} />
               Lumina
             </Link>
-            <div className="flex items-center gap-4">
-              <Link
-                href="/discover"
-                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                Objevit
-              </Link>
-              <Link
-                href="/library"
-                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                Knihovna
-              </Link>
-              <Link
-                href="/settings"
-                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                Nastaveni
-              </Link>
-            </div>
+            <NavLinks />
           </div>
         </nav>
         {children}

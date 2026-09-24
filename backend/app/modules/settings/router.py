@@ -30,6 +30,7 @@ DEFAULTS = {
     "quality_hdr": "neutral",         # prefer | neutral | avoid
     "quality_weights": "",            # JSON, only values changed from core.quality.DEFAULT_WEIGHTS
     "languages": "cs",
+    "disabled_modules": "",           # comma separated module names, applied on backend restart
 }
 
 

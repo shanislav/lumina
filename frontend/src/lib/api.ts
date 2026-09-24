@@ -345,6 +345,20 @@ export async function previewQuality(weights: QualityWeights): Promise<QualitySa
   return res.json();
 }
 
+export interface ModuleInfo {
+  name: string;
+  title: string;
+  required: boolean;
+  active: boolean;   // running now
+  enabled: boolean;  // by the setting — differs from active until the backend restarts
+}
+
+export async function getModules(): Promise<ModuleInfo[]> {
+  const res = await fetch(`${API_BASE}/api/modules`);
+  if (!res.ok) throw new Error(`Failed to load modules: ${res.status}`);
+  return res.json();
+}
+
 export async function updateAppSettings(data: AppSettings): Promise<AppSettings> {
   const res = await fetch(`${API_BASE}/api/settings`, {
     method: "PUT",

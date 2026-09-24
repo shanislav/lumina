@@ -62,8 +62,13 @@ async def health() -> dict:
 
 @app.get("/api/modules")
 async def list_modules() -> list[dict]:
+    """active = running now; enabled = what the setting says (differs until a backend restart)."""
+    from app.core.registry import read_disabled
+
     active = {m.name for m in ACTIVE_MODULES}
+    disabled = read_disabled()
     return [
-        {"name": m.name, "title": m.title, "required": m.required, "active": m.name in active}
+        {"name": m.name, "title": m.title, "required": m.required, "active": m.name in active,
+         "enabled": m.required or m.name not in disabled}
         for m in ALL_MODULES
     ]

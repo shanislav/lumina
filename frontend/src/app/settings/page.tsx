@@ -24,6 +24,7 @@ import {
 import { FLAG } from "@/components/LanguageSelect";
 import FolderBrowser from "@/components/FolderBrowser";
 import QualityWeightsEditor from "@/components/QualityWeights";
+import ModulesPanel from "@/components/ModulesPanel";
 import { getGroqModels, GroqModels } from "@/lib/api";
 
 const SOURCE_TYPES = [
@@ -350,6 +351,7 @@ export default function SettingsPage() {
               <QualityWeightsEditor value={settings.quality_weights || ""}
                 onChange={(json) => handleSettingChange("quality_weights", json)} />
               {renderSaveButton()}
+              <ModulesPanel />
             </div>
           )}
         </section>
