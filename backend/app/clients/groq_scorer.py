@@ -172,7 +172,7 @@ _REASONING_PARAMS = {
     "openai/gpt-oss": {"reasoning_effort": "low"},
     "qwen/": {"reasoning_format": "hidden"},
 }
-MAX_AI_FILES = 40
+MAX_AI_FILES = 30  # ≈2.6k tokens → ~3 searches per minute on the free tier
 _NON_VIDEO_EXTS = {".srt", ".sub", ".idx", ".ass", ".ssa", ".nfo", ".txt", ".jpg", ".jpeg", ".png", ".sfv", ".md5", ".url"}
 
 
