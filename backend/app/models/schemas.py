@@ -61,6 +61,20 @@ class ScoredFile(BaseModel):
     # the real tracks from /api/search/details when the source knows them.
     audio_langs: list[str] = []
     subtitle_langs: list[str] = []
+    # evaluation (app/modules/search/evaluate.py)
+    film: str = "unsure"                 # yes | unsure | length | no
+    film_reasons: list[str] = []
+    quality_score: int = 0
+    quality_summary: str = ""
+    quality_parts: list[list] = []
+    resolution: str = ""
+    codec: str = ""
+    bitrate: int = 0
+    hdr: str = ""
+    duration_s: int = 0
+    audio: list[dict] = []
+    verified: bool = False
+    lang_tier: int = 0
 
 
 class SearchRequest(BaseModel):

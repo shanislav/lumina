@@ -8,7 +8,7 @@ from other tools (NFO, Radarr) which can be wrong — see docs/decisions/0002.
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
-from app.modules.library.naming import normalize_title
+from app.core.release_name import normalize_title
 
 # Hint sources and their weight. An explicit {tmdb-ID} in the name is written by
 # Lumina itself (or the user), so it is trusted much more than third-party NFO/Radarr.

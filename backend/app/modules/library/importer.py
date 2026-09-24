@@ -29,7 +29,7 @@ from app.modules.library.files import (
     _scan_video_files,
 )
 from app.modules.library.matcher import FileEvidence, decide, score_candidate
-from app.modules.library.naming import VIDEO_EXTS, NameFacts, parse_name
+from app.core.release_name import VIDEO_EXTS, NameFacts, parse_name
 from app.modules.library.nfo import find_nfo, read_nfo
 from app.modules.library.notify import emit_movie_updated
 from app.utils.tv_parser import normalize_for_search, parse_tv_filename

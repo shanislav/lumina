@@ -9,6 +9,7 @@ import DownloadPanel from "@/components/DownloadPanel";
 import {
   TMDBMovie,
   ScoredFile,
+  MovieContext,
   searchMovies,
   searchFiles,
   getSetupStatus,
@@ -38,6 +39,14 @@ function HomeContent() {
   const [resultsCollapsed, setResultsCollapsed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [owned, setOwned] = useState<Record<string, OwnedVersion[]>>({});
+  const [movieCtx, setMovieCtx] = useState<MovieContext | null>(null);
+  const [preferLocal, setPreferLocal] = useState(true);
+
+  function showFiles(res: { files: ScoredFile[]; movie: MovieContext; prefer_local_audio: boolean }) {
+    setFiles(res.files);
+    setMovieCtx(res.movie);
+    setPreferLocal(res.prefer_local_audio);
+  }
 
   // "Already in the library?" for everything shown (search results + the selected movie)
   useEffect(() => {
@@ -71,8 +80,7 @@ function HomeContent() {
       const query = movie.year
         ? `${movie.title} ${movie.year}`
         : movie.title;
-      const results = await searchFiles(query, undefined, movie.original_title, movie.tmdb_id, movie.media_type);
-      setFiles(results);
+      showFiles(await searchFiles(query, undefined, movie.original_title, movie.tmdb_id, movie.media_type));
     } catch (e) {
       setError(e instanceof Error ? e.message : "File search error");
     } finally {
@@ -105,7 +113,7 @@ function HomeContent() {
       setFilesLoading(true);
       setError(null);
       searchFiles(qParam, undefined, origTitle, tmdbId, mediaType)
-        .then(setFiles)
+        .then(showFiles)
         .catch((e) => setError(e instanceof Error ? e.message : "Search error"))
         .finally(() => setFilesLoading(false));
       window.history.replaceState({}, "", "/");
@@ -139,8 +147,7 @@ function HomeContent() {
       const query = movie.year
         ? `${movie.title} ${movie.year}`
         : movie.title;
-      const results = await searchFiles(query, searchLang, movie.original_title, movie.tmdb_id, movie.media_type);
-      setFiles(results);
+      showFiles(await searchFiles(query, searchLang, movie.original_title, movie.tmdb_id, movie.media_type));
     } catch (e) {
       setError(e instanceof Error ? e.message : "File search error");
     } finally {
@@ -229,6 +236,8 @@ function HomeContent() {
           {!resultsCollapsed && (
             <FileTable
             owned={selectedOwned}
+            movie={movieCtx}
+            preferLocalAudio={preferLocal}
             tmdb_id={selectedMovie?.tmdb_id}
             title={selectedMovie?.title}
             year={parseInt(selectedMovie?.year || "0")}

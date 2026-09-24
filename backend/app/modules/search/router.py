@@ -7,12 +7,14 @@ from fastapi import APIRouter
 
 from app.config import get_effective_settings
 from app.clients.tmdb import TMDBClient
-from app.clients.groq_scorer import score_results, _fallback_scoring
+from app.clients.groq_scorer import score_results
 from app.models.schemas import TMDBMovie, ScoredFile, ScorableFile
 from app.sources.base import SearchResult, SourceType
 from app.sources.registry import SourceRegistry
-from app.core.release_langs import parse_languages
-from app.modules.search.details import get_details
+from app.modules.search.details import cached_details, get_details
+from app.modules.search.evaluate import (
+    RELEVANCE, MovieContext, evaluate, prefs_from_settings, recommended_key, year_of,
+)
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -172,17 +174,21 @@ def _ddl_queries(query: str, original_title: str = "", en_title: str = "") -> li
     return queries[:MAX_DDL_QUERIES] or [query]
 
 
-_YEAR = re.compile(r"(?<!\d)(19[0-9]{2}|20[0-9]{2})(?!\d)")
+MIN_SEEDERS = 10
 
 
-def _year_of(query: str) -> int | None:
-    years = _YEAR.findall(query)
-    return int(years[-1]) if years else None
+class SearchFilesResponse(BaseModel):
+    movie: dict
+    prefer_local_audio: bool
+    files: list[ScoredFile]
 
 
-def _years_mismatch(name: str, movie_year: int) -> bool:
-    years = [int(y) for y in _YEAR.findall(name)]
-    return bool(years) and all(abs(y - movie_year) > 1 for y in years)
+def _unique_names(names: list[str]) -> list[str]:
+    out: list[str] = []
+    for n in names:
+        if n and _norm(_clean_title(n)) not in {_norm(_clean_title(x)) for x in out}:
+            out.append(n)
+    return out
 
 
 def _to_scorable(results: list[SearchResult]) -> list[ScorableFile]:
@@ -202,18 +208,18 @@ def _to_scorable(results: list[SearchResult]) -> list[ScorableFile]:
     ]
 
 
-@router.get("/search/files", response_model=list[ScoredFile])
+@router.get("/search/files", response_model=SearchFilesResponse)
 async def search_files(
     query: str,
     language: str | None = None,
     original_title: str | None = None,
     tmdb_id: int | None = None,
     media_type: str | None = None,
-) -> list[ScoredFile]:
+) -> "SearchFilesResponse":
     cfg = await get_effective_settings()
     sources = SourceRegistry.get().sources
     if not sources:
-        return []
+        return SearchFilesResponse(movie={}, prefer_local_audio=True, files=[])
 
     # Parse language list
     languages = [l.strip() for l in cfg.get("languages", "cs").split(",") if l.strip()]
@@ -225,20 +231,31 @@ async def search_files(
     alt_queries = _build_alt_queries(query, original_title or "")
     all_queries.extend(alt_queries)
 
-    # Fetch English title from TMDB if we have tmdb_id (for non-EN content)
+    # Everything TMDB knows about the film's names, its year and runtime (one call). Files are named
+    # in any language, and the runtime lets verified durations expose wrong/incomplete files.
     en_title = ""
+    ctx = MovieContext(year=year_of(query))
     if tmdb_id:
+        client = TMDBClient(cfg["tmdb_api_key"])
         try:
-            client = TMDBClient(cfg["tmdb_api_key"])
-            en_title = await client.get_english_title(
-                tmdb_id, media_type or "movie"
-            )
-            await client.close()
-            if en_title and en_title.lower() not in [q.lower() for q in all_queries]:
-                all_queries.append(en_title)
-                logger.info("EN title for tmdb=%d: '%s'", tmdb_id, en_title)
+            if (media_type or "movie") == "movie":
+                full = await client.get_movie_full(tmdb_id)
+                by_lang = full.get("titles_by_lang") or {}
+                en_title = by_lang.get("en", "")
+                ctx.runtime = full.get("runtime") or 0
+                ctx.year = full.get("year") or ctx.year
+                ctx.titles = [full.get("title", ""), full.get("original_title", ""),
+                              *(by_lang.get(l, "") for l in ("cs", "sk", "en"))]
+            else:
+                en_title = await client.get_english_title(tmdb_id, media_type or "movie")
         except Exception as e:
-            logger.warning("Failed to fetch EN title for tmdb=%d: %s", tmdb_id, e)
+            logger.warning("TMDB details for tmdb=%s failed: %s", tmdb_id, e)
+        finally:
+            await client.close()
+        if en_title and en_title.lower() not in [q.lower() for q in all_queries]:
+            all_queries.append(en_title)
+    ctx.titles = _unique_names([re.sub(r"\b(19|20)\d{2}\b", "", query).strip(), original_title or "",
+                                en_title, *ctx.titles])
 
     # Deduplicate queries (case-insensitive)
     seen_lower: set[str] = set()
@@ -298,57 +315,80 @@ async def search_files(
         query, len(all_results), len(sources), len(unique_queries),
     )
 
+    prefs = prefs_from_settings(cfg)
+    empty = SearchFilesResponse(movie=ctx.as_dict(), prefer_local_audio=prefs.prefer_local_audio, files=[])
+    # torrents nobody seeds are useless
+    all_results = [r for r in all_results
+                   if not (r.source_type == SourceType.JACKETT and (r.seeders or 0) < MIN_SEEDERS)]
     if not all_results:
-        return []
+        return empty
 
-    scorable = _to_scorable(all_results)
+    # Rules first (names, years, durations, quality, languages) — with details already cached
+    # for these files, so a repeated search is verified straight away.
+    known = await cached_details([(r.source_type.value, r.ident) for r in all_results])
+    rows: list[dict] = []
+    for r in all_results:
+        details = known.get((r.source_type.value, r.ident))
+        ev = evaluate(r.name, r.size, ctx, prefs, details, r.duration_s, r.width, r.height)
+        rows.append({
+            "ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
+            "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders,
+            "quality": ev["resolution"] or "unknown", "relevance_score": RELEVANCE[ev["film"]], **ev,
+        })
 
-    try:
-        groq_model = cfg["groq_model"]
-        # Give the model every name of the movie, so English-named files are not rated as unrelated.
-        # Every name of the movie (UI language, original, English): files are named in any of them,
-        # and a file must not look unrelated just because the UI language differs ("Cosy Dens" vs "Pelíšky").
-        names: list[str] = []
-        for title in (query, original_title or "", en_title):
-            if title and _norm(_clean_title(title)) not in {_norm(_clean_title(n)) for n in names}:
-                names.append(title)
-        ai_title = " / ".join(names)
-        scored = await score_results(ai_title, scorable, cfg["groq_api_key"], languages=languages, model=groq_model)
-    except Exception as e:
-        logger.warning("AI scoring failed, using fallback: %s", e)
-        scored = _fallback_scoring(scorable, languages=languages, query=query)
+    # AI only decides what the rules could not ("Dune Part Two" vs "Dune: Part One", odd names).
+    unclear = [row for row in rows if row["film"] == "unsure"]
+    if unclear and cfg.get("groq_api_key"):
+        scorable = [ScorableFile(index=i, name=row["name"], size=row["size"], source=row["source"],
+                                 source_id=row["source_id"], ident=row["ident"], seeders=row["seeders"])
+                    for i, row in enumerate(unclear)]
+        try:
+            scored = await score_results(" / ".join(ctx.titles), scorable, cfg["groq_api_key"],
+                                         languages=list(prefs.local_langs), model=cfg["groq_model"])
+            by_ident = {x.ident: x.relevance_score for x in scored}
+            min_score = int(cfg.get("min_relevance_score", "70"))
+            for row in unclear:
+                rel = by_ident.get(row["ident"])
+                if rel is None:
+                    continue
+                row["relevance_score"] = rel
+                if rel >= min_score:
+                    row["film"], row["film_reasons"] = "yes", row["film_reasons"] + ["AI: je to tento film"]
+                elif rel < 30:
+                    row["film"], row["film_reasons"] = "no", row["film_reasons"] + ["AI: jiný obsah"]
+        except Exception as e:
+            logger.warning("AI check of %d unclear files failed: %s", len(unclear), e)
 
-    # Deterministic guard against AI slips: a file whose name carries years, none of them the
-    # movie's (±1), is another film ("Den co den 2018" for Pelíšky 1999). Titles with a number
-    # ("1917", "2001: …") stay fine — one matching year is enough.
-    movie_year = _year_of(query)
-    for s in scored:
-        if movie_year and _years_mismatch(s.name, movie_year):
-            s.relevance_score = min(s.relevance_score, 30)
-
-    # Languages from the name, deterministically — "dubbed" means audio in a wanted language
-    # other than English (English is the original of most films, not a dub).
-    wanted = [l for l in languages if l != "en"] or languages
-    for s in scored:
-        langs = parse_languages(s.name)
-        s.audio_langs, s.subtitle_langs = langs["audio"], langs["subtitles"]
-        s.is_dubbed = any(l in wanted for l in s.audio_langs)
-
-    min_score = int(cfg.get("min_relevance_score", "70"))
-    return [s for s in scored if s.relevance_score >= min_score]
+    rows.sort(key=lambda row: recommended_key(row, prefs))
+    counts = {k: sum(1 for r in rows if r["film"] == k) for k in ("yes", "unsure", "length", "no")}
+    logger.info("Search '%s': %s (AI asked about %d)", query, counts, len(unclear))
+    return SearchFilesResponse(movie=ctx.as_dict(), prefer_local_audio=prefs.prefer_local_audio,
+                               files=[ScoredFile(**row) for row in rows])
 
 
 class DetailsFile(BaseModel):
     source_id: int
     ident: str
     name: str
+    size: int = 0
 
 
 class DetailsRequest(BaseModel):
     files: list[DetailsFile]
+    movie: dict | None = None     # {"titles", "year", "runtime"} from the search response
 
 
 @router.post("/search/details")
 async def search_details(body: DetailsRequest) -> dict:
-    """Real audio/subtitle tracks and technical info of found files, from the sources themselves."""
-    return await get_details([f.model_dump() for f in body.files])
+    """Verified details from the sources + the file re-evaluated with them (quality, languages,
+    length check). {"<source_id>:<ident>": {"details": …, **evaluation} | null}"""
+    details = await get_details([f.model_dump() for f in body.files])
+    movie = body.movie or {}
+    ctx = MovieContext(titles=movie.get("titles") or [], year=movie.get("year"), runtime=movie.get("runtime") or 0)
+    prefs = prefs_from_settings(await get_effective_settings())
+    out: dict[str, dict | None] = {}
+    for f in body.files:
+        key = f"{f.source_id}:{f.ident}"
+        d = details.get(key)
+        out[key] = {"details": d, **evaluate(f.name, f.size, ctx, prefs, d)} if d else None
+    return out

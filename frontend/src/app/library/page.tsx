@@ -596,6 +596,10 @@ export default function LibraryPage() {
               {(fixingMovie.media?.subtitles?.length ?? 0) > 0 && (
                 <p className="text-zinc-500">Titulky: {fixingMovie.media.subtitles!.map((l) => l.toUpperCase()).join(", ")}</p>
               )}
+              <p className="text-zinc-400 flex items-center gap-2">
+                Kvalita: <ScoreBadge score={fixingMovie.quality_score} tip={fixingMovie.quality_parts} />
+                <span>{fixingMovie.quality_summary}</span>
+              </p>
               {fixingMovie.tmdb_id ? (
                 <p className="text-zinc-500">
                   Aktuálně: <span className="text-zinc-200">{fixingMovie.title} ({fixingMovie.year})</span> · TMDB {fixingMovie.tmdb_id} · skóre {fixingMovie.confidence}
@@ -751,6 +755,8 @@ export default function LibraryPage() {
               <button key={v.id} onClick={() => { setVersionsOf(null); openMovie(v); }}
                 className="w-full text-left rounded-lg border border-zinc-800 hover:border-violet-600 p-3 transition-colors">
                 <div className="flex flex-wrap items-center gap-2">
+                  <ScoreBadge score={v.quality_score} tip={v.quality_parts} />
+                  <span className="text-xs text-zinc-300">{v.quality_summary}</span>
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${QUALITY_COLORS[v.quality] || QUALITY_COLORS.unknown}`}>{v.quality}</span>
                   {v.media?.video_codec && <span className="text-xs text-zinc-400">{v.media.video_codec}</span>}
                   {v.media?.hdr && v.media.hdr !== "SDR" && <span className="text-xs text-yellow-300">{v.media.hdr}</span>}
@@ -860,5 +866,18 @@ function OrganizeResultView({ result, onUndo, busy }: { result: OrganizeResult; 
         </button>
       )}
     </div>
+  );
+}
+
+function ScoreBadge({ score, tip }: { score: number; tip?: [string, number][] }) {
+  const cls = score >= 80 ? "bg-green-900/70 text-green-300"
+    : score >= 60 ? "bg-lime-900/60 text-lime-300"
+    : score >= 40 ? "bg-yellow-900/60 text-yellow-300"
+    : "bg-red-900/50 text-red-300";
+  return (
+    <span title={(tip ?? []).map(([l, p], i) => `${l} ${i && p >= 0 ? "+" : ""}${p}`).join(" · ")}
+      className={`inline-block min-w-[2rem] text-center rounded px-1.5 py-0.5 text-xs font-bold font-mono ${cls}`}>
+      {score}
+    </span>
   );
 }

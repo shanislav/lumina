@@ -1,5 +1,16 @@
+import re
+
 from app.clients.fastshare import FastShareClient
 from app.sources.base import BaseSource, DownloadBackend, SearchResult, SourceType
+
+
+def _resolution(value: str) -> dict:
+    """FastShare search gives "1920x800" (or sometimes "2160p")."""
+    m = re.match(r"(\d+)x(\d+)", value or "")
+    if m:
+        return {"width": int(m.group(1)), "height": int(m.group(2))}
+    m = re.match(r"(\d{3,4})p", value or "")
+    return {"height": int(m.group(1))} if m else {}
 
 
 class FastShareSource(BaseSource):
@@ -21,6 +32,8 @@ class FastShareSource(BaseSource):
                 ident=f.file_id,
                 name=f.name,
                 size=f.size,
+                duration_s=f.duration,
+                **_resolution(f.resolution),
             )
             for f in files
         ]

@@ -158,7 +158,23 @@ const SEARCH_SECTIONS = [
     title: "Vyhledávání",
     icon: "🔍",
     fields: [
-      { key: "min_relevance_score", label: "Minimální skóre relevance", type: "range", hint: "Soubory s nižším skóre se nezobrazí (0 = vše, 100 = pouze perfektní shoda)" },
+      { key: "min_relevance_score", label: "AI: práh „je to ten film“", type: "range", hint: "AI posuzuje jen nejasné soubory (např. „Part Two“). Od této hodnoty je soubor uznán jako hledaný film, pod 30 jako jiný obsah." },
+    ],
+  },
+  {
+    title: "Kvalita",
+    icon: "🎚️",
+    fields: [
+      { key: "quality_prefer_local", label: "Doporučené řazení", type: "select_static", options: [
+        { value: "true", label: "Nejdřív český/slovenský zvuk, pak kvalita" },
+        { value: "false", label: "Jen podle kvality" },
+      ], hint: "Jazyky se berou z nastavení (bez angličtiny)" },
+      { key: "quality_max_size_gb", label: "Maximální velikost souboru (GB)", type: "text", hint: "Větší soubory dostanou výraznou srážku. 0 = bez limitu" },
+      { key: "quality_hdr", label: "HDR / Dolby Vision", type: "select_static", options: [
+        { value: "neutral", label: "Je mi to jedno (malý bonus)" },
+        { value: "prefer", label: "Chci (HDR +5, DV +7)" },
+        { value: "avoid", label: "Nechci (starší TV) −10" },
+      ] },
     ],
   },
 ];

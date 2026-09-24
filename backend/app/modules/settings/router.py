@@ -24,6 +24,10 @@ DEFAULTS = {
     "qbittorrent_username": "admin",
     "qbittorrent_password": "",
     "min_relevance_score": "70",
+    # quality of found files (app/core/quality.py)
+    "quality_prefer_local": "true",   # CZ/SK audio first in "Doporučené"
+    "quality_max_size_gb": "0",       # 0 = no limit
+    "quality_hdr": "neutral",         # prefer | neutral | avoid
     "languages": "cs",
 }
 
