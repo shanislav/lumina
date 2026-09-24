@@ -4,7 +4,7 @@ Shared by everything that puts movies on disk (renaming downloads, fixing the
 library), so a movie is always named the same way no matter how it got there.
 
 Tokens: {title} {year} {tmdb_id} {imdb_id} {res} {codec} {hdr} {source} {langs}
-Legacy token {tmdb-{id}} (old renamer format) is still understood.
+Legacy tokens {id} and {tmdb-{id}} (old renamer format) are still understood.
 Empty tokens disappear together with leftover separators ("[ 720p]" → "[720p]", "[]" → "").
 """
 
@@ -21,9 +21,10 @@ _SOURCE = re.compile(r"\b(remux|blu-?ray|bdrip|brrip|web-?dl|webrip|hdtv|sdtv|dv
 _SOURCE_LABEL = {"bluray": "Bluray", "blu-ray": "Bluray", "bdrip": "Bluray", "brrip": "Bluray", "web-dl": "WEBDL",
                  "webdl": "WEBDL", "webrip": "WEBRip", "hdtv": "HDTV", "sdtv": "SDTV", "dvdrip": "DVD", "dvd": "DVD",
                  "hdrip": "HDTV", "tvrip": "SDTV", "remux": "Remux"}
-_HDR_IN_NAME = [("DV", re.compile(r"\b(dv|dovi|dolby[ .]?vision)\b|uhdrdv", re.IGNORECASE)),
+# (?<!\{) — an unrendered template token like "{hdr}" is not an HDR marker
+_HDR_IN_NAME = [("DV", re.compile(r"(?<!\{)\b(dv|dovi|dolby[ .]?vision)\b|uhdrdv", re.IGNORECASE)),
                 ("HDR10+", re.compile(r"hdr10\+|hdr10plus", re.IGNORECASE)),
-                ("HDR", re.compile(r"\bhdr(10)?\b", re.IGNORECASE))]
+                ("HDR", re.compile(r"(?<!\{)\bhdr(10)?\b", re.IGNORECASE))]
 
 
 def pick_title(titles_by_lang: dict[str, str], original_language: str, original_title: str,
@@ -82,10 +83,11 @@ def codec_label(media: dict) -> str:
 
 
 def hdr_label(media: dict, name: str = "") -> str:
-    """HDR from MediaInfo, or from the release name when MediaInfo does not tell (DV often only in names)."""
-    hdr = media.get("hdr") or ""
-    if hdr and hdr != "SDR":
-        return hdr
+    """HDR/DV of a file. MediaInfo decides whenever it read the video track (it detects DV reliably);
+    the name is only a fallback without MediaInfo — e.g. remote files before download."""
+    if media.get("video_codec"):
+        hdr = media.get("hdr") or ""
+        return "" if hdr == "SDR" else hdr
     for label, pattern in _HDR_IN_NAME:
         if pattern.search(name):
             return label
@@ -127,6 +129,7 @@ def movie_values(info: dict, media: dict, original_name: str, title: str) -> dic
         "title": sanitize(title, component=False),
         "year": year,
         "tmdb_id": str(info.get("tmdb_id") or ""),
+        "id": str(info.get("tmdb_id") or ""),  # legacy renamer token {id}
         "imdb_id": info.get("imdb_id") or "",
         "res": resolution_label(media),
         "codec": codec_label(media),

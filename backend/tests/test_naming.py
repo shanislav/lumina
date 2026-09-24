@@ -10,12 +10,20 @@ def test_default_layout_folder_without_id_file_with_id():
     assert name == "Blade Runner 2049 (2017) [720p x264] [CS+EN] {tmdb-335984}.mkv"
 
 
-def test_hdr_from_release_name_and_colon():
-    media = {"width": 3840, "height": 2160, "video_codec": "HEVC", "hdr": "SDR", "audio": [{"lang": "cs"}]}
+def test_hdr_from_mediainfo_and_colon():
+    media = {"width": 3840, "height": 2160, "video_codec": "HEVC", "hdr": "DV", "audio": [{"lang": "cs"}]}
     folder, name = movie_paths({"tmdb_id": 425274, "year": 2025}, media, "Podfukáři 3 (2025) UHDRDV cz en.mp4",
                                "Now You See Me: Now You Don't", ".mp4")
     assert folder == "2025/Now You See Me - Now You Don't (2025)"
     assert name == "Now You See Me - Now You Don't (2025) [2160p x265 DV] [CS] {tmdb-425274}.mp4"
+
+
+def test_hdr_mediainfo_wins_over_name_name_is_fallback():
+    from app.core.naming import hdr_label
+    sdr = {"video_codec": "AVC", "hdr": "SDR"}
+    assert hdr_label(sdr, "Rubber (2010) [Bluray-720p x264] HDR.mkv") == ""      # local file: MediaInfo decides
+    assert hdr_label({}, "Movie.2023.2160p.UHD.DV.HDR10.mkv") == "DV"            # remote file: only the name
+    assert hdr_label({}, "Rubber (2010) {hdr} [EN].mkv") == ""                   # unrendered token is not HDR
 
 
 def test_title_dots_kept_but_not_trailing():
