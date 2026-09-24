@@ -87,7 +87,7 @@ const INTEGRATION_TYPES = [
       { key: "language", label: "Jazyk názvů", type: "select", options: [
         { value: "en", label: "Angličtina" }, { value: "cs", label: "Čeština" }, { value: "sk", label: "Slovenčina" },
         { value: "orig", label: "Originální název" }, { value: "de", label: "Němčina" },
-      ], hint: "V jakém jazyce se pojmenují složky a soubory filmů (když TMDB překlad nemá: angličtina → originál)" },
+      ], default: "en", hint: "V jakém jazyce se pojmenují složky a soubory filmů (když TMDB překlad nemá: angličtina → originál)" },
       { key: "keep_local_original", label: "České a slovenské filmy v originále", type: "checkbox", default: "true", hint: "Pelíšky zůstanou Pelíšky, ne „Cosy Dens“" },
       { key: "folder_format", label: "Složka", type: "text", default: "{year}/{title} ({year})", hint: "Relativně ke knihovně filmů, / odděluje podsložky" },
       {
