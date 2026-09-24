@@ -59,3 +59,32 @@ def test_fastshare_page_slug():
     assert page_slug("Matrix 1 (1999).mkv") == "matrix-1-1999-.mkv"
     assert page_slug("Now.You.See.Me.Now.You.Don't.2025.mkv") == "now.you.see.me.now.you.don-t.2025.mkv"
     assert page_slug("Pelíšky.mkv") == "pelisky.mkv"
+
+
+async def test_fastshare_pages_are_throttled(monkeypatch):
+    """FastShare must not see a burst of page requests (max 2 at once, ≥ PAGE_INTERVAL_S apart)."""
+    import asyncio
+    import time
+
+    import httpx
+
+    from app.clients import fastshare
+
+    starts: list[float] = []
+
+    class FakeResp:
+        status_code = 200
+        text = FS_PAGE
+
+    async def fake_get(self, url, *args, **kwargs):
+        starts.append(time.monotonic())
+        await asyncio.sleep(0.05)
+        return FakeResp()
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(fastshare, "_last_page_at", 0.0)
+    client = fastshare.FastShareClient("u", "p")
+    await asyncio.gather(*(client.file_details(str(i), f"f{i}.mkv") for i in range(5)))
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    assert len(starts) == 5
+    assert min(gaps) >= fastshare.PAGE_INTERVAL_S * 0.9

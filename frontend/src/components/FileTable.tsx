@@ -253,9 +253,11 @@ function Lang({ code, verified, sub }: { code: string; verified: boolean; sub?: 
 }
 
 function LanguageCell({ file, details }: { file: ScoredFile; details?: FileDetails | null }) {
-  const verified = !!details && (details.audio.length > 0 || details.subtitles.length > 0);
-  const audio = verified ? details!.audio.map((a) => a.lang).filter(Boolean) : file.audio_langs ?? [];
-  const subs = verified ? details!.subtitles : file.subtitle_langs ?? [];
+  const verified = !!details && details.audio.some((a) => a.lang);
+  const audio = Array.from(new Set(verified ? details!.audio.map((a) => a.lang).filter(Boolean) : file.audio_langs ?? []));
+  // WebShare does not report subtitles → keep the ones from the name (shown as unverified)
+  const subsVerified = !!details && details.subtitles.length > 0;
+  const subs = Array.from(new Set(subsVerified ? details!.subtitles : file.subtitle_langs ?? []));
   if (!audio.length && !subs.length) return <span className="text-zinc-600">-</span>;
   const tip = verified
     ? [
@@ -269,7 +271,7 @@ function LanguageCell({ file, details }: { file: ScoredFile; details?: FileDetai
       {audio.map((l, i) => <Lang key={`a${i}${l}`} code={l} verified={verified} />)}
       {subs.length > 0 && (
         <span className="text-[10px] text-zinc-500 ml-0.5">
-          tit: {Array.from(new Set(subs)).map((l) => <Lang key={`s${l}`} code={l} verified={verified} sub />)}
+          tit: {subs.map((l) => <Lang key={`s${l}`} code={l} verified={subsVerified} sub />)}
         </span>
       )}
     </div>

@@ -254,10 +254,13 @@ class FastShareClient:
         url = f"https://fastshare.cloud/{file_id}/{page_slug(name)}"
         async with _page_limit:
             global _last_page_at
-            wait = _last_page_at + PAGE_INTERVAL_S - asyncio.get_running_loop().time()
-            if wait > 0:
-                await asyncio.sleep(wait)
-            _last_page_at = asyncio.get_running_loop().time()
+            # Starts are scheduled one at a time, so two waiting requests cannot both
+            # read the same "last start" and fire together.
+            async with _page_schedule:
+                wait = _last_page_at + PAGE_INTERVAL_S - asyncio.get_running_loop().time()
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                _last_page_at = asyncio.get_running_loop().time()
             async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": UA}) as client:
                 resp = await client.get(url)
         if resp.status_code != 200:
@@ -271,6 +274,7 @@ class FastShareClient:
 PAGE_CONCURRENCY = 2
 PAGE_INTERVAL_S = 0.4
 _page_limit = asyncio.Semaphore(PAGE_CONCURRENCY)
+_page_schedule = asyncio.Lock()
 _last_page_at = 0.0
 
 
