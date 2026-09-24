@@ -109,3 +109,18 @@ def test_video_bitrate_leaves_out_audio():
     tiny = facts_from_media({"duration_s": 6000, "width": 720, "height": 400, "bitrate": 1_000_000,
                              "audio": [{"lang": "en", "codec": "TrueHD", "channels": 8}]}, "x.mkv")
     assert video_bitrate(tiny) == 500_000
+
+
+def test_user_weights_change_the_score():
+    from app.core.quality import merge_weights, weights_from_setting
+    media = {"duration_s": 6600, "width": 1920, "height": 1080, "video_codec": "HEVC", "bitrate": 3_400_000,
+             "audio": [{"lang": "cs", "codec": "AC3", "channels": 6}]}
+    f = facts_from_media(media, "Film.x265.mkv", size=2_800_000_000)
+    default = score(f, Prefs()).score
+    # H.265 counted as good as H.264 → lower bitrate equivalent → lower score
+    assert score(f, Prefs(weights=merge_weights({"efficiency": {"H.265": 1.0}}))).score < default
+    # 5.1 worth nothing
+    assert score(f, Prefs(weights=merge_weights({"points": {"surround_51": 0}}))).score == default - 5
+    # junk is ignored, defaults stay
+    assert weights_from_setting('{"points": {"surround_51": "x", "nope": 1}, "bad": 2}') == merge_weights(None)
+    assert weights_from_setting("not json") == merge_weights(None)

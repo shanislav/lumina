@@ -28,6 +28,7 @@ DEFAULTS = {
     "quality_prefer_local": "true",   # CZ/SK audio first in "Doporučené"
     "quality_max_size_gb": "0",       # 0 = no limit
     "quality_hdr": "neutral",         # prefer | neutral | avoid
+    "quality_weights": "",            # JSON, only values changed from core.quality.DEFAULT_WEIGHTS
     "languages": "cs",
 }
 
@@ -96,6 +97,50 @@ async def update_settings(body: dict[str, str]) -> dict[str, str]:
     new_stored = await get_all_settings()
     merged = {**DEFAULTS, **new_stored}
     return _mask(merged)
+
+
+# Typical files the weights editor shows a live score for (media dict as the sources report it).
+QUALITY_SAMPLES = [
+    ("WEB-DL 1080p H.264 5 Mb/s, CZ 5.1", "Film.2020.1080p.WEB-DL.CZ.mkv",
+     {"width": 1920, "height": 1080, "video_codec": "H264", "bitrate": 5_400_000, "audio": [{"lang": "cs", "codec": "AC3", "channels": 6}]}),
+    ("WEB-DL 1080p H.265 3 Mb/s, CZ 5.1", "Film.2020.1080p.x265.CZ.mkv",
+     {"width": 1920, "height": 1080, "video_codec": "HEVC", "bitrate": 3_400_000, "audio": [{"lang": "cs", "codec": "AC3", "channels": 6}]}),
+    ("BluRay 1080p H.264 15 Mb/s, DTS 5.1", "Film.2020.1080p.BluRay.mkv",
+     {"width": 1920, "height": 1080, "video_codec": "H264", "bitrate": 16_500_000, "audio": [{"lang": "en", "codec": "DTS", "channels": 6}]}),
+    ("UHD 2160p H.265 HDR10 25 Mb/s, TrueHD 7.1", "Film.2020.2160p.UHD.HDR.mkv",
+     {"width": 3840, "height": 2160, "video_codec": "HEVC", "bitrate": 29_000_000, "audio": [{"lang": "en", "codec": "TrueHD", "channels": 8}]}),
+    ("„4K“ AI upscale H.265 4.5 Mb/s", "Film.2020.UP.AI.4K.mkv",
+     {"width": 3840, "height": 2160, "video_codec": "HEVC", "bitrate": 4_900_000, "audio": [{"lang": "cs", "codec": "AAC", "channels": 2}]}),
+    ("720p H.264 2.5 Mb/s, 2.0", "Film.2020.720p.mkv",
+     {"width": 1280, "height": 720, "video_codec": "H264", "bitrate": 2_700_000, "audio": [{"lang": "cs", "codec": "AAC", "channels": 2}]}),
+    ("SD XviD 1.2 Mb/s", "Film.2020.XviD.avi",
+     {"width": 720, "height": 400, "video_codec": "XviD", "bitrate": 1_330_000, "audio": [{"lang": "cs", "codec": "MP3", "channels": 2}]}),
+]
+
+
+@router.get("/quality-weights")
+async def quality_weights() -> dict:
+    """Defaults and the weights in use now (defaults + the user's changes)."""
+    from app.core.quality import DEFAULT_WEIGHTS, weights_from_setting
+
+    stored = await get_all_settings()
+    return {"defaults": DEFAULT_WEIGHTS, "current": weights_from_setting(stored.get("quality_weights", ""))}
+
+
+@router.post("/quality-preview")
+async def quality_preview(body: dict) -> list[dict]:
+    """Score the sample files with the weights being edited (not saved yet)."""
+    from app.config import get_effective_settings
+    from app.core.quality import facts_from_media, merge_weights, prefs_from_settings, score
+
+    prefs = prefs_from_settings(await get_effective_settings())
+    prefs.weights = merge_weights(body.get("weights"))
+    out = []
+    for label, name, media in QUALITY_SAMPLES:
+        size = int(media["bitrate"] * 6600 / 8)   # a 110-minute film
+        result = score(facts_from_media({**media, "duration_s": 6600}, name, size), prefs)
+        out.append({"label": label, "score": result.score, "parts": result.parts})
+    return out
 
 
 @router.get("/browse")

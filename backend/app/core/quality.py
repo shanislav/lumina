@@ -25,6 +25,46 @@ EXCELLENT = {"2160p": 50e6, "1080p": 20e6, "720p": 8e6, "SD": 3e6}
 EFFICIENCY = {"H.265": 2.0, "AV1": 2.3, "H.264": 1.0, "VC-1": 0.9, "MPEG-2": 0.5, "XviD": 0.6}
 LOSSLESS_AUDIO = ("truehd", "dts-hd", "dts hd", "mlp", "flac", "pcm")
 
+# All numbers of the score in one place. The user can override any of them in Settings
+# (setting "quality_weights" = JSON with only the changed values); these are the defaults.
+DEFAULT_WEIGHTS: dict = {
+    "res_base": dict(RES_BASE),                                   # points for the resolution
+    "good_mbps": {k: v / 1e6 for k, v in GOOD.items()},           # H.264-equivalent video Mb/s
+    "excellent_mbps": {k: v / 1e6 for k, v in EXCELLENT.items()},
+    "efficiency": dict(EFFICIENCY),                               # picture per bit vs H.264
+    "points": {
+        "bitrate_bonus_max": 10,        # from "good" to "excellent" bitrate
+        "low_bitrate_max_pct": 60,      # a bitrate near zero loses this % of the resolution points
+        "unknown_bitrate_pct": 10,
+        "efficient_codec": 3,           # H.265 / AV1
+        "xvid": -5,
+        "hdr_prefer": 5, "dv_prefer": 7, "hdr_neutral": 2, "hdr_avoid": -10,
+        "upscale": -15,
+        "surround_71": 6, "surround_51": 5, "lossless_audio": 3,
+        "over_size_limit": -30,
+    },
+}
+
+
+def merge_weights(overrides: dict | None) -> dict:
+    """Defaults with the user's numbers on top; anything unknown or not a number is ignored."""
+    merged = {group: dict(values) for group, values in DEFAULT_WEIGHTS.items()}
+    for group, values in (overrides or {}).items():
+        if group not in merged or not isinstance(values, dict):
+            continue
+        for key, value in values.items():
+            if key in merged[group] and isinstance(value, (int, float)) and not isinstance(value, bool):
+                merged[group][key] = value
+    return merged
+
+
+def weights_from_setting(text: str) -> dict:
+    import json
+    try:
+        return merge_weights(json.loads(text) if text else None)
+    except (ValueError, TypeError):
+        return merge_weights(None)
+
 _CODEC_PATTERNS = [
     ("H.265", r"hevc|h\.?265|x265"),
     ("AV1", r"\bav1\b|av01"),
@@ -170,6 +210,7 @@ class Prefs:
     prefer_local_audio: bool = True
     max_size_gb: float = 0          # 0 = no limit
     hdr: str = "neutral"            # prefer | neutral | avoid
+    weights: dict = field(default_factory=lambda: merge_weights(None))
 
 
 def prefs_from_settings(cfg: dict) -> Prefs:
@@ -184,6 +225,7 @@ def prefs_from_settings(cfg: dict) -> Prefs:
         prefer_local_audio=cfg.get("quality_prefer_local", "true") != "false",
         max_size_gb=max_size,
         hdr=cfg.get("quality_hdr") or "neutral",
+        weights=weights_from_setting(cfg.get("quality_weights", "")),
     )
 
 
@@ -200,45 +242,49 @@ def score(f: Facts, prefs: Prefs | None = None) -> Score:
     if not f.resolution:
         return Score(0, [("kvalita neznámá", 0)], summary(f))
 
-    base = RES_BASE[f.resolution]
+    w = prefs.weights
+    pt = w["points"]
+    base = round(w["res_base"][f.resolution])
     parts.append((f.resolution, base))
-    eff = EFFICIENCY.get(f.codec, 1.0)
+    eff = w["efficiency"].get(f.codec, 1.0)
     if f.bitrate:
         vb = video_bitrate(f)
         eq = vb * eff
-        good, excellent = GOOD[f.resolution], EXCELLENT[f.resolution]
+        good = max(w["good_mbps"][f.resolution], 0.01) * 1e6
+        excellent = max(w["excellent_mbps"][f.resolution] * 1e6, good + 1)
         if eq < good:
-            penalty = round(base * 0.6 * (1 - eq / good))
+            penalty = round(base * pt["low_bitrate_max_pct"] / 100 * (1 - eq / good))
             if penalty:
                 parts.append((f"nízký bitrate videa ~{vb / 1e6:.1f} Mb/s", -penalty))
         else:
-            bonus = round(10 * min(1.0, (eq - good) / (excellent - good)))
+            bonus = round(pt["bitrate_bonus_max"] * min(1.0, (eq - good) / (excellent - good)))
             if bonus:
                 parts.append((f"bitrate videa ~{vb / 1e6:.1f} Mb/s", bonus))
     else:
-        parts.append(("bitrate neznámý", -round(base * 0.1)))
+        parts.append(("bitrate neznámý", -round(base * pt["unknown_bitrate_pct"] / 100)))
 
     if f.codec in ("H.265", "AV1"):
-        parts.append((f.codec, 3))           # same picture in about half the space
+        parts.append((f.codec, round(pt["efficient_codec"])))    # same picture in about half the space
     elif f.codec == "XviD":
-        parts.append(("XviD", -5))           # old codec, weak player support
+        parts.append(("XviD", round(pt["xvid"])))                # old codec, weak player support
 
     if f.hdr:
-        points = {"prefer": 7 if f.hdr == "DV" else 5, "neutral": 2, "avoid": -10}[prefs.hdr]
-        parts.append((f.hdr, points))
+        points = {"prefer": pt["dv_prefer"] if f.hdr == "DV" else pt["hdr_prefer"],
+                  "neutral": pt["hdr_neutral"], "avoid": pt["hdr_avoid"]}[prefs.hdr]
+        parts.append((f.hdr, round(points)))
     if f.upscale:
-        parts.append(("upscale do 4K", -15))
+        parts.append(("upscale do 4K", round(pt["upscale"])))
 
     channels = max((a.get("channels") or 0) for a in f.audio) if f.audio else 0
     if channels >= 8:
-        parts.append(("7.1", 6))
+        parts.append(("7.1", round(pt["surround_71"])))
     elif channels >= 6:
-        parts.append(("5.1", 5))
+        parts.append(("5.1", round(pt["surround_51"])))
     if any(any(x in (a.get("codec") or "").lower() for x in LOSSLESS_AUDIO) for a in f.audio):
-        parts.append(("bezztrátový zvuk", 3))
+        parts.append(("bezztrátový zvuk", round(pt["lossless_audio"])))
 
     if prefs.max_size_gb and f.size > prefs.max_size_gb * 1e9:
-        parts.append((f"nad limit {prefs.max_size_gb:g} GB", -30))
+        parts.append((f"nad limit {prefs.max_size_gb:g} GB", round(pt["over_size_limit"])))
 
     total = max(0, min(100, sum(p for _, p in parts)))
     return Score(total, parts, summary(f))

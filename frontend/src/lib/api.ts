@@ -314,6 +314,37 @@ export async function getAppSettings(): Promise<AppSettings> {
   return res.json();
 }
 
+/** Score numbers (backend core/quality.py DEFAULT_WEIGHTS). */
+export interface QualityWeights {
+  res_base: Record<string, number>;
+  good_mbps: Record<string, number>;
+  excellent_mbps: Record<string, number>;
+  efficiency: Record<string, number>;
+  points: Record<string, number>;
+}
+
+export interface QualitySample {
+  label: string;
+  score: number;
+  parts: [string, number][];
+}
+
+export async function getQualityWeights(): Promise<{ defaults: QualityWeights; current: QualityWeights }> {
+  const res = await fetch(`${API_BASE}/api/settings/quality-weights`);
+  if (!res.ok) throw new Error(`Failed to load quality weights: ${res.status}`);
+  return res.json();
+}
+
+export async function previewQuality(weights: QualityWeights): Promise<QualitySample[]> {
+  const res = await fetch(`${API_BASE}/api/settings/quality-preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ weights }),
+  });
+  if (!res.ok) throw new Error(`Quality preview failed: ${res.status}`);
+  return res.json();
+}
+
 export async function updateAppSettings(data: AppSettings): Promise<AppSettings> {
   const res = await fetch(`${API_BASE}/api/settings`, {
     method: "PUT",

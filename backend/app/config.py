@@ -57,6 +57,7 @@ async def get_effective_settings() -> dict[str, str]:
         "quality_prefer_local": db_settings.get("quality_prefer_local") or "true",
         "quality_max_size_gb": db_settings.get("quality_max_size_gb") or "0",
         "quality_hdr": db_settings.get("quality_hdr") or "neutral",
+        "quality_weights": db_settings.get("quality_weights") or "",
     }
 
 

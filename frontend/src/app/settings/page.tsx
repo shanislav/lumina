@@ -23,6 +23,7 @@ import {
 } from "@/lib/api";
 import { FLAG } from "@/components/LanguageSelect";
 import FolderBrowser from "@/components/FolderBrowser";
+import QualityWeightsEditor from "@/components/QualityWeights";
 import { getGroqModels, GroqModels } from "@/lib/api";
 
 const SOURCE_TYPES = [
@@ -346,6 +347,8 @@ export default function SettingsPage() {
           {settingsLoading ? <p className="text-zinc-500">Načítám...</p> : (
             <div className="space-y-4">
               {renderSettingsSections(GENERAL_SECTIONS)}
+              <QualityWeightsEditor value={settings.quality_weights || ""}
+                onChange={(json) => handleSettingChange("quality_weights", json)} />
               {renderSaveButton()}
             </div>
           )}
