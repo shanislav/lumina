@@ -92,26 +92,44 @@ export default function FileTable({
 
   // Verify WebShare/FastShare files in the background, in small batches — only those that may be
   // the film: junk ("no" by name, year, episode, other part) is not worth a request. Likely matches
-  // go first. The server throttles both sources and caches every file, so a repeated search is free.
+  // go first. The same file on both sources (same size) is verified once: WebShare first (one API
+  // call), FastShare (a page read) only when WebShare gives nothing. A copy already verified (the
+  // server caches every file) covers its group. The server throttles both sources.
   useEffect(() => {
     const gen = ++generation.current;
     setUpdates({});
-    const todo = files
-      .filter((f) => DETAIL_SOURCES.has(f.source) && !f.verified && f.film !== "no")
-      .sort((a, b) => Number(b.film === "yes") - Number(a.film === "yes"));
-    setVerify({ done: 0, total: todo.length, running: todo.length > 0 });
+    const groups = new Map<number, ScoredFile[]>();
+    for (const f of files) {
+      if (!DETAIL_SOURCES.has(f.source) || f.film === "no") continue;
+      groups.set(f.size, [...(groups.get(f.size) ?? []), f]);
+    }
+    const queues = Array.from(groups.values())
+      .filter((copies) => !copies.some((c) => c.verified))
+      .map((copies) => [...copies].sort((a, b) => SOURCE_ORDER.indexOf(a.source) - SOURCE_ORDER.indexOf(b.source)))
+      .sort((a, b) => Number(b[0].film === "yes") - Number(a[0].film === "yes"));
+    const total = queues.length;
+    setVerify({ done: 0, total, running: total > 0 });
     (async () => {
-      for (let i = 0; i < todo.length; i += BATCH) {
-        const batch = todo.slice(i, i + BATCH);
+      let pending = queues;
+      let done = 0;
+      while (pending.length) {
+        const current = pending.slice(0, BATCH);
+        pending = pending.slice(BATCH);
         const res = await getFileDetails(
-          batch.map((f) => ({ source_id: f.source_id, ident: f.ident, name: f.name, size: f.size })),
+          current.map(([f]) => ({ source_id: f.source_id, ident: f.ident, name: f.name, size: f.size })),
           movie ?? null,
         ).catch(() => ({} as Record<string, Partial<ScoredFile> | null>));
         if (gen !== generation.current) return; // a new search started
         const got: Record<string, Partial<ScoredFile>> = {};
         for (const [k, v] of Object.entries(res)) if (v) got[k] = v;
         setUpdates((prev) => ({ ...prev, ...got }));
-        setVerify({ done: Math.min(i + BATCH, todo.length), total: todo.length, running: i + BATCH < todo.length });
+        const retry: ScoredFile[][] = [];
+        for (const [first, ...rest] of current) {
+          if (got[keyOf(first)] || !rest.length) done += 1;
+          else retry.push(rest); // this source gave nothing — try the copy on the other one
+        }
+        pending = [...retry, ...pending];
+        setVerify({ done, total, running: pending.length > 0 });
       }
     })();
   }, [files, movie]);
@@ -326,6 +344,7 @@ export default function FileTable({
 
 const BATCH = 15;
 const DETAIL_SOURCES = new Set(["webshare", "fastshare"]);
+const SOURCE_ORDER = ["webshare", "fastshare"]; // cheapest verification first
 const FILM_ORDER: Record<string, number> = { yes: 0, unsure: 1, length: 2, no: 3 };
 // Czech/Slovak audio is what this library is about — highlight it.
 const LOCAL = new Set(["cs", "sk"]);
