@@ -61,9 +61,12 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
 
   useEffect(() => setFilters(loadFilters()), []);
   function updateFilters(patch: Partial<Filters>) {
-    const next = { ...filters, ...patch };
-    setFilters(next);
-    try { localStorage.setItem(FILTERS_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+    // functional update: quick consecutive clicks must not overwrite each other
+    setFilters((prev) => {
+      const next = { ...prev, ...patch };
+      try { localStorage.setItem(FILTERS_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+      return next;
+    });
   }
 
   // Details are asked in small batches only for rows that need them (the server caches them per file
@@ -281,7 +284,7 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
       <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-zinc-500">
         <span>Zobrazeno {view.length} z {files.length}</span>
         {hiddenUnverified.length > 0 && (
-          <span>· {hiddenUnverified.length} skrytých zatím neověřených (jazyk jen podle názvu)</span>
+          <span>· {hiddenUnverified.length} skrytých zatím neověřených (jazyk/kvalita jen podle názvu)</span>
         )}
         {(unverifiedInView.length > 0 || hiddenUnverified.length > 0) && (
           <button
