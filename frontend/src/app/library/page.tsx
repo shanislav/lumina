@@ -236,6 +236,15 @@ export default function LibraryPage() {
     }
   }
 
+  /** Search this movie's offers in upgrade mode: only better than this version, same language or better. */
+  function findBetterVersion(movie: LibraryMovie) {
+    const tmdbMovie = {
+      tmdb_id: movie.tmdb_id, title: movie.title, original_title: movie.original_title, year: movie.year,
+      overview: "", poster_url: movie.poster_url, media_type: "movie",
+    };
+    router.push(`/?movie=${btoa(encodeURIComponent(JSON.stringify(tmdbMovie)))}&upgrade=${movie.id}`);
+  }
+
   function handleSearchEpisode(showTitle: string, season: number, episode: number) {
     const se = `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
     const query = `${showTitle} ${se}`;
@@ -599,6 +608,12 @@ export default function LibraryPage() {
               <p className="text-zinc-400 flex items-center gap-2">
                 Kvalita: <ScoreBadge score={fixingMovie.quality_score} tip={fixingMovie.quality_parts} />
                 <span>{fixingMovie.quality_summary}</span>
+                {fixingMovie.tmdb_id && (fixingMovie.status === "matched" || fixingMovie.status === "manual") ? (
+                  <button onClick={() => findBetterVersion(fixingMovie)}
+                    className="ml-auto rounded bg-violet-600 px-3 py-1 text-xs font-medium text-white hover:bg-violet-500">
+                    Hledat lepší verzi
+                  </button>
+                ) : null}
               </p>
               {fixingMovie.tmdb_id ? (
                 <p className="text-zinc-500">

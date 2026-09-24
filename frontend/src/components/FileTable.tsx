@@ -23,6 +23,15 @@ interface Props {
   owned?: OwnedVersion[];
   movie?: MovieContext | null;
   preferLocalAudio?: boolean;
+  /** Upgrade mode (library "Hledat lepší verzi"): the owned version an offer has to beat. */
+  upgradeFrom?: OwnedVersion | null;
+}
+
+/** An offer is an upgrade when its score is higher by at least this much ... */
+const UPGRADE_MIN_GAIN = 10;
+/** ... and it does not lose the Czech/Slovak audio the owned version has. */
+function hasLocalAudio(v: OwnedVersion): boolean {
+  return v.language.toLowerCase().split(",").some((l) => l.trim() === "cs" || l.trim() === "sk");
 }
 
 const BADGE_STYLES: Record<string, { bg: string; label: string }> = {
@@ -68,11 +77,14 @@ interface Row {
 
 export default function FileTable({
   files, loading, onDownloadStarted, tmdb_id, title, year, mediaType, owned = [], movie, preferLocalAudio = true,
+  upgradeFrom = null,
 }: Props) {
+  const [onlyBetter, setOnlyBetter] = useState(true);
+  const upgrade = upgradeFrom && upgradeFrom.quality_score != null ? upgradeFrom : null;
   const [downloading, setDownloading] = useState<Record<string, string>>({});
   const [choosing, setChoosing] = useState<ScoredFile | null>(null);
   // same size to the byte = almost certainly the very file already in the library
-  const ownedSizes = new Set(owned.map((v) => v.file_size));
+  const ownedSizes = useMemo(() => new Set(owned.map((v) => v.file_size)), [owned]);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [showJunk, setShowJunk] = useState(false);
   // Re-evaluations from verified details, by "<source_id>:<ident>"
@@ -149,10 +161,20 @@ export default function FileTable({
     }));
   }, [files, updates]);
 
-  const { view, junk } = useMemo(() => {
+  const { view, junk, hiddenByUpgrade } = useMemo(() => {
     const junkRows = rows.filter((r) => r.file.film === "no");
+    const hidden = { quality: 0, language: 0 };
+    // not an upgrade: another film, the very file owned, not better enough, or loses CZ/SK audio
+    const isUpgrade = (f: ScoredFile): boolean => {
+      if (!upgrade) return true;
+      if ((f.film !== "yes" && f.film !== "unsure") || ownedSizes.has(f.size)) return false;
+      if (f.quality_score < (upgrade.quality_score ?? 0) + UPGRADE_MIN_GAIN) { hidden.quality += 1; return false; }
+      if (hasLocalAudio(upgrade) && f.lang_tier < 2) { hidden.language += 1; return false; }
+      return true;
+    };
     const pass = (r: Row) => {
       const f = r.file;
+      if (upgrade && onlyBetter && !isUpgrade(f)) return false;
       if (f.film === "no" && !showJunk) return false;
       if (filters.sources.length && !r.copies.some((c) => filters.sources.includes(c.source))) return false;
       if (filters.qualities.length && !filters.qualities.includes(f.resolution || "")) return false;
@@ -171,8 +193,8 @@ export default function FileTable({
         || b.quality_score - a.quality_score
         || a.size - b.size;
     });
-    return { view: sorted, junk: junkRows };
-  }, [rows, filters, showJunk, preferLocalAudio]);
+    return { view: sorted, junk: junkRows, hiddenByUpgrade: hidden };
+  }, [rows, filters, showJunk, preferLocalAudio, upgrade, onlyBetter, ownedSizes]);
 
   const best = view.find((r) => r.file.film === "yes");
 
@@ -234,7 +256,8 @@ export default function FileTable({
               const delta = v.quality_score != null ? choosing.quality_score - v.quality_score : null;
               return (
                 <button key={v.id} onClick={() => runDownload(choosing, { mode: "replace", file_id: v.id })}
-                  className="w-full text-left rounded-lg border border-zinc-700 hover:border-orange-600 hover:bg-orange-950/20 p-3">
+                  className={`w-full text-left rounded-lg border hover:border-orange-600 hover:bg-orange-950/20 p-3 ${
+                    v.id === upgrade?.id ? "border-orange-700 ring-1 ring-orange-700/60" : "border-zinc-700"}`}>
                   <p className="text-zinc-100 font-medium">
                     Nahradit: {versionLabel(v)} · {formatSize(v.file_size)}
                     {delta != null && (
@@ -252,6 +275,29 @@ export default function FileTable({
             })}
             <button onClick={() => setChoosing(null)} className="text-sm text-zinc-500 hover:text-zinc-300">Zrušit</button>
           </div>
+        </div>
+      )}
+
+      {upgrade && (
+        <div className="mb-3 rounded-lg border border-violet-800 bg-violet-950/30 px-4 py-3 text-sm space-y-1">
+          <p className="text-violet-200">
+            Hledám lepší verzi než: <b>{versionLabel(upgrade)}</b> · kvalita {upgrade.quality_score}
+            {upgrade.language && <> · zvuk {upgrade.language.replaceAll(",", "+")}</>} · {formatSize(upgrade.file_size)}
+          </p>
+          <label className="flex items-center gap-2 text-xs text-zinc-300">
+            <input type="checkbox" checked={onlyBetter} onChange={(e) => setOnlyBetter(e.target.checked)} />
+            Jen lepší: kvalita aspoň o {UPGRADE_MIN_GAIN} bodů vyšší{hasLocalAudio(upgrade) ? ", s CZ/SK zvukem" : ""}
+          </label>
+          {onlyBetter && (hiddenByUpgrade.quality > 0 || hiddenByUpgrade.language > 0) && (
+            <p className="text-xs text-zinc-500">
+              Skryto: {hiddenByUpgrade.quality} bez dostatečně lepší kvality
+              {hiddenByUpgrade.language > 0 && <>, {hiddenByUpgrade.language} lepších bez CZ/SK zvuku</>}
+              {verify.running && " · ještě ověřuji, čísla se můžou změnit"}
+            </p>
+          )}
+          {onlyBetter && view.length === 0 && !verify.running && (
+            <p className="text-xs text-amber-300">Lepší verze zatím není.</p>
+          )}
         </div>
       )}
 
@@ -300,6 +346,12 @@ export default function FileTable({
                 <td className="py-2 px-3">
                   <div className="flex items-center gap-2" title={qualityTooltip(file)}>
                     <QualityBadge file={file} />
+                    {upgrade && upgrade.quality_score != null && (
+                      <span className={`text-[11px] font-medium ${file.quality_score > upgrade.quality_score ? "text-green-400" : "text-red-400"}`}
+                        title={`Tvoje verze má ${upgrade.quality_score}`}>
+                        {file.quality_score > upgrade.quality_score ? "+" : ""}{file.quality_score - upgrade.quality_score}
+                      </span>
+                    )}
                     <span className={`text-xs ${file.verified ? "text-zinc-300" : "text-zinc-500 italic"}`}>
                       {file.quality_summary || "?"}
                     </span>

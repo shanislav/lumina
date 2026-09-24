@@ -27,6 +27,7 @@ from datetime import datetime
 from app.clients.tmdb import TMDBClient
 from app.config import get_effective_settings
 from app.core import naming
+from app.core.film_match import length_verdict
 from app.core.mediainfo import probe_async
 from app.db import get_db
 from app.core.release_name import VIDEO_EXTS
@@ -186,6 +187,16 @@ async def import_movie(payload: dict) -> None:
         payload["path"] = target
         payload["imported"] = True
 
+        # The user picked the movie, but the file may still be another cut, a sample or a
+        # different film: a length that does not fit sends it to the review queue.
+        mismatch = length_verdict(media.get("duration_s") or 0, details.get("runtime") or 0)
+        if mismatch:
+            logger.warning("Imported %s for review: %s", target, mismatch)
+        candidates = [{
+            "tmdb_id": tmdb_id, "title": details["title"], "original_title": details["original_title"],
+            "year": details.get("year"), "runtime": details.get("runtime"), "poster_url": details.get("poster_url"),
+            "score": 0, "reasons": [f"staženo jako tento film, ale {mismatch}"],
+        }] if mismatch else []
         stat = os.stat(target)
         values = {
             "tmdb_id": tmdb_id, "title": details["title"], "original_title": details["original_title"],
@@ -195,7 +206,8 @@ async def import_movie(payload: dict) -> None:
             "file_mtime": stat.st_mtime, "quality": naming.resolution_label(media) or "unknown",
             "language": ",".join(sorted({a["lang"].upper() for a in media.get("audio", []) if a.get("lang")})),
             "media": json.dumps(media), "duration_s": media.get("duration_s") or 0,
-            "candidates": "[]", "confidence": 100, "status": "manual", "matched_by": "download",
+            "candidates": json.dumps(candidates), "confidence": 50 if mismatch else 100,
+            "status": "review" if mismatch else "manual", "matched_by": "download",
             "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         cursor = await db.execute(
@@ -207,7 +219,7 @@ async def import_movie(payload: dict) -> None:
         logger.info("Imported %s as %s of tmdb %s", target, mode, tmdb_id)
 
         if old:
-            if _durations_agree(media.get("duration_s") or 0, old.get("duration_s") or 0) and os.path.exists(old["file_path"]):
+            if not mismatch and _durations_agree(media.get("duration_s") or 0, old.get("duration_s") or 0) and os.path.exists(old["file_path"]):
                 deleted = _delete_version(old["file_path"])
                 await db.execute("DELETE FROM library_movies WHERE id = ?", (old["id"],))
                 for path in deleted:
@@ -229,7 +241,7 @@ async def import_movie(payload: dict) -> None:
                 await db.commit()
                 logger.info("Replaced %s (deleted %d files)", old["file_path"], len(deleted))
             else:
-                logger.warning("Replace of %s skipped: durations differ (%s s vs %s s) — kept both versions",
+                logger.warning("Replace of %s skipped: length does not fit (%s s vs %s s) — kept both versions",
                                old["file_path"], media.get("duration_s"), old.get("duration_s"))
 
         await emit_movie_updated(db, new_id)

@@ -139,3 +139,14 @@ async def test_episode_without_tv_library_stays(setup, tmp_path):
     payload = await events.emit("download.completed", {
         "download_id": "t", "tmdb_id": 70523, "title": "Dark", "year": "2017", "content_type": "tv", "path": str(ep)})
     assert not payload.get("imported") and ep.exists()
+
+
+async def test_length_mismatch_goes_to_review_and_deletes_nothing(setup, monkeypatch):
+    folder, old, new = setup
+    async def sample(path):
+        return dict(NEW_MEDIA, duration_s=60)   # a 1-minute sample, not the film
+    monkeypatch.setattr(imports, "probe_async", sample)
+    await events.emit("download.completed", _payload(new, {"mode": "replace", "file_id": 1}))
+    assert old.exists()
+    rows = _rows()
+    assert rows[0] == (old.name, "matched") and rows[1][1] == "review"

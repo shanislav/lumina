@@ -40,6 +40,8 @@ function HomeContent() {
   const [error, setError] = useState<string | null>(null);
   const [owned, setOwned] = useState<Record<string, OwnedVersion[]>>({});
   const [movieCtx, setMovieCtx] = useState<MovieContext | null>(null);
+  // library "Hledat lepší verzi": id of the owned version to beat
+  const [upgradeId, setUpgradeId] = useState<number | null>(null);
   const [preferLocal, setPreferLocal] = useState(true);
 
   function showFiles(res: { files: ScoredFile[]; movie: MovieContext; prefer_local_audio: boolean }) {
@@ -95,6 +97,8 @@ function HomeContent() {
     if (movieParam) {
       try {
         const movie: TMDBMovie = JSON.parse(decodeURIComponent(atob(movieParam)));
+        const upgrade = parseInt(searchParams.get("upgrade") || "");
+        setUpgradeId(Number.isFinite(upgrade) ? upgrade : null);
         handleDiscoverMovie(movie);
       } catch { /* ignore bad data */ }
       window.history.replaceState({}, "", "/");
@@ -139,6 +143,7 @@ function HomeContent() {
   }
 
   async function handleSelectMovie(movie: TMDBMovie) {
+    setUpgradeId(null);
     setSelectedMovie(movie);
     setFiles([]);
     setFilesLoading(true);
@@ -236,6 +241,7 @@ function HomeContent() {
           {!resultsCollapsed && (
             <FileTable
             owned={selectedOwned}
+            upgradeFrom={selectedOwned.find((v) => v.id === upgradeId) ?? null}
             movie={movieCtx}
             preferLocalAudio={preferLocal}
             tmdb_id={selectedMovie?.tmdb_id}
