@@ -277,6 +277,18 @@ export interface LanguageOption {
   enabled: boolean;
 }
 
+export interface GroqModels {
+  models: string[];
+  default: string;
+  error: string | null;
+}
+
+export async function getGroqModels(): Promise<GroqModels> {
+  const res = await fetch(`${API_BASE}/api/settings/groq-models`);
+  if (!res.ok) return { models: [], default: "", error: `HTTP ${res.status}` };
+  return res.json();
+}
+
 export async function getLanguages(): Promise<LanguageOption[]> {
   const res = await fetch(`${API_BASE}/api/settings/languages`);
   if (!res.ok) throw new Error(`Failed to load languages: ${res.status}`);

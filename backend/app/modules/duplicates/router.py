@@ -270,7 +270,7 @@ Example: [[0, 5], [3, 7]]"""
                             "Content-Type": "application/json",
                         },
                         json={
-                            "model": "llama-3.1-8b-instant",
+                            "model": cfg["groq_model"],
                             "messages": [
                                 {"role": "system", "content": system_prompt},
                                 {"role": "user", "content": user_prompt},

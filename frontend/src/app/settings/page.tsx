@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 import { FLAG } from "@/components/LanguageSelect";
 import FolderBrowser from "@/components/FolderBrowser";
+import { getGroqModels, GroqModels } from "@/lib/api";
 
 const SOURCE_TYPES = [
   {
@@ -101,12 +102,7 @@ const GENERAL_SECTIONS = [
     fields: [
       { key: "tmdb_api_key", label: "TMDB API Key", type: "password", hint: "Pro vyhledávání filmů (themoviedb.org)" },
       { key: "groq_api_key", label: "Groq API Key", type: "password", hint: "Pro AI hodnocení souborů (console.groq.com)" },
-      { key: "groq_model", label: "Groq Model", type: "select_static", options: [
-        { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (lepší, nižší limity)" },
-        { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant (rychlejší, vyšší limity)" },
-        { value: "gemma2-9b-it", label: "Gemma 2 9B" },
-        { value: "mixtral-8x7b-32768", label: "Mixtral 8x7B" },
-      ], hint: "Model pro AI scoring souborů" },
+      { key: "groq_model", label: "Groq Model", type: "groq_model", hint: "Model pro AI scoring souborů — seznam se načítá z Groq (modely se občas ruší)" },
     ],
   },
   {
@@ -181,6 +177,11 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("obecne");
   const [allLanguages, setAllLanguages] = useState<LanguageOption[]>([]);
   const [browsingField, setBrowsingField] = useState<string | null>(null);
+  const [groqModels, setGroqModels] = useState<GroqModels | null>(null);
+
+  useEffect(() => {
+    getGroqModels().then(setGroqModels).catch(() => setGroqModels({ models: [], default: "", error: "nedostupné" }));
+  }, [settings.groq_api_key]);
 
   const loadSources = useCallback(async () => {
     try { setSources(await getSources()); } finally { setLoading(false); }
@@ -248,6 +249,18 @@ export default function SettingsPage() {
                     className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none" />
                   <button type="button" onClick={() => setBrowsingField(field.key)} className="rounded bg-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-600 transition-colors">Procházet</button>
                 </div>
+              ) : field.type === "groq_model" ? (
+                <>
+                  <select value={settings[field.key] || groqModels?.default || ""} onChange={(e) => handleSettingChange(field.key, e.target.value)}
+                    className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none">
+                    {Array.from(new Set([...(groqModels?.models ?? []), settings[field.key]].filter(Boolean))).map((m) => (
+                      <option key={m} value={m}>
+                        {m}{m === groqModels?.default ? " (doporučeno)" : ""}{groqModels && groqModels.models.length > 0 && !groqModels.models.includes(m) ? " — nedostupný!" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {groqModels?.error && <p className="text-[10px] text-orange-400 mt-1">Seznam modelů nelze načíst: {groqModels.error}</p>}
+                </>
               ) : field.type === "select_static" ? (
                 <select value={settings[field.key] || (field as any).options?.[0]?.value || ""} onChange={(e) => handleSettingChange(field.key, e.target.value)}
                   className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none">

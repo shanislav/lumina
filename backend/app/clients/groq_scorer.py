@@ -8,6 +8,13 @@ from app.models.schemas import ScorableFile, ScoredFile
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
+# Groq retires models regularly — the UI lists the live ones via list_models().
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
+# Models Lumina used to offer that Groq has retired (stored settings get migrated).
+RETIRED_GROQ_MODELS = ("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it", "mixtral-8x7b-32768")
+# Non-chat models (speech, TTS, safety classifiers) are not usable for scoring.
+_NON_CHAT = ("whisper", "guard", "orpheus", "tts", "safeguard", "allam")
 
 # Language config for dubbing detection
 LANGUAGE_CONFIG: dict[str, dict] = {
@@ -187,7 +194,7 @@ async def score_results(
     files: list[ScorableFile],
     api_key: str,
     languages: list[str] | None = None,
-    model: str = "llama-3.3-70b-versatile",
+    model: str = DEFAULT_GROQ_MODEL,
 ) -> list[ScoredFile]:
     if not files:
         return []
@@ -376,3 +383,12 @@ def _fallback_scoring(
         )
     results.sort(key=lambda r: (-r.relevance_score, -r.size))
     return results
+
+
+async def list_models(api_key: str) -> list[str]:
+    """Chat models currently available for the given Groq API key."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(GROQ_MODELS_URL, headers={"Authorization": f"Bearer {api_key}"})
+        resp.raise_for_status()
+    ids = [m["id"] for m in resp.json().get("data", []) if m.get("active", True)]
+    return sorted(i for i in ids if not any(tag in i.lower() for tag in _NON_CHAT))
