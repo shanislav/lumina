@@ -2,6 +2,7 @@
 
 from app.core.migrations import add_column
 from app.core.module import Module
+from app.modules.library.organize import FILE_OPERATIONS
 from app.modules.library.router import router
 
 LIBRARY_V1 = """
@@ -76,5 +77,6 @@ module = Module(
         add_column("library_movies", "file_mtime", "REAL DEFAULT 0"),
         add_column("library_movies", "imdb_id", "TEXT DEFAULT ''"),
         TMDB_CACHE,
+        FILE_OPERATIONS,
     ],
 )

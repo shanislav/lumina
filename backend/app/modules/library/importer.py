@@ -31,6 +31,7 @@ from app.modules.library.files import (
 from app.modules.library.matcher import FileEvidence, decide, score_candidate
 from app.modules.library.naming import VIDEO_EXTS, NameFacts, parse_name
 from app.modules.library.nfo import find_nfo, read_nfo
+from app.modules.library.notify import emit_movie_updated
 from app.utils.tv_parser import normalize_for_search, parse_tv_filename
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ def start_scan(force: bool = False) -> bool:
     _job.update({
         "running": True, "force": force, "phase": "movies", "total": 0, "done": 0, "current": "",
         "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None, "error": None,
-        "stats": {"movies_found": 0, "matched": 0, "review": 0, "unmatched": 0, "skipped": 0,
+        "stats": {"movies_found": 0, "matched": 0, "manual": 0, "review": 0, "unmatched": 0, "skipped": 0,
                   "removed": 0, "shows_found": 0, "episodes_matched": 0},
     })
     asyncio.create_task(_run(force))
@@ -154,11 +155,13 @@ def _quality_label(media: dict, filename: str) -> str:
     return _detect_quality(filename)
 
 
-async def _tmdb_details(client: TMDBClient, db, tmdb_id: int) -> dict | None:
+async def tmdb_details(client: TMDBClient, db, tmdb_id: int) -> dict | None:
     cursor = await db.execute("SELECT data, fetched_at FROM tmdb_movies WHERE tmdb_id = ?", (tmdb_id,))
     row = await cursor.fetchone()
     if row and time.time() - row[1] < TMDB_CACHE_DAYS * 86400:
-        return json.loads(row[0])
+        cached = json.loads(row[0])
+        if "titles_by_lang" in cached:  # entries from before per-language titles are refetched
+            return cached
     try:
         data = await client.get_movie_full(tmdb_id)
     except Exception as e:
@@ -212,7 +215,7 @@ async def identify_movie(client: TMDBClient, db, video_path: str, videos_in_fold
     nfo_path = find_nfo(video_path, videos_in_folder)
     nfo = read_nfo(nfo_path) if nfo_path else None
     if nfo:
-        add_hint(nfo.tmdb_id, "nfo")
+        add_hint(nfo.tmdb_id, "lumina_nfo" if nfo.by_lumina else "nfo")
         if nfo.imdb_id:
             try:
                 add_hint(await client.find_by_imdb(nfo.imdb_id), "nfo_imdb")
@@ -235,10 +238,14 @@ async def identify_movie(client: TMDBClient, db, video_path: str, videos_in_fold
     candidate_ids = await _collect_candidates(client, names, set(hints))
     scored = []
     for tmdb_id in candidate_ids:
-        details = await _tmdb_details(client, db, tmdb_id)
+        details = await tmdb_details(client, db, tmdb_id)
         if details:
             scored.append(score_candidate(evidence, details))
     status, ranked = decide(scored)
+    # Restoring from Lumina's own NFO (e.g. after losing the DB): the user's choice stays a user choice.
+    if (nfo and nfo.by_lumina and nfo.lumina_status == "manual" and ranked
+            and ranked[0].candidate["tmdb_id"] == nfo.tmdb_id):
+        status = "manual"
     return {"status": status, "ranked": ranked}
 
 
@@ -303,25 +310,29 @@ async def _process_movie_file(client: TMDBClient, db, path: str, videos_in_folde
         "confidence": ranked[0].score if ranked else 0,
         "status": status,
     }
-    if best and status != "manual":
+    user_choice_kept = bool(existing and existing[1] in USER_STATUSES)
+    if best and not user_choice_kept:
         values.update({
             "tmdb_id": best["tmdb_id"], "title": best["title"], "original_title": best["original_title"],
             "year": str(best["year"] or ""), "poster_url": best["poster_url"], "overview": best["overview"],
-            "imdb_id": best.get("imdb_id", ""), "matched_by": "auto",
+            "imdb_id": best.get("imdb_id", ""), "matched_by": "lumina_nfo" if status == "manual" else "auto",
         })
-    elif not best and status != "manual":
+    elif not best and not user_choice_kept:
         values.update({"tmdb_id": None, "title": parse_name(filename).title or filename, "matched_by": "auto"})
 
     if existing:
         assignments = ", ".join(f"{k} = ?" for k in values)
         await db.execute(f"UPDATE library_movies SET {assignments}, scanned_at = datetime('now') WHERE id = ?",
                          (*values.values(), existing[0]))
+        movie_id = existing[0]
     else:
         values["file_path"] = path
         values["added_at"] = datetime.fromtimestamp(stat.st_mtime, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         columns = ", ".join(values)
         placeholders = ", ".join("?" for _ in values)
-        await db.execute(f"INSERT INTO library_movies ({columns}) VALUES ({placeholders})", tuple(values.values()))
+        cursor = await db.execute(f"INSERT INTO library_movies ({columns}) VALUES ({placeholders})", tuple(values.values()))
+        movie_id = cursor.lastrowid
+    await emit_movie_updated(db, movie_id)
 
 
 # ─── TV SHOWS (unchanged logic, moved from router.py) ───

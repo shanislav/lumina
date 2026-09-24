@@ -9,7 +9,11 @@ from pydantic import BaseModel
 from app.config import get_effective_settings
 from app.clients.tmdb import TMDBClient
 from app.db import get_db
-from app.modules.library import importer
+from fastapi import HTTPException
+
+from app.config import movies_library_dir
+from app.modules.library import importer, organize
+from app.modules.library.notify import emit_movie_updated
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/library", tags=["library"])
@@ -114,7 +118,12 @@ async def fix_movie_match(movie_id: int, body: FixMatchRequest):
              str(details["year"] or ""), details["poster_url"], details["overview"],
              details["imdb_id"], movie_id),
         )
+        await db.execute(
+            "INSERT OR REPLACE INTO tmdb_movies (tmdb_id, data, fetched_at) VALUES (?, ?, strftime('%s','now'))",
+            (details["tmdb_id"], json.dumps(details)),
+        )
         await db.commit()
+        await emit_movie_updated(db, movie_id)
         return {"ok": True, "title": details["title"]}
     finally:
         await client.close()
@@ -226,5 +235,116 @@ async def delete_library_show(tmdb_id: int):
         await db.execute("DELETE FROM library_shows WHERE tmdb_id = ?", (tmdb_id,))
         await db.commit()
         return {"ok": True}
+    finally:
+        await db.close()
+
+
+# ─── ORGANIZE (fix names on disk) ───
+
+class OrganizeRequest(BaseModel):
+    movie_ids: list[int]
+
+
+async def _organize_context():
+    cfg = await get_effective_settings()
+    root = movies_library_dir(cfg)
+    if not root:
+        raise HTTPException(400, "Knihovna filmů není nastavená")
+    return TMDBClient(cfg["tmdb_api_key"]), root
+
+
+def _plan_view(plan: dict, root: str) -> dict:
+    rel = lambda p: p[len(root):].lstrip("/") if p and p.startswith(root) else p  # noqa: E731
+    return {
+        **{k: plan[k] for k in ("movie_ids", "tmdb_id", "title", "year", "conflicts", "remove_folder")},
+        "folder": rel(plan["folder"]),
+        "target_folder": rel(plan["target_folder"]),
+        "ops": [{"kind": op["kind"], "src": rel(op["src"]), "dst": rel(op["dst"])} for op in plan["ops"]],
+    }
+
+
+@router.get("/movies/{movie_id}/organize")
+async def organize_plan(movie_id: int):
+    """What fixing this movie on disk would do (nothing is changed)."""
+    client, root = await _organize_context()
+    db = await get_db()
+    try:
+        return _plan_view(await organize.plan_movie(db, client, movie_id, root), root)
+    except organize.OrganizeError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        await client.close()
+        await db.close()
+
+
+@router.get("/organize")
+async def organize_plan_all():
+    """All matched/manual movies whose folder or file name differs from the naming rules."""
+    client, root = await _organize_context()
+    db = await get_db()
+    try:
+        return [_plan_view(p, root) for p in await organize.plan_all(db, client, root)]
+    finally:
+        await client.close()
+        await db.close()
+
+
+@router.post("/organize")
+async def organize_apply(body: OrganizeRequest):
+    """Fix the given movies on disk (one undoable batch). Plans are recomputed right before applying."""
+    client, root = await _organize_context()
+    db = await get_db()
+    batch_id = None
+    done, failed = [], []
+    try:
+        handled: set[int] = set()
+        for movie_id in body.movie_ids:
+            if movie_id in handled:
+                continue
+            try:
+                plan = await organize.plan_movie(db, client, movie_id, root)
+                handled.update(plan["movie_ids"])
+                if not plan["ops"]:
+                    continue
+                batch_id = await organize.apply_plan(db, plan, root, batch_id)
+                done.append({"title": plan["title"], "ops": len(plan["ops"])})
+                for mid in plan["movie_ids"]:
+                    await emit_movie_updated(db, mid)
+            except organize.OrganizeError as e:
+                failed.append({"movie_id": movie_id, "error": str(e)})
+        return {"batch_id": batch_id, "done": done, "failed": failed}
+    finally:
+        await client.close()
+        await db.close()
+
+
+@router.get("/operations")
+async def list_operations(limit: int = 20):
+    """Recent organize batches (newest first)."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            """SELECT batch_id, MIN(created_at) AS created_at, COUNT(*) AS ops,
+                      SUM(status = 'undone') AS undone
+               FROM file_operations GROUP BY batch_id ORDER BY MIN(id) DESC LIMIT ?""",
+            (limit,),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+@router.post("/operations/{batch_id}/undo")
+async def undo_operations(batch_id: str):
+    cfg = await get_effective_settings()
+    root = movies_library_dir(cfg)
+    db = await get_db()
+    try:
+        undone = await organize.undo_batch(db, batch_id, root)
+        cursor = await db.execute("SELECT DISTINCT movie_id FROM file_operations WHERE batch_id = ?", (batch_id,))
+        for row in await cursor.fetchall():
+            if row[0]:
+                await emit_movie_updated(db, row[0])
+        return {"undone": undone}
     finally:
         await db.close()

@@ -242,10 +242,18 @@ class TMDBClient:
         resp.raise_for_status()
         data = resp.json()
         release = data.get("release_date", "") or ""
-        titles = {data.get("title", ""), data.get("original_title", "")}
+        original_language = data.get("original_language", "")
+        titles_by_lang: dict[str, str] = {}
+        if original_language and data.get("original_title"):
+            titles_by_lang[original_language] = data["original_title"]
         for tr in data.get("translations", {}).get("translations", []):
-            if tr.get("iso_639_1") in ("cs", "sk", "en"):
-                titles.add((tr.get("data") or {}).get("title", ""))
+            lang = tr.get("iso_639_1")
+            title = ((tr.get("data") or {}).get("title") or "").strip()
+            # several regional variants (cs-CZ, en-US/en-GB): the first one wins
+            if lang and title and lang not in titles_by_lang:
+                titles_by_lang[lang] = title
+        titles = {data.get("title", ""), data.get("original_title", "")}
+        titles.update(t for lang, t in titles_by_lang.items() if lang in ("cs", "sk", "en"))
         return {
             "tmdb_id": tmdb_id,
             "title": data.get("title", ""),
@@ -257,6 +265,7 @@ class TMDBClient:
             "overview": data.get("overview", ""),
             "poster_url": f"{IMG_BASE}{data['poster_path']}" if data.get("poster_path") else None,
             "titles": sorted(t for t in titles if t),
+            "titles_by_lang": titles_by_lang,
         }
 
     async def close(self) -> None:

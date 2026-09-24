@@ -16,6 +16,9 @@ class NfoFacts:
     title: str = ""
     original_title: str = ""
     year: int | None = None
+    # NFO written by Lumina's nfo module (<lumina> block) — kept up to date, so it is trusted more
+    by_lumina: bool = False
+    lumina_status: str = ""
 
 
 def find_nfo(video_path: str, videos_in_folder: int) -> str | None:
@@ -65,6 +68,10 @@ def read_nfo(path: str) -> NfoFacts | None:
     facts.original_title = (root.findtext("originaltitle") or "").strip()
     year = (root.findtext("year") or "").strip()
     facts.year = int(year) if year.isdigit() else None
+    lumina = root.find("lumina")
+    if lumina is not None:
+        facts.by_lumina = True
+        facts.lumina_status = (lumina.findtext("status") or "").strip()
     if not (facts.tmdb_id or facts.imdb_id):
         return None
     return facts

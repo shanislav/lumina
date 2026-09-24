@@ -14,6 +14,12 @@ import {
   scanLibrary,
   getScanStatus,
   getLibrarySummary,
+  OrganizePlan,
+  OrganizeResult,
+  getOrganizePlan,
+  getOrganizePlanAll,
+  applyOrganize,
+  undoOrganize,
   getLibraryMovies,
   getLibraryShows,
   getShowDetail,
@@ -58,6 +64,14 @@ export default function LibraryPage() {
   const [movieFilter, setMovieFilter] = useState<MovieFilter>("all");
   const [summary, setSummary] = useState<Partial<Record<LibraryStatus, number>>>({});
   const scanning = !!scan?.running;
+  // fix names on disk
+  const [moviePlan, setMoviePlan] = useState<OrganizePlan | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planBusy, setPlanBusy] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkPlans, setBulkPlans] = useState<OrganizePlan[] | null>(null);
+  const [bulkSelected, setBulkSelected] = useState<Set<number>>(new Set());
+  const [organizeResult, setOrganizeResult] = useState<OrganizeResult | null>(null);
   const [selectedShow, setSelectedShow] = useState<LibraryShowDetail | null>(null);
   const [showLoading, setShowLoading] = useState(false);
   const [fixingMovie, setFixingMovie] = useState<LibraryMovie | null>(null);
@@ -120,6 +134,59 @@ export default function LibraryPage() {
 
   const visibleMovies = movieFilter === "all" ? movies : movies.filter((m) => m.status === movieFilter);
 
+  async function loadMoviePlan(movieId: number) {
+    setPlanBusy(true);
+    setPlanError(null);
+    try {
+      setMoviePlan(await getOrganizePlan(movieId));
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : "Chyba");
+    } finally {
+      setPlanBusy(false);
+    }
+  }
+
+  async function openBulk() {
+    setBulkOpen(true);
+    setBulkPlans(null);
+    setOrganizeResult(null);
+    setPlanError(null);
+    try {
+      const plans = await getOrganizePlanAll();
+      setBulkPlans(plans);
+      setBulkSelected(new Set(plans.filter((p) => p.conflicts.length === 0).map((p) => p.movie_ids[0])));
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : "Chyba");
+      setBulkPlans([]);
+    }
+  }
+
+  async function runOrganize(movieIds: number[]) {
+    setPlanBusy(true);
+    try {
+      const result = await applyOrganize(movieIds);
+      setOrganizeResult(result);
+      setMoviePlan(null);
+      if (bulkOpen) setBulkPlans(null);
+      await loadData();
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : "Chyba");
+    } finally {
+      setPlanBusy(false);
+    }
+  }
+
+  async function runUndo(batchId: string) {
+    setPlanBusy(true);
+    try {
+      await undoOrganize(batchId);
+      setOrganizeResult(null);
+      await loadData();
+    } finally {
+      setPlanBusy(false);
+    }
+  }
+
   async function handleShowClick(show: LibraryShow) {
     setShowLoading(true);
     try {
@@ -157,6 +224,14 @@ export default function LibraryPage() {
           <h1 className="text-2xl font-bold text-zinc-100">Knihovna</h1>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={openBulk}
+            disabled={scanning}
+            title="Přejmenuje složky a soubory spárovaných filmů podle pravidel (s náhledem)"
+            className="px-3 py-2 rounded-lg border border-zinc-700 hover:border-zinc-500 disabled:opacity-40 text-zinc-300 text-sm transition-colors"
+          >
+            Opravit názvy
+          </button>
           <button
             onClick={() => handleScan(true)}
             disabled={scanning}
@@ -252,7 +327,7 @@ export default function LibraryPage() {
             {visibleMovies.map((movie) => (
               <div
                 key={movie.id}
-                onClick={() => { setFixingMovie(movie); setFixQuery(movie.filename.replace(/\.[^.]+$/, "")); setFixResults([]); }}
+                onClick={() => { setFixingMovie(movie); setFixQuery(movie.filename.replace(/\.[^.]+$/, "")); setFixResults([]); setMoviePlan(null); setPlanError(null); setOrganizeResult(null); }}
                 className="group cursor-pointer rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-violet-500 transition-colors"
               >
                 <div className="aspect-[2/3] relative bg-zinc-800">
@@ -525,6 +600,34 @@ export default function LibraryPage() {
               </div>
             )}
 
+            {(fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
+              <div className="space-y-2 rounded-lg border border-zinc-800 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs uppercase tracking-wide text-zinc-500">Oprava na disku</p>
+                  {!moviePlan && (
+                    <button onClick={() => loadMoviePlan(fixingMovie.id)} disabled={planBusy}
+                      className="text-xs px-3 py-1 rounded border border-zinc-700 text-zinc-300 hover:border-zinc-500 disabled:opacity-50">
+                      {planBusy ? "…" : "Zobrazit změny"}
+                    </button>
+                  )}
+                </div>
+                {planError && <p className="text-xs text-red-400">{planError}</p>}
+                {moviePlan && (moviePlan.ops.length === 0 ? (
+                  <p className="text-xs text-green-400">Název složky i souborů už odpovídá pravidlům.</p>
+                ) : (
+                  <>
+                    <PlanOps plan={moviePlan} />
+                    {moviePlan.conflicts.map((c) => <p key={c} className="text-xs text-red-400">{c}</p>)}
+                    <button onClick={() => runOrganize([fixingMovie.id])} disabled={planBusy || moviePlan.conflicts.length > 0}
+                      className="px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-700 text-white text-xs font-medium">
+                      {planBusy ? "Opravuji…" : "Opravit na disku"}
+                    </button>
+                  </>
+                ))}
+                {organizeResult && <OrganizeResultView result={organizeResult} onUndo={runUndo} busy={planBusy} />}
+              </div>
+            )}
+
             <p className="text-xs uppercase tracking-wide text-zinc-500">Hledat na TMDB</p>
 
             <div className="flex gap-2">
@@ -586,7 +689,99 @@ export default function LibraryPage() {
         </div>
       )}
 
+      {/* Bulk fix names on disk */}
+      {bulkOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setBulkOpen(false)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-4xl w-full mx-4 space-y-4 max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-zinc-100">Opravit názvy na disku</h3>
+              <button onClick={() => setBulkOpen(false)} className="text-sm text-zinc-500 hover:text-zinc-300">Zavřít</button>
+            </div>
+            <p className="text-xs text-zinc-500">
+              Jen spárované filmy (ne „na kontrolu“). Nic se nepřepisuje, každou dávku lze vrátit.
+            </p>
+            {planError && <p className="text-sm text-red-400">{planError}</p>}
+            {organizeResult && <OrganizeResultView result={organizeResult} onUndo={runUndo} busy={planBusy} />}
+            {bulkPlans === null && !organizeResult ? (
+              <p className="text-zinc-500 animate-pulse text-sm">Počítám změny…</p>
+            ) : bulkPlans && bulkPlans.length === 0 ? (
+              <p className="text-green-400 text-sm">Všechny spárované filmy už odpovídají pravidlům.</p>
+            ) : bulkPlans ? (
+              <>
+                <div className="flex items-center gap-3 text-sm text-zinc-400">
+                  <span>{bulkPlans.length} filmů ke změně · vybráno {bulkSelected.size}</span>
+                  <button className="text-violet-400 hover:text-violet-300" onClick={() => setBulkSelected(new Set(bulkPlans.filter((p) => !p.conflicts.length).map((p) => p.movie_ids[0])))}>vše</button>
+                  <button className="text-violet-400 hover:text-violet-300" onClick={() => setBulkSelected(new Set())}>nic</button>
+                </div>
+                <div className="overflow-y-auto space-y-2 pr-1">
+                  {bulkPlans.map((plan) => {
+                    const id = plan.movie_ids[0];
+                    return (
+                      <label key={id} className={`block rounded-lg border p-3 cursor-pointer ${bulkSelected.has(id) ? "border-violet-700 bg-violet-950/20" : "border-zinc-800"}`}>
+                        <div className="flex items-center gap-2">
+                          <input type="checkbox" disabled={plan.conflicts.length > 0} checked={bulkSelected.has(id)}
+                            onChange={(e) => {
+                              const next = new Set(bulkSelected);
+                              if (e.target.checked) next.add(id); else next.delete(id);
+                              setBulkSelected(next);
+                            }} />
+                          <span className="text-sm text-zinc-100">{plan.title} ({plan.year ?? "?"})</span>
+                          <span className="text-xs text-zinc-500">{plan.ops.length} změn</span>
+                        </div>
+                        <PlanOps plan={plan} />
+                        {plan.conflicts.map((c) => <p key={c} className="text-xs text-red-400 mt-1">{c}</p>)}
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={() => runOrganize(Array.from(bulkSelected))} disabled={planBusy || bulkSelected.size === 0}
+                    className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-700 text-white text-sm font-medium">
+                    {planBusy ? "Opravuji…" : `Opravit ${bulkSelected.size} filmů`}
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
+
       <DownloadPanel />
     </main>
+  );
+}
+
+function PlanOps({ plan }: { plan: OrganizePlan }) {
+  const videos = plan.ops.filter((op) => op.kind === "video");
+  const rest = plan.ops.length - videos.length;
+  return (
+    <div className="mt-1 space-y-1 text-[11px] font-mono">
+      {plan.folder !== plan.target_folder && (
+        <p className="text-zinc-400 break-all">
+          📁 <span className="text-red-300/80 line-through">{plan.folder}</span> → <span className="text-green-300">{plan.target_folder}</span>
+        </p>
+      )}
+      {videos.map((op) => (
+        <p key={op.src} className="text-zinc-400 break-all">
+          🎞 <span className="text-red-300/80">{op.src.split("/").pop()}</span> → <span className="text-green-300">{op.dst.split("/").pop()}</span>
+        </p>
+      ))}
+      {rest > 0 && <p className="text-zinc-500">+ {rest} dalších souborů (titulky, NFO, …) se přesune spolu</p>}
+    </div>
+  );
+}
+
+function OrganizeResultView({ result, onUndo, busy }: { result: OrganizeResult; onUndo: (batchId: string) => void; busy: boolean }) {
+  return (
+    <div className="rounded-lg bg-zinc-950 border border-zinc-800 p-3 text-sm space-y-1">
+      {result.done.length > 0 && <p className="text-green-400">Opraveno: {result.done.map((d) => d.title).join(", ")}</p>}
+      {result.failed.map((f) => <p key={f.movie_id} className="text-red-400">Chyba: {f.error}</p>)}
+      {result.batch_id && (
+        <button onClick={() => onUndo(result.batch_id!)} disabled={busy}
+          className="text-xs px-3 py-1 rounded border border-zinc-700 text-zinc-300 hover:border-zinc-500 disabled:opacity-50">
+          Vrátit tuto změnu
+        </button>
+      )}
+    </div>
   );
 }
