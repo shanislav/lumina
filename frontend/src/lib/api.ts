@@ -355,7 +355,7 @@ export async function getLanguages(): Promise<LanguageOption[]> {
 
 export interface Automation {
   id: number;
-  type: "radarr" | "renamer";
+  type: string;
   name: string;
   enabled: boolean;
   config: Record<string, string>;
@@ -364,11 +364,6 @@ export interface Automation {
 export async function getIntegrations(): Promise<Automation[]> {
   const res = await fetch(`${API_BASE}/api/integrations`);
   if (!res.ok) throw new Error(`Failed to load integrations: ${res.status}`);
-  return res.json();
-}
-
-export async function getIntegrationOptions(type: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/api/integrations/${type}/options`);
   return res.json();
 }
 

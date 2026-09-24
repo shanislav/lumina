@@ -1,22 +1,31 @@
-"""Take a finished download into the library as a new version of an owned movie,
-or as a replacement of one version (``download.completed`` with ``library_action``).
+"""Take every finished download into the library (``download.completed``) — Lumina
+replaces Radarr/Sonarr, nothing else imports.
 
-- the new file goes next to the existing version (same movie folder) and is named
+Movies (needs ``movies_library_dir``):
+- new movie → its own folder by the naming rules (``{year}/{title} ({year})``), file named
   by the naming rules; the movie is known (the user picked it) → status "manual"
+- ``library_action`` version / replace (chosen in the download dialog), or an owned movie
+  downloaded again without a choice (→ version): the file goes next to the existing version
 - replace deletes the old video and its same-stem sidecars — but only after the new
   file is safely in place and only when the durations agree (±15 %). Otherwise the new
   file is kept as an additional version and nothing is deleted.
-- downloads without library_action are left to the other modules unchanged.
+- subtitles next to the download that carry its name ("Movie.cs.srt") move with it
+
+TV episodes (needs ``tv_library_dir``): ``{show} ({year})/Season NN/`` with the original file
+name (Plex reads SxxEyy from it); without SxxEyy straight into the show folder.
+
+Without the library folder set, the download stays where it is.
 """
 
 import json
 import logging
 import os
+import re
 import shutil
 from datetime import datetime
 
 from app.clients.tmdb import TMDBClient
-from app.config import get_effective_settings, movies_library_dir
+from app.config import get_effective_settings
 from app.core import naming
 from app.core.mediainfo import probe_async
 from app.db import get_db
@@ -27,6 +36,8 @@ from app.modules.library.organize import _ensure_dir, naming_settings
 logger = logging.getLogger(__name__)
 
 REPLACE_MAX_DURATION_DIFF = 0.15
+SUBTITLE_EXTS = {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt"}
+_SEASON = re.compile(r"(?<![a-z0-9])s(\d{1,2})[ ._-]?e\d{1,3}|(?<![a-z0-9])(\d{1,2})x\d{2}(?![0-9])", re.IGNORECASE)
 
 
 def _unique_path(path: str) -> str:
@@ -53,6 +64,29 @@ def _move(src: str, dst: str) -> None:
         pass
 
 
+def _subtitles_of(video: str) -> list[str]:
+    """Subtitle files next to a video that carry its name: "Movie.srt", "Movie.cs.forced.srt"."""
+    folder, name = os.path.split(video)
+    stem = os.path.splitext(name)[0]
+    return [
+        os.path.join(folder, entry) for entry in sorted(os.listdir(folder))
+        if entry.startswith(stem + ".") and os.path.splitext(entry)[1].lower() in SUBTITLE_EXTS
+    ]
+
+
+def _move_with_subtitles(src: str, target: str) -> None:
+    """Move a video and its subtitles; subtitles keep their suffix after the stem (".cs.srt")."""
+    subtitles = _subtitles_of(src)
+    _move(src, target)
+    old_stem = os.path.splitext(os.path.basename(src))[0]
+    new_stem = os.path.splitext(target)[0]
+    for sub in subtitles:
+        suffix = os.path.basename(sub)[len(old_stem):]
+        dst = new_stem + suffix
+        if not os.path.exists(dst):
+            _move(sub, dst)
+
+
 def _delete_version(video: str) -> list[str]:
     """Delete a video and its same-stem sidecars (subtitles, .nfo). Returns deleted paths."""
     folder, name = os.path.split(video)
@@ -73,15 +107,47 @@ def _durations_agree(a: int, b: int) -> bool:
 
 
 async def on_download_completed(payload: dict) -> None:
-    action = payload.get("library_action") or {}
-    mode = action.get("mode")
-    if payload.get("content_type") != "movie" or mode not in ("replace", "version") or not payload.get("tmdb_id"):
+    if payload.get("imported"):
         return
+    content_type = payload.get("content_type") or "movie"
+    if content_type == "tv":
+        await import_episode(payload)
+    elif content_type == "movie" and payload.get("tmdb_id"):
+        await import_movie(payload)
 
+
+async def import_episode(payload: dict) -> None:
+    cfg = await get_effective_settings()
+    root = cfg.get("tv_library_dir") or ""
+    src = payload["path"]
+    if not root:
+        logger.info("TV library folder not set — %s stays in downloads", src)
+        return
+    title = payload.get("title") or ""
+    if not title:
+        logger.warning("Import of %s skipped: no show title", src)
+        return
+    year = str(payload.get("year") or "")[:4]
+    show = naming.sanitize(f"{title} ({year})" if year else title)
+    folder = os.path.join(root, show)
+    m = _SEASON.search(os.path.basename(src))
+    if m:
+        folder = os.path.join(folder, f"Season {int(m.group(1) or m.group(2)):02d}")
+    _ensure_dir(folder)
+    target = _unique_path(os.path.join(folder, os.path.basename(src)))
+    _move_with_subtitles(src, target)
+    payload["path"] = target
+    payload["imported"] = True
+    logger.info("Imported episode %s", target)
+
+
+async def import_movie(payload: dict) -> None:
     from app.modules.library.importer import tmdb_details
 
+    action = payload.get("library_action") or {}
+    mode = action.get("mode") if action.get("mode") in ("replace", "version") else "new"
     cfg = await get_effective_settings()
-    root = movies_library_dir(cfg)
+    root = cfg.get("movies_library_dir") or ""
     src = payload["path"]
     tmdb_id = payload["tmdb_id"]
     db = await get_db()
@@ -92,6 +158,11 @@ async def on_download_completed(payload: dict) -> None:
         )
         owned = [dict(r) for r in await cursor.fetchall()]
         old = next((r for r in owned if r["id"] == action.get("file_id")), None) if mode == "replace" else None
+        if mode == "new" and owned:
+            mode = "version"  # owned movie downloaded again without a choice — never delete anything
+        if not owned and not root:
+            logger.info("Movie library folder not set — %s stays in downloads", src)
+            return
 
         details = await tmdb_details(client, db, tmdb_id)
         if not details:
@@ -111,7 +182,7 @@ async def on_download_completed(payload: dict) -> None:
         folder = os.path.dirname(anchor["file_path"]) if anchor else os.path.join(root, *rel_folder.split("/"))
         _ensure_dir(folder)
         target = _unique_path(os.path.join(folder, file_name))
-        _move(src, target)
+        _move_with_subtitles(src, target)
         payload["path"] = target
         payload["imported"] = True
 
@@ -147,6 +218,10 @@ async def on_download_completed(payload: dict) -> None:
                 # same name as the replaced version → it had to wait under "… (2)"; take the clean name now
                 desired = os.path.join(folder, file_name)
                 if target != desired and not os.path.exists(desired):
+                    for sub in _subtitles_of(target):
+                        dst = os.path.splitext(desired)[0] + os.path.basename(sub)[len(os.path.splitext(os.path.basename(target))[0]):]
+                        if not os.path.exists(dst):
+                            os.rename(sub, dst)
                     os.rename(target, desired)
                     payload["path"] = target = desired
                     await db.execute("UPDATE library_movies SET file_path = ?, filename = ? WHERE id = ?",

@@ -1,6 +1,7 @@
-"""Download of an owned movie: as another version, or replacing one (library.imports)."""
+"""Finished downloads into the library (library.imports): versions, replacing, new movies, episodes."""
 
 import json
+import shutil
 import sqlite3
 
 import pytest
@@ -86,7 +87,55 @@ async def test_replace_is_refused_when_durations_differ(setup, monkeypatch):
     assert len(_rows()) == 2
 
 
-async def test_plain_download_is_left_to_other_modules(setup):
+async def test_owned_movie_without_choice_becomes_a_version(setup):
     folder, old, new = setup
     payload = await events.emit("download.completed", _payload(new, None))
+    assert payload["imported"] is True
+    assert old.exists() and (folder / NEW_NAME).exists()   # never deletes without a choice
+    assert len(_rows()) == 2
+
+
+async def test_new_movie_gets_its_own_folder_with_subtitles(setup):
+    folder, old, new = setup
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM library_movies")
+    (new.parent / (new.stem + ".cs.srt")).write_text("sub")
+    (new.parent / "Other.Movie.srt").write_text("other")          # not ours — stays
+    shutil.rmtree(folder)
+    payload = await events.emit("download.completed", _payload(new, None))
+    assert payload["imported"] is True
+    assert payload["path"] == str(folder / NEW_NAME)
+    assert (folder / NEW_NAME).exists() and not new.exists()
+    assert (folder / (NEW_NAME[:-4] + ".cs.srt")).exists()
+    assert (new.parent / "Other.Movie.srt").exists()
+    assert _rows() == [(NEW_NAME, "manual")]
+
+
+async def test_without_library_folder_the_download_stays(setup):
+    folder, old, new = setup
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM library_movies")
+        conn.execute("DELETE FROM settings WHERE key = 'movies_library_dir'")
+    payload = await events.emit("download.completed", _payload(new, None))
     assert not payload.get("imported") and new.exists()
+
+
+async def test_episode_goes_to_show_and_season(setup, tmp_path):
+    shows = tmp_path / "Serials"
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('tv_library_dir', ?)", (str(shows),))
+    ep = tmp_path / "Downloads" / "Dark.S02E03.1080p.mkv"
+    ep.write_bytes(b"e")
+    payload = await events.emit("download.completed", {
+        "download_id": "t", "tmdb_id": 70523, "title": "Dark", "year": "2017", "content_type": "tv", "path": str(ep)})
+    target = shows / "Dark (2017)" / "Season 02" / "Dark.S02E03.1080p.mkv"
+    assert payload["imported"] is True and payload["path"] == str(target)
+    assert target.exists() and not ep.exists()
+
+
+async def test_episode_without_tv_library_stays(setup, tmp_path):
+    ep = tmp_path / "Downloads" / "Dark.S02E03.1080p.mkv"
+    ep.write_bytes(b"e")
+    payload = await events.emit("download.completed", {
+        "download_id": "t", "tmdb_id": 70523, "title": "Dark", "year": "2017", "content_type": "tv", "path": str(ep)})
+    assert not payload.get("imported") and ep.exists()

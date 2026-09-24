@@ -57,12 +57,6 @@ async def get_effective_settings() -> dict[str, str]:
         "quality_prefer_local": db_settings.get("quality_prefer_local") or "true",
         "quality_max_size_gb": db_settings.get("quality_max_size_gb") or "0",
         "quality_hdr": db_settings.get("quality_hdr") or "neutral",
-        "radarr_api_key": db_settings.get("radarr_api_key") or "",
-        "radarr_url": db_settings.get("radarr_url") or "",
-        "radarr_root_folder": db_settings.get("radarr_root_folder") or "/data/movies",
-        "radarr_profile_id": db_settings.get("radarr_profile_id") or "1",
-        "radarr_blackhole_path": db_settings.get("radarr_blackhole_path") or "/downloads/radarr_inbox",
-        "radarr_auto_add": db_settings.get("radarr_auto_add") or "false",
     }
 
 

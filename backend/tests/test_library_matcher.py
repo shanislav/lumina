@@ -24,10 +24,10 @@ def test_wrong_hint_is_outvoted_by_duration_and_year():
     assert ranked[0].candidate["tmdb_id"] == 78
 
 
-def test_radarr_short_film_mismatch_is_rejected():
-    # Radarr matched "Waves (2024)" to a 2-minute short; the file is the Czech film Vlny (131 min, CS audio).
+def test_short_film_mismatch_is_rejected():
+    # A third-party tool matched "Waves (2024)" to a 2-minute short; the file is the Czech film Vlny (131 min, CS audio).
     ev = FileEvidence(titles=["Waves"], years={2024}, duration_min=131, audio_langs={"cs"},
-                      hints={1251621: ["nfo"], 1467389: ["radarr"]})
+                      hints={1251621: ["nfo"], 1467389: ["nfo"]})
     status, ranked = run(
         ev,
         movie(1467389, "Waves", 2024, 2),
@@ -40,7 +40,7 @@ def test_radarr_short_film_mismatch_is_rejected():
 def test_local_language_decides_between_same_titles():
     # "Let There Be Light": US film 2017 vs Slovak film 2019; file has only SK audio.
     ev = FileEvidence(titles=["Let There Be Light"], years={2017, 2019}, duration_min=93, audio_langs={"sk"},
-                      hints={609164: ["nfo"], 480881: ["radarr"]})
+                      hints={609164: ["nfo"], 480881: ["nfo"]})
     status, ranked = run(
         ev,
         movie(480881, "Let There Be Light", 2017, 100),

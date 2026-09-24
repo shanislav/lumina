@@ -1,7 +1,7 @@
 """Starting downloads (Aria2 / qBittorrent), download list and completion monitor.
 
 When a tracked download finishes, the monitor emits ``download.completed``;
-post-processing (renaming, Radarr/Sonarr import, ...) is done by the modules
+post-processing (renaming, library import, ...) is done by the modules
 subscribed to that event.
 """
 

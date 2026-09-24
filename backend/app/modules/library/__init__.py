@@ -1,4 +1,5 @@
-"""Library: scans the movie/TV library folders, matches files with TMDB (NFO first)."""
+"""Library: scans the movie/TV library folders, matches files with TMDB (NFO first),
+imports finished downloads (replaces Radarr/Sonarr)."""
 
 from app.core.migrations import add_column
 from app.core.module import Module, Subscription
@@ -66,7 +67,7 @@ module = Module(
     title="Knihovna",
     order=20,
     routers=[router],
-    # before radarr/sonarr (p50): a download meant as a new version/replacement goes straight to the library
+    # after the renamer (p10): every finished download goes into the library
     subscriptions=[Subscription("download.completed", on_download_completed, priority=30)],
     migrations=[
         LIBRARY_V1,
@@ -81,5 +82,8 @@ module = Module(
         add_column("library_movies", "imdb_id", "TEXT DEFAULT ''"),
         TMDB_CACHE,
         FILE_OPERATIONS,
+        # Radarr/Sonarr bridges removed — Lumina imports downloads itself
+        "DELETE FROM automations WHERE type IN ('radarr', 'sonarr')",
+        r"DELETE FROM settings WHERE key LIKE 'radarr\_%' ESCAPE '\' OR key LIKE 'sonarr\_%' ESCAPE '\'",
     ],
 )

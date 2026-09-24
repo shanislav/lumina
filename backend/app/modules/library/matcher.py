@@ -2,7 +2,7 @@
 
 Every candidate gets points for evidence found in the file itself (duration,
 audio languages) and in its names (year, title), plus small bonuses for hints
-from other tools (NFO, Radarr) which can be wrong — see docs/decisions/0002.
+from other tools (NFO) which can be wrong — see docs/decisions/0002.
 """
 
 from dataclasses import dataclass, field
@@ -11,9 +11,9 @@ from difflib import SequenceMatcher
 from app.core.release_name import normalize_title
 
 # Hint sources and their weight. An explicit {tmdb-ID} in the name is written by
-# Lumina itself (or the user), so it is trusted much more than third-party NFO/Radarr.
+# Lumina itself (or the user), so it is trusted much more than third-party NFO.
 # NFO written by Lumina itself is kept up to date → trusted like a name tag (backup of the DB).
-HINT_WEIGHTS = {"name_tag": 40, "lumina_nfo": 40, "nfo": 10, "nfo_imdb": 10, "radarr": 10}
+HINT_WEIGHTS = {"name_tag": 40, "lumina_nfo": 40, "nfo": 10, "nfo_imdb": 10}
 
 AUTO_MIN_SCORE = 60
 AUTO_MIN_MARGIN = 15

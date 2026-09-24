@@ -222,7 +222,7 @@ async def identify_movie(client: TMDBClient, db, video_path: str, videos_in_fold
             except Exception as e:
                 logger.warning("TMDB find %s failed: %s", nfo.imdb_id, e)
 
-    # Other modules (e.g. radarr) can add hints: payload["hints"] = [(tmdb_id, source), ...]
+    # Other modules can add hints: payload["hints"] = [(tmdb_id, source), ...]
     extra = await events.emit("library.collect_hints", {"path": video_path, "hints": []})
     for tmdb_id, source in extra.get("hints", []):
         add_hint(tmdb_id, source)

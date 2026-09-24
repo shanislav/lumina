@@ -56,7 +56,7 @@ async def test_fresh_db_gets_all_tables():
             "library_shows", "library_episodes", "schema_migrations",
             "tmdb_movies", "file_operations",
         } <= _tables(conn)
-        assert {r[0] for r in conn.execute("SELECT type FROM automations")} == {"renamer", "radarr", "sonarr", "nfo"}
+        assert {r[0] for r in conn.execute("SELECT type FROM automations")} == {"renamer", "nfo"}
         assert "content_type" in _columns(conn, "download_tracker")
         assert "matched_by" in _columns(conn, "library_movies")
 

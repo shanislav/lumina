@@ -47,7 +47,8 @@ def test_discover_finds_modules_with_unique_names():
     names = [m.name for m in modules]
     assert len(names) == len(set(names))
     assert {"settings", "sources", "search", "downloads", "library",
-            "integrations", "renamer", "radarr", "sonarr"} <= set(names)
+            "integrations", "renamer"} <= set(names)
+    assert not {"radarr", "sonarr"} & set(names)
     assert [m.order for m in modules] == sorted(m.order for m in modules)
 
 

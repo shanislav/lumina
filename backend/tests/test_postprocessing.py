@@ -1,4 +1,4 @@
-"""download.completed → renamer / radarr / sonarr wiring (without external services)."""
+"""download.completed → renamer wiring (without external services)."""
 
 import json
 import sqlite3
@@ -46,14 +46,3 @@ async def test_renamer_renames_and_updates_payload(tmp_path):
     assert payload["path"] == str(expected)
     assert expected.exists() and not f.exists()
 
-
-async def test_radarr_and_sonarr_skip_without_config(tmp_path):
-    # Enabled but without url/api_key → must not touch the file or call anything.
-    await _setup({"radarr": (1, {}), "sonarr": (1, {})})
-    f = tmp_path / "Show.S01E01.mkv"
-    f.write_bytes(b"x")
-
-    for content_type in ("movie", "tv"):
-        payload = await events.emit("download.completed", _payload(f, content_type))
-        assert payload["path"] == str(f)
-    assert f.exists()

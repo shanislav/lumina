@@ -15,7 +15,6 @@ import {
   testSourceConfig,
   getIntegrations,
   updateIntegration,
-  getIntegrationOptions,
   getAppSettings,
   updateAppSettings,
   getLanguages,
@@ -53,32 +52,6 @@ const SOURCE_TYPES = [
 ];
 
 const INTEGRATION_TYPES = [
-  {
-    type: "radarr",
-    label: "Radarr",
-    icon: "🎬",
-    fields: [
-      { key: "api_key", label: "Radarr API Key", type: "password", hint: "Found in Radarr -> Settings -> General" },
-      { key: "url", label: "Radarr URL", type: "text", hint: "e.g. http://localhost:7878" },
-      { key: "root_folder", label: "Root Folder", type: "select", option_key: "root_folders", hint: "Select target library folder in Radarr" },
-      { key: "profile_id", label: "Quality Profile", type: "select", option_key: "quality_profiles", hint: "Select quality profile in Radarr" },
-      { key: "blackhole_path", label: "Blackhole Path", type: "folder", hint: "Folder Radarr watches for imports" },
-      { key: "auto_add", label: "Auto-add Movies", type: "checkbox", hint: "Automatically add missing movies to Radarr" },
-    ],
-  },
-  {
-    type: "sonarr",
-    label: "Sonarr",
-    icon: "📺",
-    fields: [
-      { key: "api_key", label: "Sonarr API Key", type: "password", hint: "Found in Sonarr -> Settings -> General" },
-      { key: "url", label: "Sonarr URL", type: "text", hint: "e.g. http://sonarr:8989" },
-      { key: "root_folder", label: "Root Folder", type: "select", option_key: "root_folders", hint: "Select target library folder in Sonarr" },
-      { key: "profile_id", label: "Quality Profile", type: "select", option_key: "quality_profiles", hint: "Select quality profile in Sonarr" },
-      { key: "blackhole_path", label: "Blackhole Path", type: "folder", hint: "Folder Sonarr watches for imports" },
-      { key: "auto_add", label: "Auto-add Series", type: "checkbox", hint: "Automatically add missing series to Sonarr" },
-    ],
-  },
   {
     type: "renamer",
     label: "Renamer (Media Info)",
@@ -130,8 +103,8 @@ const GENERAL_SECTIONS = [
     title: "Knihovna",
     icon: "🎞️",
     fields: [
-      { key: "movies_library_dir", label: "Knihovna filmů", type: "folder", hint: "Kde leží hotová knihovna filmů (sken knihovny, duplicity). Pokud prázdné, použije se složka pro stahování filmů" },
-      { key: "tv_library_dir", label: "Knihovna seriálů", type: "folder", hint: "Kde leží hotová knihovna seriálů. Pokud prázdné, použije se složka pro stahování seriálů" },
+      { key: "movies_library_dir", label: "Knihovna filmů", type: "folder", hint: "Kde leží hotová knihovna filmů. Stažené filmy se sem přesunou (složka + název podle pravidel pojmenování). Pokud prázdné, zůstanou ve složce pro stahování" },
+      { key: "tv_library_dir", label: "Knihovna seriálů", type: "folder", hint: "Kde leží hotová knihovna seriálů. Stažené epizody se sem přesunou do „Seriál (rok)/Season NN“. Pokud prázdné, zůstanou ve složce pro stahování" },
     ],
   },
   {
@@ -544,17 +517,11 @@ function AddSourceModal({ onClose, onSave }: { onClose: () => void, onSave: (dat
 function EditIntegrationModal({ type, integration, onClose, onSave }: { type: string, integration: Automation, onClose: () => void, onSave: (config: Record<string, string>) => void }) {
   const typeDef = INTEGRATION_TYPES.find((t) => t.type === type);
   const [config, setConfig] = useState(integration.config);
-  const [options, setOptions] = useState<any>({});
-  const [loadingOptions, setLoadingOptions] = useState(false);
   const [browsingField, setBrowsingField] = useState<string | null>(null);
 
   const DEFAULT_FORMAT = "{title} ({year}) [{res} {codec} {hdr}] [{langs}] {tmdb-{tmdb_id}}";
 
   useEffect(() => {
-    if (type === "radarr" || type === "sonarr") {
-      setLoadingOptions(true);
-      getIntegrationOptions(type).then(data => { setOptions(data); setLoadingOptions(false); });
-    }
     const defaults: Record<string, string> = {};
     for (const f of (typeDef?.fields ?? []) as any[]) {
       if (f.default !== undefined && config[f.key] === undefined) defaults[f.key] = f.default;
@@ -593,8 +560,6 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
                     className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none">
                     <option value="">-- Vybrat --</option>
                     {f.options?.map((opt: any) => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
-                    {f.option_key === "root_folders" && options.root_folders?.map((opt: any) => (<option key={opt.id} value={opt.path}>{opt.path}</option>))}
-                    {f.option_key === "quality_profiles" && options.quality_profiles?.map((opt: any) => (<option key={opt.id} value={opt.id}>{opt.name}</option>))}
                   </select>
                 ) : f.type === "checkbox" ? (
                   <div className="flex items-center gap-2 py-1"><input type="checkbox" checked={config[f.key] === "true"} onChange={(e) => setConfig({ ...config, [f.key]: e.target.checked ? "true" : "false" })} className="w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-violet-600" /><span className="text-sm text-zinc-300">Zapnuto</span></div>
@@ -612,7 +577,6 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
                 <div className="grid grid-cols-2 gap-2">{TAGS.map(t => (<div key={t.tag} className="flex flex-col gap-0.5"><span className="text-[10px] font-mono text-violet-300">{t.tag}</span><span className="text-[9px] text-zinc-500">{t.desc}</span></div>))}</div>
               </div>
             )}
-            {loadingOptions && <p className="text-xs text-violet-400 animate-pulse">Fetching options from Radarr API...</p>}
           </div>
           <div className="mt-8 flex justify-end gap-3">
             <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors">Zrušit</button>
