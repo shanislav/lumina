@@ -16,11 +16,13 @@ Safety rules (docs/decisions/0003):
 import json
 import logging
 import os
+import re
 import uuid
 
 from app.core import naming
 from app.db import get_automation
-from app.core.release_name import VIDEO_EXTS
+from app.core.mediainfo import normalize_language
+from app.core.release_name import SUBTITLE_EXTS, VIDEO_EXTS
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,24 @@ async def naming_settings() -> dict:
 
 def _stem(path: str) -> str:
     return os.path.splitext(os.path.basename(path))[0]
+
+
+# Two-letter codes accepted from a subtitle name; any other two letters ("hd", "up") are not a language.
+_SUB_LANGS = {"cs", "sk", "en", "de", "fr", "pl", "hu", "es", "it", "ru", "uk", "pt", "nl", "ja", "ko", "zh"}
+
+
+def subtitle_suffix(name: str) -> str:
+    """Language/forced part for a subtitle renamed to the video's stem: "Parasite.CZE.forced.srt"
+    -> ".cs.forced"; nothing recognisable -> "". Looks at the last words of the name only."""
+    words = [w for w in re.split(r"[.\s_\-\[\]()]+", os.path.splitext(name)[0].lower()) if w][-3:]
+    forced = "forced" in words
+    lang = ""
+    for w in reversed(words):
+        code = "cs" if w == "cz" else normalize_language(w)
+        if code in _SUB_LANGS and (len(w) > 2 or w in _SUB_LANGS or w == "cz"):
+            lang = code
+            break
+    return (f".{lang}" if lang else "") + (".forced" if forced else "")
 
 
 def _plan_group(rows: list[dict], details: dict, root: str, settings: dict) -> dict:
@@ -101,6 +121,24 @@ def _plan_group(rows: list[dict], details: dict, root: str, settings: dict) -> d
                 continue
             if e.startswith(old_stem + "."):
                 ops.append({"kind": "sidecar", "src": path, "dst": os.path.join(target_folder, new_stem + e[len(old_stem):])})
+
+    # Subtitles named after something else ("Parasite (2021) [...].ass" next to a renamed video):
+    # with one video in a folder of its own they clearly belong to it — take its stem + language.
+    if whole_folder and len(renames) == 1:
+        new_stem = _stem(next(iter(renames.values())))
+        planned = {op["src"] for op in ops}
+        taken = {op["dst"] for op in ops}
+        for e in entries:
+            path = os.path.join(folder, e)
+            ext = os.path.splitext(e)[1].lower()
+            if path in planned or ext not in SUBTITLE_EXTS or not os.path.isfile(path):
+                continue
+            base = os.path.join(target_folder, new_stem + subtitle_suffix(e))
+            dst, n = base + ext, 2
+            while dst in taken:
+                dst, n = f"{base}.{n}{ext}", n + 1
+            taken.add(dst)
+            ops.append({"kind": "sidecar", "src": path, "dst": dst})
 
     if whole_folder:
         planned = {op["src"] for op in ops}

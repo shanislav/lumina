@@ -154,3 +154,32 @@ async def test_undo_with_nfo_module_leaves_no_empty_folder(library):
     old_folder = library / "2017" / "Blade Runner 2049 (2017)"
     assert (old_folder / "Blade Runner (1982) [Bluray-720p x264] [CS+EN].mkv").exists()
     assert (old_folder / "movie.nfo").exists()
+
+
+@pytest.mark.parametrize("name, suffix", [
+    ("Parasite (2021) [Bluray-1080p].ass", ""),
+    ("Parasite.2019.CZE.forced.srt", ".cs.forced"),
+    ("Parasite.cz.srt", ".cs"),
+    ("Parasite 2019 English.srt", ".en"),
+    ("Parasite.HD.srt", ""),
+])
+def test_subtitle_suffix(name, suffix):
+    assert organize.subtitle_suffix(name) == suffix
+
+
+async def test_foreign_named_subtitles_follow_the_video(library):
+    old = library / "2017" / "Blade Runner 2049 (2017)"
+    (old / "BR2049.2017.1080p.CZE.srt").write_text("a")
+    (old / "whatever.ass").write_text("b")
+    db = await get_db()
+    try:
+        plan = await organize.plan_movie(db, NoTMDB(), 1, str(library))
+    finally:
+        await db.close()
+    stem = "Blade Runner 2049 (2017) [720p x264] [CS+EN] {tmdb-335984}"
+    target = library / "2017" / "Blade Runner 2049 (2017)"
+    dsts = {os.path.basename(op["src"]): op["dst"] for op in plan["ops"]}
+    assert dsts["BR2049.2017.1080p.CZE.srt"] == str(target / f"{stem}.cs.2.srt")   # .cs.srt is the real sidecar's
+    assert dsts["whatever.ass"] == str(target / f"{stem}.ass")
+    assert not plan["conflicts"]
+

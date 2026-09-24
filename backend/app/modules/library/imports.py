@@ -30,14 +30,13 @@ from app.core import naming
 from app.core.film_match import length_verdict
 from app.core.mediainfo import probe_async
 from app.db import get_db
-from app.core.release_name import VIDEO_EXTS
+from app.core.release_name import SUBTITLE_EXTS, VIDEO_EXTS
 from app.modules.library.notify import emit_movie_updated
 from app.modules.library.organize import _ensure_dir, naming_settings
 
 logger = logging.getLogger(__name__)
 
 REPLACE_MAX_DURATION_DIFF = 0.15
-SUBTITLE_EXTS = {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt"}
 _SEASON = re.compile(r"(?<![a-z0-9])s(\d{1,2})[ ._-]?e\d{1,3}|(?<![a-z0-9])(\d{1,2})x\d{2}(?![0-9])", re.IGNORECASE)
 
 

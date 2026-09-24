@@ -9,6 +9,7 @@ import unicodedata
 from dataclasses import dataclass, field
 
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".ts", ".m4v", ".wmv", ".flv", ".mov", ".webm", ".mpg", ".mpeg"}
+SUBTITLE_EXTS = {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt"}
 
 _TMDB_TAG = re.compile(r"[\[{(]\s*tmdb(?:id)?[-=: ]\s*(\d+)\s*[\]})]", re.IGNORECASE)
 _IMDB_ID = re.compile(r"\b(tt\d{7,8})\b")
