@@ -12,7 +12,7 @@ import os
 
 from app.config import get_effective_settings, movies_library_dir
 from app.core import events
-from app.modules.library.naming import VIDEO_EXTS
+from app.core.release_name import VIDEO_EXTS
 
 
 async def emit_movie_updated(db, movie_id: int) -> None:

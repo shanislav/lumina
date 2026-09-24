@@ -1,6 +1,6 @@
 import pytest
 
-from app.modules.library.naming import normalize_title, parse_name
+from app.core.release_name import normalize_title, parse_name
 from app.modules.library.nfo import find_nfo, read_nfo
 
 

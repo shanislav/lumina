@@ -1,0 +1,80 @@
+"""Is a file the film we are looking for? Decided by rules; only unclear cases need AI.
+
+    yes     all words of one of the film's names are in the file name and nothing else
+    unsure  extra words ("Part Two", "2", a subtitle …) or only a partial match → ask AI
+    no      no word of any name, or a year in the name that is not the film's
+    length  verified duration does not fit the film (±6 %, at least 8 min) — probably
+            a different cut or an incomplete file; shown, but last
+
+Years: a name carrying years is another film only when none of them fits (±1), so
+titles with a number ("1917 (2019)", "2001 - …") stay fine.
+"""
+
+import re
+import unicodedata
+from dataclasses import dataclass, field
+
+from app.core.release_name import parse_name
+
+STOPWORDS = {"the", "a", "an", "of", "and", "a", "i", "la", "le", "les", "der", "die", "das", "el", "il"}
+_YEAR = re.compile(r"(?<!\d)(19[0-9]{2}|20[0-9]{2})(?!\d)")
+LENGTH_TOLERANCE = 0.06
+LENGTH_MIN_DIFF_MIN = 8
+
+
+@dataclass
+class Verdict:
+    status: str                       # yes | unsure | no | length
+    reasons: list[str] = field(default_factory=list)
+
+
+def tokens(text: str) -> set[str]:
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    ascii_text = re.sub(r"['’ʼ]", "", ascii_text)
+    return {t for t in re.split(r"[^a-z0-9]+", ascii_text) if t}
+
+
+def years_mismatch(name: str, year: int | None) -> bool:
+    if not year:
+        return False
+    years = [int(y) for y in _YEAR.findall(name)]
+    return bool(years) and all(abs(y - year) > 1 for y in years)
+
+
+def length_verdict(duration_s: int, runtime_min: int) -> str | None:
+    """Reason when a verified duration does not fit the film, else None."""
+    if not duration_s or not runtime_min:
+        return None
+    diff = duration_s / 60 - runtime_min
+    if abs(diff) > max(LENGTH_MIN_DIFF_MIN, runtime_min * LENGTH_TOLERANCE):
+        return f"délka {duration_s // 60} min, film má {runtime_min} min"
+    return None
+
+
+def judge(name: str, titles: list[str], year: int | None = None,
+          duration_s: int = 0, runtime_min: int = 0) -> Verdict:
+    if years_mismatch(name, year):
+        found = ", ".join(sorted(set(_YEAR.findall(name))))
+        return Verdict("no", [f"jiný rok ({found})"])
+
+    facts = parse_name(name)
+    file_words = tokens(" ".join([facts.title, *facts.extra_titles])) - STOPWORDS
+    title_sets = [tokens(t) - STOPWORDS for t in titles if t]
+    title_sets = [t for t in title_sets if t]
+    all_title_words = set().union(*title_sets) if title_sets else set()
+
+    length = length_verdict(duration_s, runtime_min)
+    if not file_words or not title_sets:
+        return Verdict("length" if length else "unsure", [length] if length else ["název bez titulu"])
+
+    covered = any(t <= file_words for t in title_sets)
+    extra = file_words - all_title_words
+    if not file_words & all_title_words:
+        return Verdict("no", ["jiný název"])
+    if length:
+        return Verdict("length", [length])
+    if covered and not extra:
+        return Verdict("yes", ["název sedí"])
+    if covered:
+        return Verdict("unsure", [f"navíc: {' '.join(sorted(extra))}"])
+    return Verdict("unsure", ["název sedí jen částečně"])

@@ -36,9 +36,10 @@ def test_fastshare_names_are_unescaped(monkeypatch):
 
 
 def test_year_guard():
-    from app.modules.search.router import _year_of, _years_mismatch
+    from app.core.film_match import years_mismatch as _years_mismatch
+    from app.modules.search.evaluate import year_of
 
-    assert _year_of("Cosy Dens 1999") == 1999
+    assert year_of("Cosy Dens 1999") == 1999
     assert _years_mismatch("Den co den 2018 BluRay 1080p x264CZ EN DTS.mkv", 1999)
     assert not _years_mismatch("Pelíšky (1999).avi", 1999)
     assert not _years_mismatch("Pelíšky.avi", 1999)                         # no year → no opinion

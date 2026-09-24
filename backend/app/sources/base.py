@@ -25,6 +25,10 @@ class SearchResult(BaseModel):
     size: int
     magnet_url: str | None = None
     seeders: int | None = None
+    # What some sources tell right in the search result (FastShare: duration + resolution)
+    duration_s: int = 0
+    width: int = 0
+    height: int = 0
 
 
 class BaseSource(ABC):

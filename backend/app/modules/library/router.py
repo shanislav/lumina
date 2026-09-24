@@ -12,7 +12,8 @@ from app.db import get_db
 from fastapi import HTTPException
 
 from app.config import movies_library_dir
-from app.core import naming
+from app.core import naming, quality
+from app.core.quality import prefs_from_settings
 from app.modules.library import importer, organize
 from app.modules.library.notify import emit_movie_updated
 
@@ -44,8 +45,17 @@ _MOVIE_COLUMNS = (
 )
 
 
-def _movie_row(r) -> dict:
+def _quality(media: dict, filename: str, size: int, prefs: quality.Prefs) -> dict:
+    """Same quality model as search offers — library files and offers are directly comparable."""
+    q = quality.score(quality.facts_from_media(media, filename, size or 0), prefs)
+    return {"quality_score": q.score, "quality_summary": q.summary,
+            "quality_parts": [[label, pts] for label, pts in q.parts]}
+
+
+def _movie_row(r, prefs: quality.Prefs | None = None) -> dict:
+    media = json.loads(r["media"] or "{}")
     return {
+        **_quality(media, r["filename"] or "", r["file_size"] or 0, prefs or quality.Prefs()),
         "id": r["id"], "tmdb_id": r["tmdb_id"], "title": r["title"],
         "original_title": r["original_title"], "year": r["year"], "poster_url": r["poster_url"],
         "filename": r["filename"], "file_size": r["file_size"], "quality": r["quality"],
@@ -54,7 +64,7 @@ def _movie_row(r) -> dict:
         "status": r["status"] or "matched",
         "confidence": r["confidence"] or 0,
         "candidates": json.loads(r["candidates"] or "[]"),
-        "media": json.loads(r["media"] or "{}"),
+        "media": media,
         "duration_s": r["duration_s"] or 0,
         "file_path": r["file_path"],
     }
@@ -71,7 +81,8 @@ async def get_library_movies(status: str | None = None):
             query += " WHERE status = ?"
             params = (status,)
         cursor = await db.execute(query + " ORDER BY added_at DESC", params)
-        return [_movie_row(r) for r in await cursor.fetchall()]
+        prefs = prefs_from_settings(await get_effective_settings())
+        return [_movie_row(r, prefs) for r in await cursor.fetchall()]
     finally:
         await db.close()
 
@@ -91,12 +102,15 @@ async def owned_versions(tmdb_ids: str):
             ids,
         )
         result: dict[str, list] = {}
+        prefs = prefs_from_settings(await get_effective_settings())
         for r in await cursor.fetchall():
             media = json.loads(r["media"] or "{}")
+            q = _quality(media, r["filename"], r["file_size"], prefs)
             result.setdefault(str(r["tmdb_id"]), []).append({
                 "id": r["id"], "filename": r["filename"], "file_size": r["file_size"], "quality": r["quality"],
                 "language": r["language"], "duration_s": r["duration_s"] or 0,
                 "hdr": naming.hdr_label(media, r["filename"]), "codec": naming.codec_label(media),
+                "quality_score": q["quality_score"], "quality_summary": q["quality_summary"],
             })
         return result
     finally:

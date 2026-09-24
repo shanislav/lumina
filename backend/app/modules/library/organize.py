@@ -20,7 +20,7 @@ import uuid
 
 from app.core import naming
 from app.db import get_automation
-from app.modules.library.naming import VIDEO_EXTS
+from app.core.release_name import VIDEO_EXTS
 
 logger = logging.getLogger(__name__)
 

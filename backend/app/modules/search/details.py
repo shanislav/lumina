@@ -31,6 +31,24 @@ CREATE TABLE IF NOT EXISTS source_file_details (
 """
 
 
+async def cached_details(pairs: list[tuple[str, str]]) -> dict[tuple[str, str], dict]:
+    """Already known details for (source_type, ident) pairs — free, no request to any source."""
+    if not pairs:
+        return {}
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT source_type, ident, data, fetched_at FROM source_file_details")
+        wanted = set(pairs)
+        now = time.time()
+        return {
+            (r[0], r[1]): json.loads(r[2])
+            for r in await cursor.fetchall()
+            if (r[0], r[1]) in wanted and now - r[3] < CACHE_DAYS * 86400
+        }
+    finally:
+        await db.close()
+
+
 async def get_details(files: list[dict]) -> dict[str, dict | None]:
     """files: [{source_id, ident, name}] → {"<source_id>:<ident>": details | None}."""
     registry = SourceRegistry.get()

@@ -20,7 +20,7 @@ from app.config import get_effective_settings, movies_library_dir
 from app.core import naming
 from app.core.mediainfo import probe_async
 from app.db import get_db
-from app.modules.library.naming import VIDEO_EXTS
+from app.core.release_name import VIDEO_EXTS
 from app.modules.library.notify import emit_movie_updated
 from app.modules.library.organize import _ensure_dir, naming_settings
 

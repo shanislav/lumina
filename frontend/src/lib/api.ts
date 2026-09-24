@@ -23,6 +23,33 @@ export interface ScoredFile {
   seeders: number | null;
   audio_langs: string[];
   subtitle_langs: string[];
+  // evaluation (backend app/modules/search/evaluate.py)
+  film: "yes" | "unsure" | "length" | "no";
+  film_reasons: string[];
+  quality_score: number;
+  quality_summary: string;
+  quality_parts: [string, number][];
+  resolution: string;
+  codec: string;
+  bitrate: number;
+  hdr: string;
+  duration_s: number;
+  audio: { lang: string; codec: string; channels: number }[];
+  verified: boolean;
+  lang_tier: number;
+}
+
+/** The film a file search was for — sent back with detail requests so files are re-evaluated with it. */
+export interface MovieContext {
+  titles: string[];
+  year: number | null;
+  runtime: number;
+}
+
+export interface SearchFilesResult {
+  movie: MovieContext;
+  prefer_local_audio: boolean;
+  files: ScoredFile[];
 }
 
 /** Technical info a source knows about a file (WebShare file_info / FastShare file page). */
@@ -37,13 +64,14 @@ export interface FileDetails {
 }
 
 export async function getFileDetails(
-  files: { source_id: number; ident: string; name: string }[],
-): Promise<Record<string, FileDetails | null>> {
+  files: { source_id: number; ident: string; name: string; size: number }[],
+  movie: MovieContext | null,
+): Promise<Record<string, Partial<ScoredFile> | null>> {
   if (!files.length) return {};
   const res = await fetch(`${API_BASE}/api/search/details`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ files }),
+    body: JSON.stringify({ files, movie }),
   });
   if (!res.ok) return {};
   return res.json();
@@ -129,7 +157,7 @@ export async function searchFiles(
   originalTitle?: string,
   tmdbId?: number,
   mediaType?: string,
-): Promise<ScoredFile[]> {
+): Promise<SearchFilesResult> {
   const params = new URLSearchParams({ query });
   if (language) params.set("language", language);
   if (originalTitle && originalTitle !== query) params.set("original_title", originalTitle);
@@ -374,6 +402,9 @@ export interface LibraryMovie {
   media: MediaInfo;
   duration_s: number;
   file_path: string;
+  quality_score: number;
+  quality_summary: string;
+  quality_parts: [string, number][];
 }
 
 export type LibraryStatus = "matched" | "review" | "unmatched" | "manual";
@@ -525,6 +556,8 @@ export interface OwnedVersion {
   duration_s: number;
   hdr: string;
   codec: string;
+  quality_score?: number;
+  quality_summary?: string;
 }
 
 /** What to do with an owned movie once a download finishes. */
