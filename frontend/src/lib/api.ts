@@ -21,6 +21,32 @@ export interface ScoredFile {
   source_id: number;
   magnet_url: string | null;
   seeders: number | null;
+  audio_langs: string[];
+  subtitle_langs: string[];
+}
+
+/** Technical info a source knows about a file (WebShare file_info / FastShare file page). */
+export interface FileDetails {
+  duration_s: number;
+  width: number;
+  height: number;
+  video_codec: string;
+  bitrate: number;
+  audio: { lang: string; codec: string; channels: number }[];
+  subtitles: string[];
+}
+
+export async function getFileDetails(
+  files: { source_id: number; ident: string; name: string }[],
+): Promise<Record<string, FileDetails | null>> {
+  if (!files.length) return {};
+  const res = await fetch(`${API_BASE}/api/search/details`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files }),
+  });
+  if (!res.ok) return {};
+  return res.json();
 }
 
 export interface Source {

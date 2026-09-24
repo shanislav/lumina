@@ -32,6 +32,9 @@ class FastShareSource(BaseSource):
             "headers": {"Cookie": self._client.auth_cookie},
         }
 
+    async def get_details(self, ident: str, name: str) -> dict | None:
+        return await self._client.file_details(ident, name)
+
     async def test_connection(self) -> bool:
         try:
             await self._client.ensure_login()

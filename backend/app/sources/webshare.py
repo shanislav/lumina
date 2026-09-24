@@ -27,6 +27,9 @@ class WebShareSource(BaseSource):
         url = await self._client.get_download_link(ident)
         return {"url": url}
 
+    async def get_details(self, ident: str, name: str) -> dict | None:
+        return await self._client.file_info(ident)
+
     async def test_connection(self) -> bool:
         try:
             await self._client._ensure_token()

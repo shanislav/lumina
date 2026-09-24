@@ -57,6 +57,10 @@ class ScoredFile(BaseModel):
     source_id: int = 0
     magnet_url: str | None = None
     seeders: int | None = None
+    # Languages from the file name (deterministic parser); the UI replaces them with
+    # the real tracks from /api/search/details when the source knows them.
+    audio_langs: list[str] = []
+    subtitle_langs: list[str] = []
 
 
 class SearchRequest(BaseModel):
