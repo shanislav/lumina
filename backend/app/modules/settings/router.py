@@ -38,7 +38,8 @@ def _mask(settings: dict[str, str]) -> dict[str, str]:
     return masked
 
 
-REQUIRED_KEYS = {"tmdb_api_key", "groq_api_key"}
+# Groq is optional: without it file search falls back to name-based scoring.
+REQUIRED_KEYS = {"tmdb_api_key"}
 
 
 @router.get("/setup-status")

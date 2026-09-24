@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 import logging
 import sqlite3
 from pathlib import Path
@@ -26,7 +27,7 @@ async def _monitor_loop():
             with sqlite3.connect(DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
-                cur.execute("SELECT id, tmdb_id, title, year, backend, content_type FROM download_tracker WHERE processed = 0")
+                cur.execute("SELECT id, tmdb_id, title, year, backend, content_type, intent FROM download_tracker WHERE processed = 0")
                 tracked = cur.fetchall()
 
                 if not tracked:
@@ -37,6 +38,7 @@ async def _monitor_loop():
                 for d in tracked:
                     did, tmdb_id, title, year, backend = d["id"], d["tmdb_id"], d["title"], d["year"], d["backend"]
                     content_type = d["content_type"] if "content_type" in d.keys() else "movie"
+                    intent = json.loads(d["intent"]) if d["intent"] else None
 
                     try:
                         completed_path = None
@@ -99,6 +101,7 @@ async def _monitor_loop():
                                 "year": year,
                                 "content_type": content_type,
                                 "path": completed_path,
+                                "library_action": intent,
                             })
                             cur.execute("UPDATE download_tracker SET processed = 1, status = 'complete' WHERE id = ?", (did,))
                             conn.commit()
