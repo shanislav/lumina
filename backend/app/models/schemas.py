@@ -74,6 +74,9 @@ class DownloadRequest(BaseModel):
     tmdb_id: int | None = None
     title: str | None = ""
     year: int | None = 0
+    # What to do with an already owned movie once the download finishes:
+    # {"mode": "replace", "file_id": <library file id>} or {"mode": "version"}
+    library_action: dict | None = None
 
 
 # --- Source CRUD models ---

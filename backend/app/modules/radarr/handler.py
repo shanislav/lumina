@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 async def on_download_completed(payload: dict) -> None:
+    if payload.get("imported"):  # the library already placed the file
+        return
     if payload.get("content_type") != "movie":
         return
     automation = await get_automation("radarr")

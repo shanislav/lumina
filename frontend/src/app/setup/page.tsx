@@ -229,7 +229,7 @@ export default function SetupPage() {
 
               <div>
                 <label className="block text-sm font-medium text-zinc-300 mb-1">
-                  Groq API Key
+                  Groq API Key <span className="text-zinc-500 font-normal">(volitelné)</span>
                 </label>
                 <input
                   type="password"
@@ -248,7 +248,7 @@ export default function SetupPage() {
                   >
                     console.groq.com
                   </a>
-                  {" "}→ API Keys → Create
+                  {" "}→ API Keys → Create. Bez klíče Lumina hodnotí nalezené soubory podle názvu (méně přesně).
                 </p>
               </div>
             </div>
@@ -256,7 +256,7 @@ export default function SetupPage() {
             <StepNav
               onPrev={prev}
               onNext={next}
-              nextDisabled={!tmdbKey || !groqKey}
+              nextDisabled={!tmdbKey}
               nextLabel="Dalsi"
             />
           </div>

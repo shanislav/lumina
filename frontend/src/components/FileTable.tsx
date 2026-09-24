@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ScoredFile, startDownload, formatSize } from "@/lib/api";
+import { ScoredFile, startDownload, formatSize, OwnedVersion, LibraryAction, versionLabel } from "@/lib/api";
 
 interface Props {
   files: ScoredFile[];
@@ -11,6 +11,7 @@ interface Props {
   year?: number;
   mediaType?: "movie" | "tv";
   onDownloadStarted?: () => void;
+  owned?: OwnedVersion[];
 }
 
 const BADGE_STYLES: Record<string, { bg: string; label: string }> = {
@@ -48,13 +49,24 @@ function sourceLink(file: ScoredFile): string | null {
   return null;
 }
 
-export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, title, year, mediaType }: Props) {
+export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, title, year, mediaType, owned = [] }: Props) {
   const [downloading, setDownloading] = useState<Record<string, string>>({});
+  const [choosing, setChoosing] = useState<ScoredFile | null>(null);
 
-  async function handleDownload(file: ScoredFile) {
+  function handleDownload(file: ScoredFile) {
+    // Movie already in the library → ask: another version, or replace one?
+    if (owned.length > 0 && (mediaType || "movie") === "movie") {
+      setChoosing(file);
+      return;
+    }
+    runDownload(file);
+  }
+
+  async function runDownload(file: ScoredFile, action?: LibraryAction) {
+    setChoosing(null);
     setDownloading((prev) => ({ ...prev, [file.ident]: "starting" }));
     try {
-      const result = await startDownload(file, undefined, tmdb_id, title, year, mediaType || "movie");
+      const result = await startDownload(file, undefined, tmdb_id, title, year, mediaType || "movie", action);
       const id = result.gid || result.hash || "ok";
       setDownloading((prev) => ({ ...prev, [file.ident]: id }));
       onDownloadStarted?.();
@@ -79,6 +91,36 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
 
   return (
     <div className="w-full overflow-x-auto">
+      {choosing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setChoosing(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-xl w-full mx-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-zinc-100">Tento film už máš</h3>
+            <div className="rounded-lg bg-zinc-950 border border-zinc-800 p-3 text-sm">
+              <p className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Stahuješ</p>
+              <p className="text-zinc-100 break-all">{choosing.name}</p>
+              <p className="text-zinc-400 text-xs mt-1">
+                {choosing.quality} · {formatSize(choosing.size)}{choosing.is_dubbed ? " · dabing" : ""}
+              </p>
+            </div>
+            <button onClick={() => runDownload(choosing, { mode: "version" })}
+              className="w-full text-left rounded-lg border border-violet-700 bg-violet-950/30 hover:bg-violet-900/40 p-3">
+              <p className="text-violet-200 font-medium">Stáhnout jako další verzi</p>
+              <p className="text-xs text-zinc-400">Stávající zůstane, nová se uloží vedle ní (Plex je spojí do jednoho filmu).</p>
+            </button>
+            {owned.map((v) => (
+              <button key={v.id} onClick={() => runDownload(choosing, { mode: "replace", file_id: v.id })}
+                className="w-full text-left rounded-lg border border-zinc-700 hover:border-orange-600 hover:bg-orange-950/20 p-3">
+                <p className="text-zinc-100 font-medium">Nahradit: {versionLabel(v)} · {formatSize(v.file_size)}</p>
+                <p className="text-xs text-zinc-500 break-all">{v.filename}</p>
+                <p className="text-[11px] text-orange-300/80 mt-1">
+                  Stará verze se smaže až po úspěšném stažení a jen když délka filmu sedí.
+                </p>
+              </button>
+            ))}
+            <button onClick={() => setChoosing(null)} className="text-sm text-zinc-500 hover:text-zinc-300">Zrušit</button>
+          </div>
+        </div>
+      )}
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-zinc-800 text-zinc-400 text-left">

@@ -20,6 +20,7 @@ module = Module(
     migrations=[
         DOWNLOAD_TRACKER_V1,
         add_column("download_tracker", "content_type", "TEXT DEFAULT 'movie'"),
+        add_column("download_tracker", "intent", "TEXT DEFAULT ''"),
     ],
     on_startup=[ensure_monitor_running],
 )

@@ -12,6 +12,7 @@ from app.db import get_db
 from fastapi import HTTPException
 
 from app.config import movies_library_dir
+from app.core import naming
 from app.modules.library import importer, organize
 from app.modules.library.notify import emit_movie_updated
 
@@ -71,6 +72,33 @@ async def get_library_movies(status: str | None = None):
             params = (status,)
         cursor = await db.execute(query + " ORDER BY added_at DESC", params)
         return [_movie_row(r) for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+@router.get("/owned")
+async def owned_versions(tmdb_ids: str):
+    """Versions in the library for the given TMDB ids (comma separated) — used by search/downloads
+    to show "you already have it" with quality info. Only identified movies count."""
+    ids = [int(i) for i in tmdb_ids.split(",") if i.strip().isdigit()][:200]
+    if not ids:
+        return {}
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            f"SELECT id, tmdb_id, filename, file_size, quality, language, media, duration_s, status "
+            f"FROM library_movies WHERE status IN ('matched', 'manual') AND tmdb_id IN ({','.join('?' for _ in ids)})",
+            ids,
+        )
+        result: dict[str, list] = {}
+        for r in await cursor.fetchall():
+            media = json.loads(r["media"] or "{}")
+            result.setdefault(str(r["tmdb_id"]), []).append({
+                "id": r["id"], "filename": r["filename"], "file_size": r["file_size"], "quality": r["quality"],
+                "language": r["language"], "duration_s": r["duration_s"] or 0,
+                "hdr": naming.hdr_label(media, r["filename"]), "codec": naming.codec_label(media),
+            })
+        return result
     finally:
         await db.close()
 

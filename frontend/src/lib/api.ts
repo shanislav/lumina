@@ -121,6 +121,7 @@ export async function startDownload(
   title?: string,
   year?: number,
   contentType: "movie" | "tv" = "movie",
+  libraryAction?: LibraryAction,
 ): Promise<{
   gid?: string;
   hash?: string;
@@ -141,6 +142,7 @@ export async function startDownload(
       year: year,
       magnet_url: file.magnet_url,
       content_type: contentType,
+      library_action: libraryAction,
     }),
   });
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
@@ -325,50 +327,6 @@ export async function updateIntegration(type: string, data: { enabled?: boolean;
   if (!res.ok) throw new Error(`Failed to update integration: ${res.status}`);
 }
 
-// --- Duplicates ---
-
-export interface DuplicateFile {
-  id: number;
-  path: string;
-  filename: string;
-  size: number;
-  quality: string;
-  language: string;
-  modified_at: string;
-}
-
-export interface DuplicateGroup {
-  title: string;
-  normalized_title: string;
-  year: string;
-  count: number;
-  files: DuplicateFile[];
-}
-
-export async function scanDuplicates(): Promise<{ scanned: number; media_dir: string }> {
-  const res = await fetch(`${API_BASE}/api/duplicates/scan`, { method: "POST" });
-  if (!res.ok) throw new Error(`Scan failed: ${res.status}`);
-  return res.json();
-}
-
-export async function aiScanDuplicates(): Promise<{ scanned: number; ai_groups: number; media_dir: string }> {
-  const res = await fetch(`${API_BASE}/api/duplicates/ai-scan`, { method: "POST" });
-  if (!res.ok) throw new Error(`AI scan failed: ${res.status}`);
-  return res.json();
-}
-
-export async function getDuplicates(mode: "simple" | "ai" = "simple"): Promise<{ groups: DuplicateGroup[]; total_groups: number; mode: string }> {
-  const res = await fetch(`${API_BASE}/api/duplicates?mode=${mode}`);
-  if (!res.ok) throw new Error(`Failed to load duplicates: ${res.status}`);
-  return res.json();
-}
-
-export async function deleteDuplicateFile(fileId: number): Promise<{ ok: boolean; deleted: string }> {
-  const res = await fetch(`${API_BASE}/api/duplicates/file/${fileId}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
-  return res.json();
-}
-
 // --- Library ---
 
 export interface LibraryMovie {
@@ -528,6 +486,34 @@ export async function fixMovieMatch(movieId: number, tmdbId: number): Promise<vo
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tmdb_id: tmdbId }),
   });
+}
+
+// --- Library: owned versions ---
+
+export interface OwnedVersion {
+  id: number;
+  filename: string;
+  file_size: number;
+  quality: string;
+  language: string;
+  duration_s: number;
+  hdr: string;
+  codec: string;
+}
+
+/** What to do with an owned movie once a download finishes. */
+export type LibraryAction = { mode: "version" } | { mode: "replace"; file_id: number };
+
+export async function getOwned(tmdbIds: number[]): Promise<Record<string, OwnedVersion[]>> {
+  const ids = tmdbIds.filter(Boolean);
+  if (!ids.length) return {};
+  const res = await fetch(`${API_BASE}/api/library/owned?tmdb_ids=${ids.join(",")}`);
+  if (!res.ok) return {};
+  return res.json();
+}
+
+export function versionLabel(v: OwnedVersion): string {
+  return [v.quality !== "unknown" ? v.quality : "", v.codec, v.hdr, v.language.replaceAll(",", "+")].filter(Boolean).join(" ");
 }
 
 // --- Library: fix names on disk ---

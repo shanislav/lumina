@@ -1,7 +1,8 @@
 """Library: scans the movie/TV library folders, matches files with TMDB (NFO first)."""
 
 from app.core.migrations import add_column
-from app.core.module import Module
+from app.core.module import Module, Subscription
+from app.modules.library.imports import on_download_completed
 from app.modules.library.organize import FILE_OPERATIONS
 from app.modules.library.router import router
 
@@ -65,6 +66,8 @@ module = Module(
     title="Knihovna",
     order=20,
     routers=[router],
+    # before radarr/sonarr (p50): a download meant as a new version/replacement goes straight to the library
+    subscriptions=[Subscription("download.completed", on_download_completed, priority=30)],
     migrations=[
         LIBRARY_V1,
         add_column("library_movies", "matched_by", "TEXT DEFAULT 'filename'"),

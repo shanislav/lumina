@@ -12,6 +12,10 @@ import {
   searchMovies,
   searchFiles,
   getSetupStatus,
+  getOwned,
+  OwnedVersion,
+  versionLabel,
+  formatSize,
 } from "@/lib/api";
 
 export default function Home() {
@@ -33,6 +37,14 @@ function HomeContent() {
   const [filesLoading, setFilesLoading] = useState(false);
   const [resultsCollapsed, setResultsCollapsed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [owned, setOwned] = useState<Record<string, OwnedVersion[]>>({});
+
+  // "Already in the library?" for everything shown (search results + the selected movie)
+  useEffect(() => {
+    const ids = [...movies.map((m) => m.tmdb_id), selectedMovie?.tmdb_id ?? 0];
+    getOwned(ids.filter((id, i) => id && ids.indexOf(id) === i)).then(setOwned).catch(() => {});
+  }, [movies, selectedMovie]);
+  const selectedOwned = selectedMovie && selectedMovie.media_type !== "tv" ? owned[String(selectedMovie.tmdb_id)] ?? [] : [];
 
   useEffect(() => {
     getSetupStatus()
@@ -165,7 +177,7 @@ function HomeContent() {
       )}
 
       {!selectedMovie && (
-        <MovieGrid movies={movies} onSelect={handleSelectMovie} />
+        <MovieGrid movies={movies} onSelect={handleSelectMovie} owned={owned} />
       )}
 
       {selectedMovie && (
@@ -201,8 +213,22 @@ function HomeContent() {
               </button>
             )}
           </div>
+          {selectedOwned.length > 0 && (
+            <div className="rounded-lg border border-emerald-900 bg-emerald-950/30 px-4 py-3 text-sm">
+              <p className="text-emerald-300 font-medium">
+                ✓ Už v knihovně — {selectedOwned.length === 1 ? "1 verze" : `${selectedOwned.length} verze`}
+              </p>
+              {selectedOwned.map((v) => (
+                <p key={v.id} className="text-emerald-200/80 text-xs mt-1">
+                  {versionLabel(v)} · {formatSize(v.file_size)}{v.duration_s ? ` · ${Math.round(v.duration_s / 60)} min` : ""}
+                  <span className="text-zinc-500 ml-2">{v.filename}</span>
+                </p>
+              ))}
+            </div>
+          )}
           {!resultsCollapsed && (
             <FileTable
+            owned={selectedOwned}
             tmdb_id={selectedMovie?.tmdb_id}
             title={selectedMovie?.title}
             year={parseInt(selectedMovie?.year || "0")}

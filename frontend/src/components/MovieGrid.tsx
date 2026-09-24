@@ -1,14 +1,15 @@
 "use client";
 
 import Image from "next/image";
-import { TMDBMovie } from "@/lib/api";
+import { TMDBMovie, OwnedVersion, versionLabel } from "@/lib/api";
 
 interface Props {
   movies: TMDBMovie[];
   onSelect: (movie: TMDBMovie) => void;
+  owned?: Record<string, OwnedVersion[]>;
 }
 
-export default function MovieGrid({ movies, onSelect }: Props) {
+export default function MovieGrid({ movies, onSelect, owned = {} }: Props) {
   if (movies.length === 0) return null;
 
   return (
@@ -38,6 +39,14 @@ export default function MovieGrid({ movies, onSelect }: Props) {
             }`}>
               {movie.media_type === "tv" ? "TV" : "Film"}
             </span>
+            {movie.media_type !== "tv" && owned[String(movie.tmdb_id)] && (
+              <span
+                title={owned[String(movie.tmdb_id)].map(versionLabel).join("\n")}
+                className="absolute bottom-0 inset-x-0 bg-emerald-900/90 text-emerald-200 text-[10px] font-medium px-2 py-1 truncate"
+              >
+                ✓ V knihovně · {owned[String(movie.tmdb_id)].map((v) => v.quality).join(" + ")}
+              </span>
+            )}
           </div>
           <div className="p-2">
             <p className="text-sm font-medium text-zinc-100 truncate">

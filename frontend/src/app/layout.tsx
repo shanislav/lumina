@@ -42,12 +42,6 @@ export default function RootLayout({
                 Knihovna
               </Link>
               <Link
-                href="/duplicates"
-                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                Duplicity
-              </Link>
-              <Link
                 href="/settings"
                 className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
               >

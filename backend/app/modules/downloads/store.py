@@ -1,3 +1,5 @@
+import json
+
 from app.db import get_db
 
 DOWNLOAD_TRACKER_V1 = """
@@ -15,13 +17,14 @@ CREATE TABLE IF NOT EXISTS download_tracker (
 """
 
 
-async def track_download(id: str, tmdb_id: int, title: str, year: int, backend: str, target_dir: str, content_type: str = "movie"):
+async def track_download(id: str, tmdb_id: int, title: str, year: int, backend: str, target_dir: str,
+                         content_type: str = "movie", intent: dict | None = None):
     """Record a new download for background monitoring."""
     db = await get_db()
     try:
         await db.execute(
-            "INSERT OR REPLACE INTO download_tracker (id, tmdb_id, title, year, backend, status, target_dir, content_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (id, tmdb_id, title, year, backend, "active", target_dir, content_type)
+            "INSERT OR REPLACE INTO download_tracker (id, tmdb_id, title, year, backend, status, target_dir, content_type, intent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (id, tmdb_id, title, year, backend, "active", target_dir, content_type, json.dumps(intent) if intent else "")
         )
         await db.commit()
     finally:

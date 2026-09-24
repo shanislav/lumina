@@ -54,7 +54,7 @@ async def start_download(req: DownloadRequest) -> dict:
             _download_sources[gid] = source_label
             from app.modules.downloads.store import track_download
             from app.modules.downloads.monitor import ensure_monitor_running
-            await track_download(gid, req.tmdb_id, req.title, req.year, "aria2", target_dir, req.content_type or "movie")
+            await track_download(gid, req.tmdb_id, req.title, req.year, "aria2", target_dir, req.content_type or "movie", req.library_action)
             ensure_monitor_running()
             return {
                 "gid": gid,
@@ -81,7 +81,7 @@ async def start_download(req: DownloadRequest) -> dict:
             _download_sources[torrent_hash] = source_label
             from app.modules.downloads.store import track_download
             from app.modules.downloads.monitor import ensure_monitor_running
-            await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie")
+            await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie", req.library_action)
             ensure_monitor_running()
             return {
                 "hash": torrent_hash,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -30,7 +30,29 @@ import {
 import DownloadPanel from "@/components/DownloadPanel";
 
 type Tab = "filmy" | "serialy";
-type MovieFilter = "all" | "review" | "unmatched";
+type MovieFilter = "all" | "versions" | "review" | "unmatched";
+
+/** One card in the grid: a movie with all its files (versions). Unidentified files stay alone. */
+interface MovieGroup {
+  key: string;
+  main: LibraryMovie;
+  versions: LibraryMovie[];
+}
+
+const QUALITY_RANK: Record<string, number> = { "2160p": 5, "1080p": 4, "720p": 3, "576p": 2, "480p": 1 };
+
+function groupMovies(movies: LibraryMovie[]): MovieGroup[] {
+  const groups = new Map<string, LibraryMovie[]>();
+  for (const m of movies) {
+    const identified = (m.status === "matched" || m.status === "manual") && m.tmdb_id;
+    const key = identified ? `tmdb-${m.tmdb_id}` : `file-${m.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), m]);
+  }
+  return Array.from(groups, ([key, versions]) => {
+    versions.sort((a, b) => (QUALITY_RANK[b.quality] ?? 0) - (QUALITY_RANK[a.quality] ?? 0) || b.file_size - a.file_size);
+    return { key, main: versions[0], versions };
+  });
+}
 
 const STATUS_BADGE: Record<LibraryStatus, { label: string; cls: string; title: string } | null> = {
   matched: null,
@@ -132,7 +154,22 @@ export default function LibraryPage() {
     }
   }
 
-  const visibleMovies = movieFilter === "all" ? movies : movies.filter((m) => m.status === movieFilter);
+  const groups = useMemo(() => groupMovies(movies), [movies]);
+  const multiVersion = groups.filter((g) => g.versions.length > 1);
+  const visibleGroups =
+    movieFilter === "all" ? groups
+    : movieFilter === "versions" ? multiVersion
+    : groups.filter((g) => g.main.status === movieFilter);
+  const [versionsOf, setVersionsOf] = useState<MovieGroup | null>(null);
+
+  function openMovie(movie: LibraryMovie) {
+    setFixingMovie(movie);
+    setFixQuery(movie.filename.replace(/\.[^.]+$/, ""));
+    setFixResults([]);
+    setMoviePlan(null);
+    setPlanError(null);
+    setOrganizeResult(null);
+  }
 
   async function loadMoviePlan(movieId: number) {
     setPlanBusy(true);
@@ -303,7 +340,8 @@ export default function LibraryPage() {
           <div className="space-y-4">
           <div className="flex flex-wrap gap-2 text-sm">
             {([
-              ["all", `Vše (${movies.length})`],
+              ["all", `Vše (${groups.length})`],
+              ["versions", `Více verzí (${multiVersion.length})`],
               ["review", `Na kontrolu (${summary.review ?? 0})`],
               ["unmatched", `Nespárované (${summary.unmatched ?? 0})`],
             ] as [MovieFilter, string][]).map(([key, label]) => (
@@ -320,14 +358,14 @@ export default function LibraryPage() {
               </button>
             ))}
           </div>
-          {visibleMovies.length === 0 && (
+          {visibleGroups.length === 0 && (
             <div className="text-center py-8 text-zinc-500 text-sm">Nic k zobrazení.</div>
           )}
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-            {visibleMovies.map((movie) => (
+            {visibleGroups.map(({ key, main: movie, versions }) => (
               <div
-                key={movie.id}
-                onClick={() => { setFixingMovie(movie); setFixQuery(movie.filename.replace(/\.[^.]+$/, "")); setFixResults([]); setMoviePlan(null); setPlanError(null); setOrganizeResult(null); }}
+                key={key}
+                onClick={() => (versions.length > 1 ? setVersionsOf({ key, main: movie, versions }) : openMovie(movie))}
                 className="group cursor-pointer rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-violet-500 transition-colors"
               >
                 <div className="aspect-[2/3] relative bg-zinc-800">
@@ -355,6 +393,11 @@ export default function LibraryPage() {
                       className={`absolute top-1 left-1 px-1.5 py-0.5 rounded text-[9px] font-bold ${STATUS_BADGE[movie.status]!.cls}`}
                     >
                       {STATUS_BADGE[movie.status]!.label}
+                    </span>
+                  )}
+                  {versions.length > 1 && (
+                    <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-violet-700/90 text-white text-[10px] font-bold">
+                      {versions.length} verze
                     </span>
                   )}
                   {movie.media?.hdr && movie.media.hdr !== "SDR" && (
@@ -685,6 +728,40 @@ export default function LibraryPage() {
             <button onClick={() => setFixingMovie(null)} className="text-sm text-zinc-500 hover:text-zinc-300">
               Zavrit
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Versions of one movie */}
+      {versionsOf && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setVersionsOf(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-2xl w-full mx-4 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex gap-4">
+              {versionsOf.main.poster_url && (
+                <Image src={versionsOf.main.poster_url} alt="" width={64} height={96} className="rounded flex-shrink-0" />
+              )}
+              <div>
+                <h3 className="text-lg font-semibold text-zinc-100">
+                  {versionsOf.main.title} <span className="text-zinc-500 font-normal">({versionsOf.main.year})</span>
+                </h3>
+                <p className="text-sm text-zinc-400">{versionsOf.versions.length} verze v knihovně</p>
+              </div>
+            </div>
+            {versionsOf.versions.map((v) => (
+              <button key={v.id} onClick={() => { setVersionsOf(null); openMovie(v); }}
+                className="w-full text-left rounded-lg border border-zinc-800 hover:border-violet-600 p-3 transition-colors">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${QUALITY_COLORS[v.quality] || QUALITY_COLORS.unknown}`}>{v.quality}</span>
+                  {v.media?.video_codec && <span className="text-xs text-zinc-400">{v.media.video_codec}</span>}
+                  {v.media?.hdr && v.media.hdr !== "SDR" && <span className="text-xs text-yellow-300">{v.media.hdr}</span>}
+                  {v.language && <span className="text-xs text-zinc-300">{v.language.replaceAll(",", "+")}</span>}
+                  <span className="text-xs text-zinc-500">{formatSize(v.file_size)}</span>
+                  {v.duration_s > 0 && <span className="text-xs text-zinc-500">{formatDuration(v.duration_s)}</span>}
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-1 break-all">{v.filename}</p>
+              </button>
+            ))}
+            <button onClick={() => setVersionsOf(null)} className="text-sm text-zinc-500 hover:text-zinc-300">Zavřít</button>
           </div>
         </div>
       )}
