@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from app.clients.groq_scorer import DEFAULT_GROQ_MODEL, list_models
 from app.db import get_all_settings, set_settings
 
 logger = logging.getLogger(__name__)
@@ -12,7 +13,7 @@ SENSITIVE_KEYS = {"tmdb_api_key", "groq_api_key", "aria2_rpc_secret", "qbittorre
 DEFAULTS = {
     "tmdb_api_key": "",
     "groq_api_key": "",
-    "groq_model": "llama-3.3-70b-versatile",
+    "groq_model": DEFAULT_GROQ_MODEL,
     "aria2_rpc_url": "http://aria2:6800/jsonrpc",
     "aria2_rpc_secret": "your_aria2_secret",
     "plex_media_dir": "/downloads/plex",
@@ -127,3 +128,17 @@ async def available_languages() -> list[dict]:
         {"code": code, "name": cfg["name"], "label": cfg["label"], "enabled": code in enabled_codes}
         for code, cfg in LANGUAGE_CONFIG.items()
     ]
+
+
+@router.get("/groq-models")
+async def groq_models() -> dict:
+    """Chat models available for the stored Groq key (the list changes as Groq retires models)."""
+    stored = await get_all_settings()
+    key = stored.get("groq_api_key", "")
+    if not key:
+        return {"models": [], "default": DEFAULT_GROQ_MODEL, "error": "Groq API key not configured"}
+    try:
+        return {"models": await list_models(key), "default": DEFAULT_GROQ_MODEL, "error": None}
+    except Exception as e:
+        logger.warning("Listing Groq models failed: %s", e)
+        return {"models": [], "default": DEFAULT_GROQ_MODEL, "error": str(e)}

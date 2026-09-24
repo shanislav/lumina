@@ -82,7 +82,21 @@ async def test_groq_model_is_part_of_effective_settings():
     from app.config import get_effective_settings
     from app.db import init_db, set_settings
 
+    from app.clients.groq_scorer import DEFAULT_GROQ_MODEL
+
     await init_db(registry.discover())
-    assert (await get_effective_settings())["groq_model"] == "llama-3.3-70b-versatile"
-    await set_settings({"groq_model": "llama-3.1-8b-instant"})
-    assert (await get_effective_settings())["groq_model"] == "llama-3.1-8b-instant"
+    assert (await get_effective_settings())["groq_model"] == DEFAULT_GROQ_MODEL
+    await set_settings({"groq_model": "qwen/qwen3.8-27b"})
+    assert (await get_effective_settings())["groq_model"] == "qwen/qwen3.8-27b"
+
+
+async def test_retired_groq_model_is_migrated_to_default():
+    from app.clients.groq_scorer import DEFAULT_GROQ_MODEL
+    from app.db import init_db
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')")
+        conn.execute("INSERT INTO settings VALUES ('groq_model', 'llama-3.3-70b-versatile')")
+    await init_db(registry.discover())
+    with sqlite3.connect(DB_PATH) as conn:
+        assert conn.execute("SELECT value FROM settings WHERE key='groq_model'").fetchone() == (DEFAULT_GROQ_MODEL,)
