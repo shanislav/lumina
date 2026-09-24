@@ -52,6 +52,8 @@ function sourceLink(file: ScoredFile): string | null {
 export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, title, year, mediaType, owned = [] }: Props) {
   const [downloading, setDownloading] = useState<Record<string, string>>({});
   const [choosing, setChoosing] = useState<ScoredFile | null>(null);
+  // same size to the byte = almost certainly the very file already in the library
+  const ownedSizes = new Set(owned.map((v) => v.file_size));
 
   function handleDownload(file: ScoredFile) {
     // Movie already in the library → ask: another version, or replace one?
@@ -144,6 +146,11 @@ export default function FileTable({ files, loading, onDownloadStarted, tmdb_id, 
                 className="border-b border-zinc-800/50 hover:bg-zinc-900/50"
               >
                 <td className="py-2 px-3 text-zinc-200 max-w-md truncate">
+                  {ownedSizes.has(file.size) && (
+                    <span title="Soubor se stejnou velikostí už je v knihovně" className="mr-2 rounded bg-emerald-900/70 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                      ✓ tento soubor už máš
+                    </span>
+                  )}
                   {file.name}
                 </td>
                 <td className="py-2 px-3">
