@@ -54,6 +54,36 @@ function groupMovies(movies: LibraryMovie[]): MovieGroup[] {
   });
 }
 
+/** Library quality overview: a movie is judged by its best version. */
+const WEAK_SCORE = 50;
+
+function bestVersion(g: MovieGroup): LibraryMovie {
+  return g.versions.reduce((a, b) => ((b.quality_score ?? 0) > (a.quality_score ?? 0) ? b : a));
+}
+
+const hasPart = (m: LibraryMovie, prefix: string) => (m.quality_parts ?? []).some(([label]) => label.startsWith(prefix));
+const hasLocalAudio = (m: LibraryMovie) => /\b(CS|SK)\b/i.test(m.language || "");
+
+type QualityFlag = "weak" | "2160p" | "1080p" | "720p" | "sd" | "h265" | "h264" | "old_codec" | "hdr"
+  | "low_bitrate" | "upscale" | "no_local";
+
+const QUALITY_FLAGS: { key: QualityFlag; label: string; title: string; warn?: boolean; test: (m: LibraryMovie, g: MovieGroup) => boolean }[] = [
+  { key: "weak", label: `Slabá kvalita (< ${WEAK_SCORE})`, title: "Kandidáti na lepší verzi", warn: true, test: (m) => (m.quality_score ?? 0) < WEAK_SCORE },
+  { key: "2160p", label: "4K", title: "Nejlepší verze je 4K", test: (m) => m.quality === "2160p" },
+  { key: "1080p", label: "1080p", title: "Nejlepší verze je 1080p", test: (m) => m.quality === "1080p" },
+  { key: "720p", label: "720p", title: "Nejlepší verze je 720p", test: (m) => m.quality === "720p" },
+  { key: "sd", label: "SD", title: "Pod 720p", warn: true, test: (m) => !["2160p", "1080p", "720p"].includes(m.quality) },
+  { key: "h265", label: "H.265 / AV1", title: "Úsporný kodek", test: (m) => /H\.265|AV1/.test(m.quality_summary || "") },
+  { key: "h264", label: "H.264", title: "Starší kodek, stejný obraz zabere asi 2× víc místa", test: (m) => /H\.264/.test(m.quality_summary || "") },
+  { key: "old_codec", label: "XviD / MPEG-2 / VC-1", title: "Zastaralý kodek", warn: true, test: (m) => /XviD|MPEG-2|VC-1/.test(m.quality_summary || "") },
+  { key: "hdr", label: "HDR / DV", title: "HDR10, HDR10+ nebo Dolby Vision", test: (m) => !!m.media?.hdr && m.media.hdr !== "SDR" },
+  { key: "low_bitrate", label: "Nízký bitrate", title: "Méně dat, než je pro rozlišení obvyklé", warn: true, test: (m) => hasPart(m, "nízký bitrate") },
+  { key: "upscale", label: "Upscale", title: "Uměle zvětšené 4K", warn: true, test: (m) => hasPart(m, "upscale") },
+  { key: "no_local", label: "Bez CZ/SK zvuku", title: "Žádná verze nemá český ani slovenský zvuk", warn: true, test: (_, g) => !g.versions.some(hasLocalAudio) },
+];
+
+type LibrarySort = "default" | "quality_asc" | "quality_desc" | "size_desc" | "added_desc";
+
 const STATUS_BADGE: Record<LibraryStatus, { label: string; cls: string; title: string } | null> = {
   matched: null,
   manual: { label: "✓", cls: "bg-sky-900/80 text-sky-300", title: "Vybráno ručně" },
@@ -84,6 +114,8 @@ export default function LibraryPage() {
   const [scan, setScan] = useState<ScanStatus | null>(null);
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [movieFilter, setMovieFilter] = useState<MovieFilter>("all");
+  const [qualityFlag, setQualityFlag] = useState<QualityFlag | null>(null);
+  const [librarySort, setLibrarySort] = useState<LibrarySort>("default");
   const [summary, setSummary] = useState<Partial<Record<LibraryStatus, number>>>({});
   const scanning = !!scan?.running;
   // fix names on disk
@@ -156,10 +188,36 @@ export default function LibraryPage() {
 
   const groups = useMemo(() => groupMovies(movies), [movies]);
   const multiVersion = groups.filter((g) => g.versions.length > 1);
-  const visibleGroups =
-    movieFilter === "all" ? groups
-    : movieFilter === "versions" ? multiVersion
-    : groups.filter((g) => g.main.status === movieFilter);
+  // identified movies only — a file without a movie has no meaningful quality overview
+  const identified = useMemo(
+    () => groups.filter((g) => g.main.status === "matched" || g.main.status === "manual"),
+    [groups],
+  );
+  const flagCounts = useMemo(() => {
+    const counts: Partial<Record<QualityFlag, number>> = {};
+    for (const g of identified) {
+      const best = bestVersion(g);
+      for (const f of QUALITY_FLAGS) if (f.test(best, g)) counts[f.key] = (counts[f.key] ?? 0) + 1;
+    }
+    return counts;
+  }, [identified]);
+  const librarySize = useMemo(() => movies.reduce((sum, m) => sum + (m.file_size || 0), 0), [movies]);
+  const visibleGroups = useMemo(() => {
+    let list =
+      movieFilter === "all" ? groups
+      : movieFilter === "versions" ? multiVersion
+      : groups.filter((g) => g.main.status === movieFilter);
+    const flag = QUALITY_FLAGS.find((f) => f.key === qualityFlag);
+    if (flag) list = list.filter((g) => identified.includes(g) && flag.test(bestVersion(g), g));
+    const score = (g: MovieGroup) => bestVersion(g).quality_score ?? 0;
+    const size = (g: MovieGroup) => g.versions.reduce((s, v) => s + (v.file_size || 0), 0);
+    const added = (g: MovieGroup) => g.versions.reduce((a, v) => (v.added_at > a ? v.added_at : a), "");
+    if (librarySort === "quality_asc") list = [...list].sort((a, b) => score(a) - score(b));
+    if (librarySort === "quality_desc") list = [...list].sort((a, b) => score(b) - score(a));
+    if (librarySort === "size_desc") list = [...list].sort((a, b) => size(b) - size(a));
+    if (librarySort === "added_desc") list = [...list].sort((a, b) => added(b).localeCompare(added(a)));
+    return list;
+  }, [groups, multiVersion, movieFilter, qualityFlag, librarySort, identified]);
   const [versionsOf, setVersionsOf] = useState<MovieGroup | null>(null);
 
   function openMovie(movie: LibraryMovie) {
@@ -367,6 +425,48 @@ export default function LibraryPage() {
               </button>
             ))}
           </div>
+          <details className="rounded-lg border border-zinc-800 bg-zinc-900/40" open={qualityFlag !== null}>
+            <summary className="cursor-pointer px-4 py-2 text-sm text-zinc-300 flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="font-medium">Přehled kvality</span>
+              <span className="text-xs text-zinc-500">
+                {identified.length} filmů · {formatSize(librarySize)}
+                {(flagCounts.weak ?? 0) > 0 && <> · <span className="text-orange-300">{flagCounts.weak} kandidátů na lepší verzi</span></>}
+              </span>
+            </summary>
+            <div className="px-4 pb-3 pt-1 space-y-2">
+              <div className="flex flex-wrap gap-2 text-xs">
+                {QUALITY_FLAGS.map((f) => (
+                  <button key={f.key} title={f.title} disabled={!flagCounts[f.key]}
+                    onClick={() => setQualityFlag(qualityFlag === f.key ? null : f.key)}
+                    className={`px-2.5 py-1 rounded-full border transition-colors disabled:opacity-30 ${
+                      qualityFlag === f.key ? "border-violet-500 bg-violet-600/20 text-violet-200"
+                      : f.warn ? "border-orange-900/70 text-orange-300/90 hover:text-orange-200"
+                      : "border-zinc-800 text-zinc-400 hover:text-zinc-200"}`}>
+                    {f.label} <span className="font-mono">{flagCounts[f.key] ?? 0}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-zinc-600">
+                Film se posuzuje podle své nejlepší verze. Klikni na štítek pro filtr; „Hledat lepší verzi“ je v detailu filmu.
+              </p>
+            </div>
+          </details>
+          <div className="flex items-center gap-2 text-xs text-zinc-500">
+            Řadit:
+            <select value={librarySort} onChange={(e) => setLibrarySort(e.target.value as LibrarySort)}
+              className="rounded bg-zinc-900 border border-zinc-800 px-2 py-1 text-zinc-300">
+              <option value="default">Podle názvu</option>
+              <option value="quality_asc">Kvalita — nejhorší první</option>
+              <option value="quality_desc">Kvalita — nejlepší první</option>
+              <option value="size_desc">Velikost</option>
+              <option value="added_desc">Naposledy přidané</option>
+            </select>
+            {qualityFlag && (
+              <button onClick={() => setQualityFlag(null)} className="ml-2 text-violet-300 hover:text-violet-200">
+                × {QUALITY_FLAGS.find((f) => f.key === qualityFlag)?.label}
+              </button>
+            )}
+          </div>
           {visibleGroups.length === 0 && (
             <div className="text-center py-8 text-zinc-500 text-sm">Nic k zobrazení.</div>
           )}
@@ -420,6 +520,10 @@ export default function LibraryPage() {
                   <div className="flex items-center gap-2 text-xs text-zinc-500">
                     {movie.year && <span>{movie.year}</span>}
                     <span>{formatSize(movie.file_size)}</span>
+                    {(movie.status === "matched" || movie.status === "manual") && movie.quality_score != null && (
+                      <span className="ml-auto"><ScoreBadge score={bestVersion({ key, main: movie, versions }).quality_score}
+                        tip={bestVersion({ key, main: movie, versions }).quality_parts} /></span>
+                    )}
                   </div>
                   {movie.language && <p className="text-[10px] text-zinc-500 truncate">{movie.language}</p>}
                 </div>
