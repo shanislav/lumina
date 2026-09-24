@@ -22,3 +22,10 @@ def test_obviously_irrelevant_files_skip_ai():
     assert not _is_obviously_irrelevant(_file("Matrix.1999.1080p.mkv"))
     # a big file with "sample" in the title is a real movie
     assert not _is_obviously_irrelevant(_file("Free.Sample.2016.1080p.mkv", 3_000_000_000))
+
+
+def test_title_match_uses_best_of_all_names():
+    from app.clients.groq_scorer import _title_match_score
+
+    assert _title_match_score("Cosy Dens 1999", "Pelíšky (1999) CZ.mkv") < 70
+    assert _title_match_score("Cosy Dens 1999 / Pelíšky", "Pelíšky (1999) CZ.mkv") >= 90

@@ -240,7 +240,10 @@ async def score_results(
         prefix = prefix_map.get(f.source, f"[{f.source[:2].upper()}]")
         extra = f" {f.seeders}s" if f.seeders is not None else ""
         lines.append(f"{i}. {prefix} {f.name} {f.size / 1e9:.1f}GB{extra}")
-    user_prompt = f'Movie: "{movie_title}"\n' + "\n".join(lines)
+    names = [n.strip() for n in movie_title.split(" / ") if n.strip()]
+    heading = (f'Movie: "{names[0]}"' if len(names) == 1
+               else "Movie (one film, known under any of these names): " + " / ".join(f'"{n}"' for n in names))
+    user_prompt = heading + "\n" + "\n".join(lines)
 
     body = {
         "model": model,
@@ -308,7 +311,10 @@ def _normalize(text: str) -> str:
 
 
 def _title_match_score(query: str, filename: str) -> int:
-    """Score how well filename matches the search query (0-100)."""
+    """Score how well filename matches the search query (0-100).
+    Several names separated by " / " (local / original / English) → the best match counts."""
+    if " / " in query:
+        return max(_title_match_score(part, filename) for part in query.split(" / ") if part.strip())
     q_norm = _normalize(query)
     f_norm = _normalize(filename)
     q_words = set(q_norm.split())

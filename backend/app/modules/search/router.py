@@ -293,7 +293,13 @@ async def search_files(
     try:
         groq_model = cfg["groq_model"]
         # Give the model every name of the movie, so English-named files are not rated as unrelated.
-        ai_title = query if not en_title or _norm(en_title) in _norm(query) else f"{query} (also known as: {en_title})"
+        # Every name of the movie (UI language, original, English): files are named in any of them,
+        # and a file must not look unrelated just because the UI language differs ("Cosy Dens" vs "Pelíšky").
+        names: list[str] = []
+        for title in (query, original_title or "", en_title):
+            if title and _norm(_clean_title(title)) not in {_norm(_clean_title(n)) for n in names}:
+                names.append(title)
+        ai_title = " / ".join(names)
         scored = await score_results(ai_title, scorable, cfg["groq_api_key"], languages=languages, model=groq_model)
     except Exception as e:
         logger.warning("AI scoring failed, using fallback: %s", e)
