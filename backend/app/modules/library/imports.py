@@ -11,6 +11,10 @@ Movies (needs ``movies_library_dir``):
   file is kept as an additional version and nothing is deleted.
 - subtitles next to the download that carry its name ("Movie.cs.srt") move with it
 
+A film TMDB does not know (searched straight in the files, e.g. the fan parody "Pár Pařmenů"):
+the same naming rules with the title/year the user searched for (year from the file name
+when missing); status "manual" without a tmdb_id — organize, NFO and upgrades skip it.
+
 TV episodes (needs ``tv_library_dir``): ``{show} ({year})/Season NN/`` with the original file
 name (Plex reads SxxEyy from it); without SxxEyy straight into the show folder.
 
@@ -127,6 +131,55 @@ async def on_download_completed(payload: dict) -> None:
         await import_episode(payload)
     elif content_type == "movie" and payload.get("tmdb_id"):
         await import_movie(payload)
+    elif content_type == "movie" and payload.get("title"):
+        await import_custom_movie(payload)
+
+
+async def import_custom_movie(payload: dict) -> None:
+    """A film without a TMDB entry: folder/file by the naming rules from the searched title."""
+    from app.core.release_name import parse_name
+
+    cfg = await get_effective_settings()
+    root = cfg.get("movies_library_dir") or ""
+    src = payload["path"]
+    if not root:
+        logger.info("Movie library folder not set — %s stays in downloads", src)
+        return
+    title = payload["title"].strip()
+    year = int(str(payload.get("year") or 0)[:4] or 0) or parse_name(os.path.basename(src)).year or None
+    settings = await naming_settings()
+    media = await probe_async(src)
+    rel_folder, file_name = naming.movie_paths(
+        {"tmdb_id": None, "imdb_id": None, "year": year}, media, os.path.basename(src), title,
+        os.path.splitext(src)[1], settings["folder_format"], settings["file_format"],
+    )
+    folder = os.path.join(root, *[p for p in rel_folder.split("/") if p])
+    _ensure_dir(folder)
+    target = _unique_path(os.path.join(folder, file_name))
+    _move_with_subtitles(src, target)
+    payload["path"] = target
+    payload["imported"] = True
+
+    stat = os.stat(target)
+    values = {
+        "tmdb_id": None, "title": title, "original_title": title, "year": str(year or ""),
+        "filename": os.path.basename(target), "file_path": target, "file_size": stat.st_size,
+        "file_mtime": stat.st_mtime, "quality": naming.resolution_label(media) or "unknown",
+        "language": ",".join(sorted({a["lang"].upper() for a in media.get("audio", []) if a.get("lang")})),
+        "media": json.dumps(media), "duration_s": media.get("duration_s") or 0,
+        "candidates": "[]", "confidence": 100, "status": "manual", "matched_by": "download",
+        "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    db = await get_db()
+    try:
+        await db.execute(
+            f"INSERT INTO library_movies ({', '.join(values)}) VALUES ({', '.join('?' for _ in values)})",
+            tuple(values.values()),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+    logger.info("Imported %s (not in TMDB)", target)
 
 
 async def import_episode(payload: dict) -> None:

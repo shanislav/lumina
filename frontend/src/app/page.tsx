@@ -70,6 +70,7 @@ function HomeContent() {
   }, [router]);
 
   const [searchLang, setSearchLang] = useState<string | undefined>(undefined);
+  const [lastQuery, setLastQuery] = useState("");
 
   // Handle incoming movie from Discover page — go straight to file search
   const handleDiscoverMovie = useCallback(async (movie: TMDBMovie) => {
@@ -132,6 +133,7 @@ function HomeContent() {
     setResultsCollapsed(false);
     setMoviesLoading(true);
     setSearchLang(language);
+    setLastQuery(query.trim());
     try {
       const results = await searchMovies(query, language);
       setMovies(results);
@@ -139,6 +141,25 @@ function HomeContent() {
       setError(e instanceof Error ? e.message : "Search error");
     } finally {
       setMoviesLoading(false);
+    }
+  }
+
+  /** Films TMDB does not know (fan parodies, rare Czech titles): search the files by the typed text. */
+  async function handleDirectSearch() {
+    const yearMatch = lastQuery.match(/\b(19|20)\d{2}\b/);
+    const title = lastQuery.replace(/\b(19|20)\d{2}\b/, "").replace(/\s+/g, " ").trim();
+    setUpgradeId(null);
+    setSelectedMovie({ tmdb_id: 0, title, original_title: "", year: yearMatch ? yearMatch[0] : "", overview: "",
+      poster_url: null, media_type: "movie" });
+    setFiles([]);
+    setFilesLoading(true);
+    setError(null);
+    try {
+      showFiles(await searchFiles(lastQuery));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "File search error");
+    } finally {
+      setFilesLoading(false);
     }
   }
 
@@ -190,6 +211,18 @@ function HomeContent() {
 
       {!selectedMovie && (
         <MovieGrid movies={movies} onSelect={handleSelectMovie} owned={owned} />
+      )}
+
+      {!selectedMovie && lastQuery && !moviesLoading && (
+        <div className={`w-full max-w-2xl text-sm ${movies.length ? "text-zinc-500" : "rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-zinc-300"}`}>
+          {movies.length === 0 && <p className="mb-2">Filmová databáze (TMDB) tento titul nezná.</p>}
+          <button onClick={handleDirectSearch} className="text-violet-300 hover:text-violet-200 underline-offset-2 hover:underline">
+            {movies.length ? "Není mezi výsledky? " : ""}Hledat přímo v souborech: „{lastQuery}“
+          </button>
+          {movies.length === 0 && (
+            <p className="mt-1 text-xs text-zinc-500">Po stažení se uloží do knihovny pod tímto názvem (bez údajů z TMDB).</p>
+          )}
+        </div>
       )}
 
       {selectedMovie && (

@@ -1,6 +1,7 @@
 """Finished downloads into the library (library.imports): versions, replacing, new movies, episodes."""
 
 import json
+import os
 import shutil
 import sqlite3
 
@@ -171,4 +172,19 @@ async def test_replace_takes_the_old_versions_foreign_named_subtitles(setup):
     await events.emit("download.completed", _payload(new, {"mode": "replace", "file_id": 1}))
     assert not (folder / "Matrix (1999) [Webrip] [eng].ass").exists()
     assert (folder / (NEW_NAME[:-4] + ".cs.srt")).exists()       # the new version's own subtitles stay
+
+
+async def test_film_not_in_tmdb_is_imported_by_its_searched_title(setup, tmp_path):
+    folder, old, new = setup
+    parody = tmp_path / "Downloads" / "Par-parmenu-CZ-2004.avi"
+    parody.write_bytes(b"p")
+    payload = await events.emit("download.completed", {
+        "download_id": "x", "tmdb_id": 0, "title": "Pár Pařmenů", "year": 0, "content_type": "movie",
+        "path": str(parody)})
+    target = folder.parent.parent / "2004" / "Pár Pařmenů (2004)" / "Pár Pařmenů (2004) [720p x264] [CS] .avi"
+    assert payload["imported"] is True
+    assert os.path.dirname(payload["path"]) == str(target.parent)
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT tmdb_id, title, year, status FROM library_movies WHERE title = 'Pár Pařmenů'").fetchone()
+    assert row == (None, "Pár Pařmenů", "2004", "manual")
 
