@@ -162,3 +162,13 @@ async def test_note_and_one_preferred_version(setup):
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("SELECT id, note, preferred FROM library_movies ORDER BY id").fetchall()
     assert rows == [(1, "pre deti — CZ dabing", 0), (2, "", 1)]
+
+
+async def test_replace_takes_the_old_versions_foreign_named_subtitles(setup):
+    folder, old, new = setup
+    (folder / "Matrix (1999) [Webrip] [eng].ass").write_text("old release subs")
+    (new.parent / (new.stem + ".cs.srt")).write_text("new release subs")
+    await events.emit("download.completed", _payload(new, {"mode": "replace", "file_id": 1}))
+    assert not (folder / "Matrix (1999) [Webrip] [eng].ass").exists()
+    assert (folder / (NEW_NAME[:-4] + ".cs.srt")).exists()       # the new version's own subtitles stay
+

@@ -87,14 +87,27 @@ def _move_with_subtitles(src: str, target: str) -> None:
             _move(sub, dst)
 
 
-def _delete_version(video: str) -> list[str]:
-    """Delete a video and its same-stem sidecars (subtitles, .nfo). Returns deleted paths."""
+def _delete_version(video: str, replacement: str = "") -> list[str]:
+    """Delete a video and its same-stem sidecars (subtitles, .nfo). Returns deleted paths.
+
+    When the video was the only one in its folder (besides its replacement), subtitles named after
+    something else belong to it too ("Parasite (2021) [...].ass" from an older naming scheme) —
+    they are timed to that release, so they go with it. The replacement's own subtitles stay.
+    """
     folder, name = os.path.split(video)
     stem = os.path.splitext(name)[0]
+    keep_stem = os.path.splitext(os.path.basename(replacement))[0] if replacement else None
+    entries = os.listdir(folder)
+    others = [e for e in entries if os.path.splitext(e)[1].lower() in VIDEO_EXTS
+              and os.path.join(folder, e) not in (video, replacement)]
     deleted = []
-    for entry in os.listdir(folder):
+    for entry in entries:
         path = os.path.join(folder, entry)
-        if path == video or (entry.startswith(stem + ".") and os.path.splitext(entry)[1].lower() not in VIDEO_EXTS):
+        ext = os.path.splitext(entry)[1].lower()
+        own_sidecar = entry.startswith(stem + ".") and ext not in VIDEO_EXTS
+        orphan_subtitle = (not others and ext in SUBTITLE_EXTS
+                           and not (keep_stem and entry.startswith(keep_stem + ".")))
+        if path == video or own_sidecar or orphan_subtitle:
             os.remove(path)
             deleted.append(path)
     return deleted
@@ -219,7 +232,7 @@ async def import_movie(payload: dict) -> None:
 
         if old:
             if not mismatch and _durations_agree(media.get("duration_s") or 0, old.get("duration_s") or 0) and os.path.exists(old["file_path"]):
-                deleted = _delete_version(old["file_path"])
+                deleted = _delete_version(old["file_path"], replacement=target)
                 await db.execute("DELETE FROM library_movies WHERE id = ?", (old["id"],))
                 for path in deleted:
                     await db.execute(

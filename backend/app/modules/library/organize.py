@@ -96,13 +96,25 @@ def _plan_group(rows: list[dict], details: dict, root: str, settings: dict) -> d
 
     renames: dict[str, str] = {}  # src → dst for videos
     target_folder = None
+    wanted: list[tuple[dict, str]] = []
     for row in rows:
         rel_folder, file_name = naming.movie_paths(
             info, row.get("media") or {}, row["filename"], title, os.path.splitext(row["filename"])[1],
             settings["folder_format"], settings["file_format"],
         )
         target_folder = os.path.normpath(os.path.join(root, *rel_folder.split("/")))
-        renames[row["file_path"]] = os.path.join(target_folder, file_name)
+        wanted.append((row, os.path.join(target_folder, file_name)))
+    # Two versions with the same name by the rules (same quality/codec/languages): the second one
+    # keeps "(2)" — the way the import names it. A file already carrying its name goes first.
+    wanted.sort(key=lambda item: os.path.normcase(item[0]["file_path"]) != os.path.normcase(item[1]))
+    used: set[str] = set()
+    for row, dst in wanted:
+        base, ext = os.path.splitext(dst)
+        n = 2
+        while os.path.normcase(dst) in used:
+            dst, n = f"{base} ({n}){ext}", n + 1
+        used.add(os.path.normcase(dst))
+        renames[row["file_path"]] = dst
 
     ops: list[dict] = []
     try:

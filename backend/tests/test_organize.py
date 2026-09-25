@@ -196,3 +196,26 @@ def test_nfo_keeps_note_and_preferred_version(tmp_path):
     path.write_text(xml, encoding="utf-8")
     facts = read_nfo(str(path))
     assert facts.lumina_files == {"a.mkv": {"note": "pre deti — CZ dabing", "preferred": True}}
+
+
+async def test_two_versions_with_the_same_name_keep_2(library):
+    old = library / "2017" / "Blade Runner 2049 (2017)"
+    stem = "Blade Runner 2049 (2017) [720p x264] [CS+EN] {tmdb-335984}"
+    first = old / "Blade Runner (1982) [Bluray-720p x264] [CS+EN].mkv"
+    second = old / f"{stem} (2).mkv"
+    second.write_bytes(b"y")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO library_movies (tmdb_id, title, year, filename, file_path, status, media, file_size) "
+            "VALUES (335984, 'Blade Runner 2049', '2017', ?, ?, 'matched', ?, 1)",
+            (second.name, str(second), json.dumps(MEDIA)),
+        )
+    db = await get_db()
+    try:
+        plan = await organize.plan_movie(db, NoTMDB(), 1, str(library))
+    finally:
+        await db.close()
+    videos = {os.path.basename(op["src"]): os.path.basename(op["dst"]) for op in plan["ops"] if op["kind"] == "video"}
+    assert videos == {first.name: f"{stem}.mkv"}          # the "(2)" one needs no change
+    assert not plan["conflicts"]
+
