@@ -5,6 +5,7 @@ from fastapi import APIRouter
 
 from app.config import get_effective_settings
 from app.clients.tmdb import TMDBClient
+from app.clients.wikidata import WikidataClient
 from app.core.offers.details import get_details
 from app.core.offers.evaluate import MovieContext, evaluate
 from app.core.offers.search import find_offers
@@ -31,6 +32,8 @@ async def search_movies(query: str, language: str | None = None) -> list[TMDBMov
         )
         movies = results[0] if isinstance(results[0], list) else []
         shows = results[1] if isinstance(results[1], list) else []
+        if not movies:
+            movies = await _wikidata_films(query, lang_code)
         # Interleave: movie, tv, movie, tv... then append remaining
         merged: list[TMDBMovie] = []
         mi, ti = 0, 0
@@ -44,6 +47,21 @@ async def search_movies(query: str, language: str | None = None) -> list[TMDBMov
         return merged[:20]
     finally:
         await client.close()
+
+
+async def _wikidata_films(query: str, lang_code: str) -> list[TMDBMovie]:
+    """Films TMDB does not know (fan parodies, rare Czech titles) — from Wikidata/Wikipedia."""
+    client = WikidataClient()
+    try:
+        films = await client.search_films(query, language=lang_code)
+    except Exception as e:
+        logger.info("Wikidata search '%s' failed: %s", query, e)
+        return []
+    finally:
+        await client.close()
+    return [TMDBMovie(tmdb_id=0, title=f["title"], original_title=f["original_title"], year=str(f["year"] or ""),
+                      overview=f["overview"], poster_url=f["poster_url"], media_type="movie",
+                      wikidata_id=f["wikidata_id"]) for f in films]
 
 
 @router.get("/discover/trending", response_model=list[TMDBMovie])
@@ -119,11 +137,12 @@ async def search_files(
     original_title: str | None = None,
     tmdb_id: int | None = None,
     media_type: str | None = None,
+    wikidata_id: str | None = None,
 ) -> "SearchFilesResponse":
     """All files of a film on all sources, judged (app/core/offers)."""
     cfg = await get_effective_settings()
     offers = await find_offers(cfg, query, original_title=original_title or "", tmdb_id=tmdb_id,
-                               media_type=media_type or "movie")
+                               media_type=media_type or "movie", wikidata_id=wikidata_id)
     return SearchFilesResponse(movie=offers.movie.as_dict(), prefer_local_audio=offers.prefs.prefer_local_audio,
                                files=[ScoredFile(**row) for row in offers.rows])
 

@@ -115,7 +115,7 @@ class Offers:
 
 
 async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_id: int | None = None,
-                      media_type: str = "movie", use_ai: bool = True) -> Offers:
+                      media_type: str = "movie", use_ai: bool = True, wikidata_id: str | None = None) -> Offers:
     """All files of a film on all sources, judged by rules (+ AI for unclear ones)."""
     sources = SourceRegistry.get().sources
     prefs = prefs_from_settings(cfg)
@@ -152,6 +152,22 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
             await client.close()
         if en_title and en_title.lower() not in [q.lower() for q in all_queries]:
             all_queries.append(en_title)
+    elif wikidata_id:
+        # not in TMDB: names, year and runtime from Wikidata
+        from app.clients.wikidata import WikidataClient
+        wd = WikidataClient()
+        try:
+            film = await wd.get_film(wikidata_id)
+        except Exception as e:
+            logger.warning("Wikidata %s failed: %s", wikidata_id, e)
+            film = None
+        finally:
+            await wd.close()
+        if film:
+            ctx.titles = film["titles"]
+            ctx.year = film["year"] or ctx.year
+            ctx.runtime = film["runtime"]
+            local_titles = film["titles"][:2]
     ctx.titles = _unique_names([re.sub(r"\b(19|20)\d{2}\b", "", query).strip(), original_title,
                                 en_title, *ctx.titles])
 

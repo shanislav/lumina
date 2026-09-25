@@ -31,6 +31,7 @@ class TMDBMovie(BaseModel):
     overview: str
     poster_url: str | None
     media_type: str = "movie"  # "movie" or "tv"
+    wikidata_id: str | None = None   # a film TMDB does not know, found on Wikidata (tmdb_id = 0)
 
 
 class ScorableFile(BaseModel):

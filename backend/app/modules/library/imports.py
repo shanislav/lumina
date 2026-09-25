@@ -160,9 +160,11 @@ async def import_custom_movie(payload: dict) -> None:
     payload["path"] = target
     payload["imported"] = True
 
+    poster, overview = await _wikidata_extras(title, year)
     stat = os.stat(target)
     values = {
         "tmdb_id": None, "title": title, "original_title": title, "year": str(year or ""),
+        "poster_url": poster, "overview": overview,
         "filename": os.path.basename(target), "file_path": target, "file_size": stat.st_size,
         "file_mtime": stat.st_mtime, "quality": naming.resolution_label(media) or "unknown",
         "language": ",".join(sorted({a["lang"].upper() for a in media.get("audio", []) if a.get("lang")})),
@@ -180,6 +182,21 @@ async def import_custom_movie(payload: dict) -> None:
     finally:
         await db.close()
     logger.info("Imported %s (not in TMDB)", target)
+
+
+async def _wikidata_extras(title: str, year: int | None) -> tuple[str | None, str]:
+    """Poster and description of a film TMDB does not know, when Wikidata has it."""
+    from app.clients.wikidata import WikidataClient
+    client = WikidataClient()
+    try:
+        films = await client.search_films(title)
+    except Exception as e:
+        logger.info("Wikidata lookup of %s failed: %s", title, e)
+        return None, ""
+    finally:
+        await client.close()
+    match = next((f for f in films if year and f["year"] == year), None) or (films[0] if len(films) == 1 else None)
+    return (match["poster_url"], match["overview"]) if match else (None, "")
 
 
 async def import_episode(payload: dict) -> None:

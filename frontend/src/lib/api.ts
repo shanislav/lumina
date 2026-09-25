@@ -8,6 +8,7 @@ export interface TMDBMovie {
   overview: string;
   poster_url: string | null;
   media_type?: "movie" | "tv";
+  wikidata_id?: string | null;   // a film TMDB does not know (tmdb_id = 0)
 }
 
 export interface ScoredFile {
@@ -157,8 +158,10 @@ export async function searchFiles(
   originalTitle?: string,
   tmdbId?: number,
   mediaType?: string,
+  wikidataId?: string | null,
 ): Promise<SearchFilesResult> {
   const params = new URLSearchParams({ query });
+  if (wikidataId) params.set("wikidata_id", wikidataId);
   if (language) params.set("language", language);
   if (originalTitle && originalTitle !== query) params.set("original_title", originalTitle);
   if (tmdbId) params.set("tmdb_id", String(tmdbId));

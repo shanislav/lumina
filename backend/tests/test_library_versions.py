@@ -174,8 +174,12 @@ async def test_replace_takes_the_old_versions_foreign_named_subtitles(setup):
     assert (folder / (NEW_NAME[:-4] + ".cs.srt")).exists()       # the new version's own subtitles stay
 
 
-async def test_film_not_in_tmdb_is_imported_by_its_searched_title(setup, tmp_path):
+async def test_film_not_in_tmdb_is_imported_by_its_searched_title(setup, tmp_path, monkeypatch):
     folder, old, new = setup
+
+    async def wikidata(title, year):
+        return "https://commons.example/poster.jpg", "fantasy parodie"
+    monkeypatch.setattr(imports, "_wikidata_extras", wikidata)
     parody = tmp_path / "Downloads" / "Par-parmenu-CZ-2004.avi"
     parody.write_bytes(b"p")
     payload = await events.emit("download.completed", {
@@ -185,6 +189,6 @@ async def test_film_not_in_tmdb_is_imported_by_its_searched_title(setup, tmp_pat
     assert payload["imported"] is True
     assert os.path.dirname(payload["path"]) == str(target.parent)
     with sqlite3.connect(DB_PATH) as conn:
-        row = conn.execute("SELECT tmdb_id, title, year, status FROM library_movies WHERE title = 'Pár Pařmenů'").fetchone()
-    assert row == (None, "Pár Pařmenů", "2004", "manual")
+        row = conn.execute("SELECT tmdb_id, title, year, status, overview FROM library_movies WHERE title = 'Pár Pařmenů'").fetchone()
+    assert row == (None, "Pár Pařmenů", "2004", "manual", "fantasy parodie")
 

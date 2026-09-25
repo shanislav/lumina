@@ -83,7 +83,7 @@ function HomeContent() {
       const query = movie.year
         ? `${movie.title} ${movie.year}`
         : movie.title;
-      showFiles(await searchFiles(query, undefined, movie.original_title, movie.tmdb_id, movie.media_type));
+      showFiles(await searchFiles(query, undefined, movie.original_title, movie.tmdb_id, movie.media_type, movie.wikidata_id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "File search error");
     } finally {
@@ -173,7 +173,7 @@ function HomeContent() {
       const query = movie.year
         ? `${movie.title} ${movie.year}`
         : movie.title;
-      showFiles(await searchFiles(query, searchLang, movie.original_title, movie.tmdb_id, movie.media_type));
+      showFiles(await searchFiles(query, searchLang, movie.original_title, movie.tmdb_id, movie.media_type, movie.wikidata_id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "File search error");
     } finally {
