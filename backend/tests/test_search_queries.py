@@ -2,13 +2,19 @@ from app.core.offers.search import ddl_queries as _ddl_queries, is_video_name as
 
 
 def test_ddl_queries_short_full_and_english_title():
-    assert _ddl_queries("Podfukáři 3: Nové kouzlo 2025", "Now You See Me: Now You Don't", "Now You See Me: Now You Don't") == \
-        ["Podfukáři 3", "Podfukáři 3 Nové kouzlo", "Now You See Me Now You Dont"]
+    assert _ddl_queries("Podfukáři 3: Nové kouzlo 2025", "Now You See Me: Now You Don't", "Now You See Me: Now You Don't") ==         ["Podfukáři 3 Nové kouzlo", "Podfukáři 3 2025", "Now You See Me Now You Dont", "Podfukáři 3"]
 
 
 def test_ddl_queries_without_subtitle_and_duplicates():
-    assert _ddl_queries("Pelíšky 1999", "Pelíšky", "Cosy Dens") == ["Pelíšky", "Cosy Dens"]
-    assert _ddl_queries("Matrix 1999", "The Matrix", "The Matrix") == ["Matrix", "The Matrix"]
+    assert _ddl_queries("Pelíšky 1999", "Pelíšky", "Cosy Dens") == ["Pelíšky", "Pelíšky 1999", "Cosy Dens"]
+    assert _ddl_queries("Matrix 1999", "The Matrix", "The Matrix") == ["Matrix", "Matrix 1999", "The Matrix"]
+
+
+def test_ddl_queries_local_titles_and_acronyms():
+    # "S W A T" alone: 6 film files of 30 (TV episodes); full local title / title + year: the film only
+    assert _ddl_queries("S.W.A.T. 2003", "S.W.A.T.", "S.W.A.T.",
+                        ["S.W.A.T. – Jednotka rychlého nasazení", "S.W.A.T.: Jednotka rýchleho nasadenia"], 2003) ==         ["S W A T Jednotka rychlého nasazení", "S W A T Jednotka rýchleho nasadenia", "S W A T",
+         "S W A T 2003", "SWAT 2003"]
 
 
 def test_only_video_files_from_ddl():

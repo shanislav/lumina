@@ -10,7 +10,9 @@ class WebShareSource(BaseSource):
         super().__init__(source_id, config)
         self._client = WebShareClient(config["username"], config["password"])
 
-    async def search(self, query: str, limit: int = 30) -> list[SearchResult]:
+    # WebShare sorts by size: with a small limit the big 4K episodes/remuxes of namesakes push the
+    # film's ordinary copies out of the answer (S.W.A.T.: 6 of 30). One call, so ask for more.
+    async def search(self, query: str, limit: int = 100) -> list[SearchResult]:
         files = await self._client.search(query, limit)
         return [
             SearchResult(

@@ -75,7 +75,7 @@ class WebShareClient:
         logger.info("WebShare login successful")
         return token
 
-    async def search(self, query: str, limit: int = 30) -> list[WebShareFile]:
+    async def search(self, query: str, limit: int = 100) -> list[WebShareFile]:
         token = await self._ensure_token()
         resp = await self._http.post(
             f"{API_BASE}/search/",

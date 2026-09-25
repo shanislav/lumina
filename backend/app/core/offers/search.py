@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Direct-download sources also return archives, torrents, subtitles, disc images … — only
 # playable video files make sense for the library.
 DDL_VIDEO_EXTS = {"mkv", "mp4", "avi", "m4v", "ts", "m2ts", "wmv", "mov", "mpg", "mpeg", "webm", "divx", "ogm"}
-MAX_DDL_QUERIES = 3
+MAX_DDL_QUERIES = 6
 MIN_SEEDERS = 10
 DETAIL_SOURCES = ("webshare", "fastshare")   # verification order: WebShare = one API call
 
@@ -67,17 +67,33 @@ def _clean_title(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def ddl_queries(query: str, original_title: str = "", en_title: str = "") -> list[str]:
-    """Queries for WebShare/FastShare. Uploaders mostly use the short local title ("Podfukáři 3"),
-    sometimes the full one or the English one — one query alone misses most files."""
+def _collapse_acronyms(text: str) -> str:
+    """ "S.W.A.T." → "SWAT" (WebShare matches the joined form, FastShare the spaced one)."""
+    return re.sub(r"\b(?:[A-Za-z]\.){2,}[A-Za-z]?\.?", lambda m: m.group(0).replace(".", ""), text)
+
+
+def ddl_queries(query: str, original_title: str = "", en_title: str = "",
+                local_titles: list[str] | None = None, year: int | None = None) -> list[str]:
+    """Queries for WebShare/FastShare, most specific first. Each source returns a limited list, so a
+    short title alone is drowned by namesakes ("S W A T": 6 film files of 30, the rest TV episodes);
+    the full local title or "title year" bring the film's files (30 of 30). Measured 2026-09-25:
+    WebShare finds "SWAT 2003", FastShare "S W A T 2003" — both forms are asked."""
+    year = year or year_of(query)
     no_year = re.sub(r"\b(19|20)\d{2}\b", "", query).strip()
     main = re.split(r"\s*[:–—]\s*|\s+-\s+", no_year)[0]
+    # (text, add the year after cleaning — cleaning drops years)
+    candidates = [*((t, False) for t in local_titles or []), (no_year, False)]
+    if year:
+        candidates += [(main, True), (_collapse_acronyms(main), True)]
+    candidates += [(en_title, False), (original_title, False), (main, False)]
     queries: list[str] = []
     seen: set[str] = set()
-    for candidate in (main, no_year, en_title, original_title):
+    for candidate, add_year in candidates:
         cleaned = _clean_title(candidate or "")
-        key = _norm(cleaned)
-        if len(key) >= 2 and key not in seen:
+        if add_year and cleaned:
+            cleaned = f"{cleaned} {year}"
+        key = cleaned.lower()
+        if len(_norm(cleaned)) >= 2 and key not in seen:
             seen.add(key)
             queries.append(cleaned)
     return queries[:MAX_DDL_QUERIES] or [query]
@@ -112,6 +128,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     # Everything TMDB knows about the film's names, its year and runtime (one call). Files are named
     # in any language, and the runtime lets verified durations expose wrong/incomplete files.
     en_title = ""
+    local_titles: list[str] = []
     if tmdb_id:
         client = TMDBClient(cfg["tmdb_api_key"])
         try:
@@ -119,6 +136,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
                 full = await client.get_movie_full(tmdb_id)
                 by_lang = full.get("titles_by_lang") or {}
                 en_title = by_lang.get("en", "")
+                local_titles = [by_lang.get(l, "") for l in prefs.local_langs]
                 ctx.runtime = full.get("runtime") or 0
                 ctx.year = full.get("year") or ctx.year
                 ctx.titles = [full.get("title", ""), full.get("original_title", ""),
@@ -154,7 +172,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
 
     # DDL sources get a few cleaned variants (short local title, full local title, English title);
     # Jackett gets ALL query variants (EN title, stripped diacritics, etc.)
-    ddl = ddl_queries(query, original_title, en_title)
+    ddl = ddl_queries(query, original_title, en_title, local_titles, ctx.year)
     tasks = [
         _safe_search(source, q)
         for source in sources
