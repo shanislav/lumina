@@ -146,7 +146,7 @@ async def search_details(body: DetailsRequest) -> dict:
     length check). {"<source_id>:<ident>": {"details": …, **evaluation} | null}"""
     details = await get_details([f.model_dump() for f in body.files])
     movie = body.movie or {}
-    ctx = MovieContext(titles=movie.get("titles") or [], year=movie.get("year"), runtime=movie.get("runtime") or 0)
+    ctx = MovieContext.from_dict(movie)
     prefs = prefs_from_settings(await get_effective_settings())
     out: dict[str, dict | None] = {}
     for f in body.files:

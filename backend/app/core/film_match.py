@@ -63,7 +63,11 @@ def length_verdict(duration_s: int, runtime_min: int) -> str | None:
 
 
 def judge(name: str, titles: list[str], year: int | None = None,
-          duration_s: int = 0, runtime_min: int = 0) -> Verdict:
+          duration_s: int = 0, runtime_min: int = 0,
+          people: list[str] | None = None, other_parts: list[str] | None = None) -> Verdict:
+    """people: cast/director names — allowed extra words in a name.
+    other_parts: titles of the other films of the same series — a name covering one of them
+    (with the words that make it that film) is another part."""
     if _EPISODE.search(name):
         return Verdict("no", ["epizoda seriálu"])
     if years_mismatch(name, year):
@@ -81,7 +85,13 @@ def judge(name: str, titles: list[str], year: int | None = None,
         return Verdict("length" if length else "unsure", [length] if length else ["název bez titulu"])
 
     covered = any(t <= file_words for t in title_sets)
-    extra = file_words - all_title_words
+    for other in other_parts or []:
+        other_words = tokens(other) - STOPWORDS
+        distinct = other_words - all_title_words
+        if distinct and other_words <= file_words:
+            return Verdict("no", [f"jiný díl série ({other})"])
+    people_words = set().union(*(tokens(p) for p in people or [])) if people else set()
+    extra = file_words - all_title_words - people_words
     if not file_words & all_title_words:
         return Verdict("no", ["jiný název"])
     other_part = extra & SEQUEL_MARKERS

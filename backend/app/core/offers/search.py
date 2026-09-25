@@ -124,6 +124,8 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
                 ctx.titles = [full.get("title", ""), full.get("original_title", ""),
                               *(by_lang.get(l, "") for l in ("cs", "sk", "en")),
                               *full.get("alternative_titles", [])]
+                ctx.people = full.get("people", [])
+                ctx.other_parts = full.get("other_parts", [])
             else:
                 en_title = await client.get_english_title(tmdb_id, media_type)
         except Exception as e:

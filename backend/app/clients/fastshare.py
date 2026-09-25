@@ -276,11 +276,13 @@ PAGE_THROTTLE = Throttle("FastShare pages", concurrency=2, interval=PAGE_INTERVA
 
 def page_slug(name: str) -> str:
     """URL slug of a file page — must match FastShare exactly, otherwise the page has no details:
-    NFKD → ascii → lower → [^a-z0-9.]+ → "-", only a leading "-" is trimmed ("Film (2009).mkv" → "film-2009-.mkv")."""
+    NFKD → drop diacritics only → lower → [^a-z0-9.]+ → "-", only a leading "-" is trimmed
+    ("Film (2009).mkv" → "film-2009-.mkv"). Other non-ASCII characters are separators, not dropped:
+    "TIT°.mp4" → "tit-.mp4" (verified on the site; the frontend link does the same)."""
     m = re.search(r"\.[^.]+$", name)
     ext = m.group(0).lower() if m else ""
     base = name[: -len(ext)] if ext else name
-    base = unicodedata.normalize("NFKD", base).encode("ascii", "ignore").decode().lower()
+    base = "".join(c for c in unicodedata.normalize("NFKD", base) if not unicodedata.combining(c)).lower()
     return re.sub(r"^-", "", re.sub(r"[^a-z0-9.]+", "-", base)) + ext
 
 

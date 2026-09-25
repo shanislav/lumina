@@ -59,6 +59,7 @@ def test_fastshare_page_slug():
     assert page_slug("Matrix 1 (1999).mkv") == "matrix-1-1999-.mkv"
     assert page_slug("Now.You.See.Me.Now.You.Don't.2025.mkv") == "now.you.see.me.now.you.don-t.2025.mkv"
     assert page_slug("Pelíšky.mkv") == "pelisky.mkv"
+    assert page_slug("S.W.A.T. Obležení CZ TIT°.mp4") == "s.w.a.t.-oblezeni-cz-tit-.mp4"   # ° is a separator
 
 
 async def test_fastshare_pages_are_throttled(monkeypatch):

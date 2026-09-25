@@ -124,3 +124,18 @@ def test_user_weights_change_the_score():
     # junk is ignored, defaults stay
     assert weights_from_setting('{"points": {"surround_51": "x", "nope": 1}, "bad": 2}') == merge_weights(None)
     assert weights_from_setting("not json") == merge_weights(None)
+
+
+SWAT = ["S.W.A.T.", "S.W.A.T. – Jednotka rychlého nasazení", "SWAT"]
+SWAT_PEOPLE = ["Samuel L. Jackson", "Colin Farrell", "Jeremy Renner", "Clark Johnson"]
+SWAT_OTHERS = ["S.W.A.T.: Firefight", "S.W.A.T. - Pod palbou", "S.W.A.T.: Under Siege", "S.W.A.T. Obležení"]
+
+
+@pytest.mark.parametrize("name, status", [
+    ("S.W.A.T.-Jednotka rychlého nasazení (Samuel L. Jackson,Colin Farrell,Jeremy Renner).avi", "yes"),
+    ("S.W.A.T. Pod palbou - S.W.A.T. Firefight CZDAB.avi", "no"),
+    ("S.W.A.T. Obležení CZ TIT°.mp4", "no"),
+    ("S.W.A.T. (2003) CZ EN 1080p.mkv", "yes"),
+])
+def test_film_match_people_and_series(name, status):
+    assert judge(name, SWAT, 2003, people=SWAT_PEOPLE, other_parts=SWAT_OTHERS).status == status

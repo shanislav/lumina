@@ -237,7 +237,8 @@ class TMDBClient:
         """Movie details needed for matching: runtime, original language and titles in all languages."""
         resp = await self._http.get(
             f"{API_BASE}/movie/{tmdb_id}",
-            params={"api_key": self._api_key, "language": language, "append_to_response": "translations,alternative_titles"},
+            params={"api_key": self._api_key, "language": language,
+                    "append_to_response": "translations,alternative_titles,credits"},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -261,6 +262,24 @@ class TMDBClient:
             for a in (data.get("alternative_titles") or {}).get("titles", [])
             if a.get("iso_3166_1") in ("US", "GB", "CZ", "SK")
         ]
+        # Names uploaders put into file names ("… (Samuel L. Jackson, Colin Farrell)") — not a sign
+        # of another film.
+        credits = data.get("credits") or {}
+        people = [c.get("name", "") for c in (credits.get("cast") or [])[:8]]
+        people += [c.get("name", "") for c in (credits.get("crew") or []) if c.get("job") == "Director"]
+        # Other films of the same series ("S.W.A.T.: Firefight") — a file named after one of them is not this film.
+        other_parts: list[str] = []
+        collection = data.get("belongs_to_collection") or {}
+        if collection.get("id"):
+            try:
+                cresp = await self._http.get(f"{API_BASE}/collection/{collection['id']}",
+                                             params={"api_key": self._api_key, "language": language})
+                cresp.raise_for_status()
+                for part in cresp.json().get("parts", []):
+                    if part.get("id") != tmdb_id:
+                        other_parts += [part.get("title") or "", part.get("original_title") or ""]
+            except httpx.HTTPError:
+                pass
         return {
             "tmdb_id": tmdb_id,
             "title": data.get("title", ""),
@@ -274,6 +293,8 @@ class TMDBClient:
             "titles": sorted(t for t in titles if t),
             "alternative_titles": sorted({t for t in alternative if t} - titles),
             "titles_by_lang": titles_by_lang,
+            "people": sorted({p for p in people if p}),
+            "other_parts": sorted({t for t in other_parts if t} - titles),
         }
 
     async def close(self) -> None:
