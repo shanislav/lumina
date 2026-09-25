@@ -126,6 +126,7 @@ class Facts:
     upscale: bool = False     # AI/upscaled 4K (marker in the name + 4K resolution)
     upscale_marker: bool = False
     verified: bool = False    # facts come from the file itself / the source, not from its name
+    bitrate_estimated: bool = False   # size / the film's runtime (the source knows no duration)
 
 
 def facts_from_name(name: str, size: int = 0, duration_s: int = 0, width: int = 0, height: int = 0) -> Facts:
@@ -293,7 +294,7 @@ def score(f: Facts, prefs: Prefs | None = None) -> Score:
 def summary(f: Facts) -> str:
     bits = [f.resolution or "?", f.codec]
     if f.bitrate:
-        bits.append(f"{f.bitrate / 1e6:.1f} Mb/s")
+        bits.append(f"{'~' if f.bitrate_estimated else ''}{f.bitrate / 1e6:.1f} Mb/s")
     bits.append(f.hdr)
     channels = max((a.get("channels") or 0) for a in f.audio) if f.audio else 0
     if channels:

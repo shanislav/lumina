@@ -40,6 +40,11 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
              duration_s: int = 0, width: int = 0, height: int = 0) -> dict:
     facts = (facts_from_media(details, name, size) if details
              else facts_from_name(name, size, duration_s, width, height))
+    if not facts.bitrate and size and ctx.runtime:
+        # WebShare search (and some file_info answers) know no duration — the film's runtime from
+        # TMDB gives the bitrate well enough to compare. Not used for the length check.
+        facts.bitrate = int(size * 8 / (ctx.runtime * 60))
+        facts.bitrate_estimated = True
     q = score(facts, prefs)
     if "sample" in name.lower() and 0 < size < SAMPLE_MAX_BYTES:
         film, reasons = "no", ["sample"]

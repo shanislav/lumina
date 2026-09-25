@@ -139,3 +139,12 @@ SWAT_OTHERS = ["S.W.A.T.: Firefight", "S.W.A.T. - Pod palbou", "S.W.A.T.: Under 
 ])
 def test_film_match_people_and_series(name, status):
     assert judge(name, SWAT, 2003, people=SWAT_PEOPLE, other_parts=SWAT_OTHERS).status == status
+
+
+def test_bitrate_from_the_film_runtime_when_the_source_knows_no_duration():
+    ctx = MovieContext(titles=["Matrix"], year=1999, runtime=136)
+    empty_ws_info = {"duration_s": 0, "width": 0, "height": 0, "video_codec": "", "bitrate": 0, "audio": [], "subtitles": []}
+    ev = evaluate("Matrix.1999.1080p.mkv", 8_160_000_000, ctx, Prefs(), empty_ws_info)
+    assert ev["bitrate"] == 8_000_000 and "~8.0 Mb/s" in ev["quality_summary"]
+    assert not any("neznámý" in label for label, _ in ev["quality_parts"])
+    assert ev["film"] == "yes"   # no length verdict from an estimate
