@@ -19,7 +19,8 @@ from app.core.release_langs import parse_languages
 RESOLUTIONS = ("2160p", "1080p", "720p", "SD")
 RES_BASE = {"2160p": 90, "1080p": 70, "720p": 45, "SD": 20}
 # H.264-equivalent bitrate (bit/s) at which a resolution looks "good" and "excellent"
-GOOD = {"2160p": 25e6, "1080p": 8e6, "720p": 4e6, "SD": 1.5e6}
+# 1080p 6 / 4K 20: streaming-service quality (H.265 3 / 10 Mb/s of video) needs no penalty — user, 2026-09-25
+GOOD = {"2160p": 20e6, "1080p": 6e6, "720p": 4e6, "SD": 1.5e6}
 EXCELLENT = {"2160p": 50e6, "1080p": 20e6, "720p": 8e6, "SD": 3e6}
 # how much picture a codec gets from one bit, relative to H.264
 EFFICIENCY = {"H.265": 2.0, "AV1": 2.3, "H.264": 1.0, "VC-1": 0.9, "MPEG-2": 0.5, "XviD": 0.6}
