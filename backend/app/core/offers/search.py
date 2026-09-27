@@ -12,6 +12,7 @@ from app.clients.tmdb import TMDBClient
 from app.core.offers.details import cached_details, get_details
 from app.core.offers.evaluate import RELEVANCE, MovieContext, evaluate, recommended_key, year_of
 from app.core.quality import Prefs, prefs_from_settings
+from app.core.text import clean_text
 from app.models.schemas import ScorableFile
 from app.sources.base import SearchResult, SourceType
 from app.sources.registry import SourceRegistry
@@ -200,6 +201,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     all_results: list[SearchResult] = []
     for batch in results_per_task:
         for r in batch:
+            r.name = clean_text(r.name)   # any source: one broken name must not break the search
             if r.source_type != SourceType.JACKETT and not is_video_name(r.name):
                 continue
             if r.source_type == SourceType.JACKETT and (r.seeders or 0) < MIN_SEEDERS:
