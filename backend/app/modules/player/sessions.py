@@ -34,6 +34,9 @@ IDLE_S = 90
 SEGMENT_S = 6
 AHEAD = 30          # segments in front of the player before ffmpeg is paused (3 min)
 BEHIND = 20         # segments kept behind the player (2 min)
+# POSIX signals (the server runs on Linux; the numbers keep the module importable elsewhere)
+_STOP = getattr(signal, "SIGSTOP", 19)
+_CONT = getattr(signal, "SIGCONT", 18)
 _SEGMENT = re.compile(r"^s(\d{5})\.m4s$")
 
 
@@ -152,7 +155,7 @@ async def stop(sid: str) -> None:
         return
     if s.proc and s.proc.returncode is None:
         if s.paused:
-            _signal(s, signal.SIGCONT)
+            _signal(s, _CONT)
         s.proc.kill()
         try:
             await asyncio.wait_for(s.proc.wait(), 5)
@@ -190,10 +193,10 @@ def pace(s: Session) -> None:
     newest = max(produced)
     if s.proc and s.proc.returncode is None:
         if not s.paused and newest - s.last_segment > AHEAD:
-            _signal(s, signal.SIGSTOP)
+            _signal(s, _STOP)
             s.paused = True
         elif s.paused and newest - s.last_segment < AHEAD // 2:
-            _signal(s, signal.SIGCONT)
+            _signal(s, _CONT)
             s.paused = False
     for n in produced:
         if n < s.last_segment - BEHIND:
