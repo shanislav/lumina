@@ -59,7 +59,7 @@ def probe(path: str) -> dict:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries",
          "format=duration:stream=index,codec_type,codec_name,pix_fmt,height,color_transfer,channels"
-         ":stream_tags=language,title:stream_side_data=dv_profile", "-of", "json", path],
+         ":stream_tags=language,title:stream_side_data_list", "-of", "json", path],
         capture_output=True, text=True, timeout=60, check=True).stdout
     data = json.loads(out)
     video = next((s for s in data.get("streams", []) if s.get("codec_type") == "video"), {})
