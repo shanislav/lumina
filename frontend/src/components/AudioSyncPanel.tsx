@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import {
   AudioSyncJob, AudioSyncResult, AudioTrackInfo, LibraryMovie,
-  getAudioSyncJob, getAudioSyncResults, getAudioTracks, startAudioSync, startAudioTransfer,
+  audioPreviewUrl, getAudioSyncJob, getAudioSyncResults, getAudioTracks, makeAudioPreview, setAudioAdjust,
+  startAudioSync, startAudioTransfer,
 } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 
@@ -181,6 +182,10 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
       </div>
 
       {result && <ResultView result={result} />}
+      {result && resultId && result.verdict !== "no_match" && !job?.running && (
+        <PreviewBox key={resultId} resultId={resultId} result={result}
+          onSaved={(ms) => setResult({ ...result, adjust_ms: ms })} />
+      )}
       {done && <p className="text-sm text-green-300">{done}</p>}
 
       {result && resultId && (result.verdict === "constant" || result.verdict === "speed"
@@ -215,6 +220,82 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
               </div>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Short clips of the picture with the other audio — to check the lips, and correct by hand. */
+function PreviewBox({ resultId, result, onSaved }: {
+  resultId: number; result: AudioSyncResult; onSaved: (ms: number) => void;
+}) {
+  const dur = result.reference.duration || 0;
+  const points: { at: number; label: string }[] = [0.25, 0.5, 0.75].map((f) => ({ at: dur * f, label: clock(dur * f) }));
+  for (const p of result.pieces ?? []) {
+    if (p.start > 1 && p.offset != null) points.push({ at: p.start + 2, label: `po střihu ${clock(p.start)}` });
+  }
+  points.sort((a, b) => a.at - b.at);
+  const saved = result.adjust_ms ?? 0;
+  const [at, setAt] = useState(points[Math.floor(points.length / 2)]?.at ?? 0);
+  const [adjust, setAdjust] = useState(saved);
+  const [clip, setClip] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function show(nextAt = at, nextAdjust = adjust) {
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await makeAudioPreview(resultId, nextAt, nextAdjust);
+      setClip(r.name);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ukázka selhala");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const nudge = (ms: number) => {
+    const next = adjust + ms;
+    setAdjust(next);
+    show(at, next);
+  };
+
+  return (
+    <div className="space-y-2 rounded border border-zinc-800 p-2">
+      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="text-zinc-400">Ukázka (20 s):</span>
+        {points.map((p) => (
+          <button key={p.at} onClick={() => { setAt(p.at); show(p.at, adjust); }} disabled={busy}
+            className={`rounded px-2 py-0.5 border ${Math.abs(p.at - at) < 1 && clip ? "border-violet-500 text-violet-200" : "border-zinc-700 text-zinc-300"} disabled:opacity-40`}>
+            {p.label}
+          </button>
+        ))}
+        {busy && <span className="text-violet-300 animate-pulse">připravuji…</span>}
+      </div>
+      {err && <p className="text-xs text-red-400">{err}</p>}
+      {clip && (
+        // eslint-disable-next-line jsx-a11y/media-has-caption
+        <video key={clip} src={audioPreviewUrl(clip)} controls autoPlay className="w-full max-h-72 rounded bg-black" />
+      )}
+      {clip && (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-zinc-400" title="Když zvuk předbíhá pusu, posuň ho později (+)">Posun zvuku:</span>
+          {[-200, -40].map((ms) => (
+            <button key={ms} onClick={() => nudge(ms)} disabled={busy} className="rounded border border-zinc-700 px-2 py-0.5 text-zinc-300 disabled:opacity-40">{ms}</button>
+          ))}
+          <span className="w-16 text-center font-mono text-zinc-100">{adjust > 0 ? "+" : ""}{adjust} ms</span>
+          {[40, 200].map((ms) => (
+            <button key={ms} onClick={() => nudge(ms)} disabled={busy} className="rounded border border-zinc-700 px-2 py-0.5 text-zinc-300 disabled:opacity-40">+{ms}</button>
+          ))}
+          {adjust !== saved && (
+            <button onClick={async () => { await setAudioAdjust(resultId, adjust); onSaved(adjust); }}
+              className="ml-2 rounded bg-violet-600 px-2 py-0.5 text-white hover:bg-violet-500">
+              Uložit posun
+            </button>
+          )}
+          {saved !== 0 && adjust === saved && <span className="ml-2 text-green-300">uloženo — přenos ho použije</span>}
         </div>
       )}
     </div>

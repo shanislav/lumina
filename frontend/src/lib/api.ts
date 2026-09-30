@@ -1046,6 +1046,7 @@ export interface AudioSyncResult {
   note: string;
   drift_s: number;
   pieces?: { start: number; end: number; offset: number | null }[];
+  adjust_ms?: number;     // the user's correction (+ = the other audio later)
 }
 
 export interface AudioSyncJob {
@@ -1081,6 +1082,16 @@ export const startAudioSync = (body: { reference_id: number; other_id: number; r
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
 export const getAudioSyncJob = () => audioSyncCall<AudioSyncJob>("/job");
+export const makeAudioPreview = (resultId: number, at: number, adjustMs: number) =>
+  audioSyncCall<{ name: string; at: number; adjust_ms: number }>("/preview", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ result_id: resultId, at, adjust_ms: adjustMs }),
+  });
+export const audioPreviewUrl = (name: string) => `${API_BASE}/api/audiosync/preview/${name}`;
+export const setAudioAdjust = (resultId: number, adjustMs: number) =>
+  audioSyncCall<{ id: number; adjust_ms: number }>(`/results/${resultId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ adjust_ms: adjustMs }),
+  });
 export const startAudioTransfer = (resultId: number, mode: "version" | "replace") =>
   audioSyncCall<AudioSyncJob>("/transfer", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ result_id: resultId, mode }),

@@ -4,10 +4,12 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.config import get_effective_settings
@@ -15,6 +17,7 @@ from app.core import events
 from app.core.auth import User, require
 from app.db import get_db
 from app.modules.audiosync import analyze as engine
+from app.modules.audiosync import preview as clips
 from app.modules.audiosync import transfer as muxer
 
 logger = logging.getLogger(__name__)
@@ -172,7 +175,7 @@ async def start_transfer(body: TransferBody, user: User = Depends(require("audio
         await db.close()
     if not row:
         raise HTTPException(404, "Porovnání nenalezeno")
-    analysis = json.loads(row["result"])
+    analysis = clips.with_adjustment(json.loads(row["result"]))
     if analysis["verdict"] not in ("constant", "speed", "cuts") or not analysis.get("pieces"):
         raise HTTPException(400, "Zvuk k tomuto obrazu nesedí — není co přenést")
     ref, other = await _file(row["reference_id"]), await _file(row["other_id"])
@@ -225,3 +228,76 @@ async def _transfer(body: TransferBody, row: dict, analysis: dict, ref: dict, ot
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
         _job.update(running=False)
+
+
+# ── previews and manual correction (step 4) ──
+
+async def _result_row(result_id: int) -> dict:
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT * FROM audiosync_results WHERE id = ?", (result_id,))
+        row = await cursor.fetchone()
+    finally:
+        await db.close()
+    if not row:
+        raise HTTPException(404, "Porovnání nenalezeno")
+    return dict(row)
+
+
+class PreviewBody(BaseModel):
+    result_id: int
+    at: float                  # reference second where the clip starts
+    adjust_ms: int = 0         # trying a correction: + = the other audio later
+
+
+@router.post("/preview", dependencies=[Depends(require("audiosync"))])
+async def make_preview(body: PreviewBody) -> dict:
+    row = await _result_row(body.result_id)
+    if not row["reference_id"]:
+        raise HTTPException(400, "Ukázka jde jen u porovnání dvou verzí v knihovně")
+    ref, other = await _file(row["reference_id"]), await _file(row["other_id"])
+    analysis = json.loads(row["result"])
+    if analysis["verdict"] == "no_match":
+        raise HTTPException(400, "Zvuk nesedí — není co ukázat")
+    if not -10000 <= body.adjust_ms <= 10000:
+        raise HTTPException(400, "Posun nejvýš ±10 s")
+    at = max(0.0, min(body.at, (analysis.get("reference") or {}).get("duration", body.at + 30) - 25))
+    name = f"r{row['id']}-{int(at * 1000)}-{body.adjust_ms}"
+    try:
+        await asyncio.to_thread(clips.make_clip, ref["file_path"], other["file_path"], row["other_track"], analysis,
+                                at, body.adjust_ms, name)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("audiosync preview failed")
+        raise HTTPException(500, f"Ukázku se nepodařilo vyrobit: {e}")
+    return {"name": f"{name}.mp4", "at": at, "adjust_ms": body.adjust_ms}
+
+
+@router.get("/preview/{name}", dependencies=[Depends(require("audiosync"))])
+async def get_preview(name: str) -> FileResponse:
+    if not re.fullmatch(r"r\d+-\d+--?\d+\.mp4", name):
+        raise HTTPException(404)
+    path = clips.PREVIEW_DIR / name
+    if not path.is_file():
+        raise HTTPException(404, "Ukázka už neexistuje")
+    return FileResponse(path, media_type="video/mp4")
+
+
+class AdjustBody(BaseModel):
+    adjust_ms: int
+
+
+@router.patch("/results/{result_id}", dependencies=[Depends(require("audiosync"))])
+async def set_adjustment(result_id: int, body: AdjustBody) -> dict:
+    """Keeps the user's correction; a transfer uses it."""
+    if not -10000 <= body.adjust_ms <= 10000:
+        raise HTTPException(400, "Posun nejvýš ±10 s")
+    row = await _result_row(result_id)
+    analysis = json.loads(row["result"])
+    analysis["adjust_ms"] = body.adjust_ms
+    db = await get_db()
+    try:
+        await db.execute("UPDATE audiosync_results SET result = ? WHERE id = ?", (json.dumps(analysis), result_id))
+        await db.commit()
+    finally:
+        await db.close()
+    return {"id": result_id, "adjust_ms": body.adjust_ms}
