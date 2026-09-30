@@ -73,7 +73,7 @@ def prepare_audio(other_path: str, other_track: int, speed: float, offset: float
         if other_track >= len(ids):
             raise TransferError("Zvuková stopa ve zdrojové verzi nenalezena")
         return other_path, ids[other_track], round(-(offset + other_start - ref_start) * 1000)
-    out = workdir / "audio.mka"
+    out = workdir / f"audio-{other_track}.mka"
     bitrate = "640k" if channels > 2 else "224k"
     subprocess.run(
         ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", other_path, "-map", f"0:a:{other_track}",
@@ -82,19 +82,28 @@ def prepare_audio(other_path: str, other_track: int, speed: float, offset: float
     return str(out), 0, round((ref_start - offset / speed) * 1000)
 
 
-def mux(ref_path: str, audio_file: str, audio_tid: int, delay_ms: int, language: str, name: str,
-        out_path: str, progress=None) -> None:
-    ref_audio = audio_track_ids(ref_path)
+def mux(ref_path: str, added: list[dict], out_path: str, progress=None) -> None:
+    """Reference file as it is + the added tracks ({file, tid, delay_ms, language, name}); the first
+    added track becomes the default audio."""
     cmd = ["mkvmerge", "--gui-mode", "-o", out_path]
-    for tid in ref_audio:
+    for tid in audio_track_ids(ref_path):
         cmd += ["--default-track-flag", f"{tid}:0"]
     cmd.append(ref_path)
-    cmd += ["--no-video", "--no-subtitles", "--no-chapters", "--no-attachments", "--no-global-tags",
-            "--audio-tracks", str(audio_tid), "--sync", f"{audio_tid}:{delay_ms}",
-            "--track-name", f"{audio_tid}:{name}", "--default-track-flag", f"{audio_tid}:1"]
-    if language:
-        cmd += ["--language", f"{audio_tid}:{language}"]
-    cmd.append(audio_file)
+    by_file: dict[str, list[dict]] = {}
+    for t in added:
+        by_file.setdefault(t["file"], []).append(t)
+    first = True
+    for path, tracks in by_file.items():
+        cmd += ["--no-video", "--no-subtitles", "--no-chapters", "--no-attachments", "--no-global-tags",
+                "--audio-tracks", ",".join(str(t["tid"]) for t in tracks)]
+        for t in tracks:
+            tid = t["tid"]
+            cmd += ["--sync", f"{tid}:{t['delay_ms']}", "--track-name", f"{tid}:{t['name']}",
+                    "--default-track-flag", f"{tid}:{1 if first else 0}"]
+            if t["language"]:
+                cmd += ["--language", f"{tid}:{t['language']}"]
+            first = False
+        cmd.append(path)
     _run_mkvmerge(cmd, progress)
 
 
@@ -111,31 +120,39 @@ def verify(out_path: str, ref_track: int, new_track: int, duration: float) -> li
     return windows
 
 
-def transfer(ref_path: str, ref_track: int, other_path: str, other_track: int, analysis: dict,
+def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int | list[int], analysis: dict,
              workdir: Path, out_name: str, progress=None) -> str:
-    """Builds the new file in ``workdir`` and checks it → its path."""
+    """Builds the new file in ``workdir`` and checks it → its path. Several tracks of the other file
+    can go at once (they share its timing, so one analysis is enough)."""
     if analysis.get("verdict") not in ("constant", "speed"):
         raise TransferError("Přenést jde zatím jen zvuk, který sedí celý (jiný střih přijde později)")
+    tracks = [other_tracks] if isinstance(other_tracks, int) else list(other_tracks)
     other = engine.probe(other_path)
-    if other_track >= len(other["audio"]):
+    if not tracks or any(t >= len(other["audio"]) for t in tracks):
         raise TransferError("Zvuková stopa ve zdrojové verzi nenalezena")
-    track = other["audio"][other_track]
     workdir.mkdir(parents=True, exist_ok=True)
     out_path = str(workdir / out_name)
 
     if progress:
         progress("prepare", 0, 1)
-    ref_start = engine.probe(ref_path)["start"]
-    audio_file, audio_tid, delay_ms = prepare_audio(other_path, other_track, analysis["speed"], analysis["offset"],
-                                                    workdir, track.get("channels") or 2, ref_start, other["start"])
-    name = f"{(track.get('language') or '?').upper()} (Lumina sync)"
-    mux(ref_path, audio_file, audio_tid, delay_ms, track.get("language") or "", name, out_path, progress)
-    if audio_file != other_path:
-        os.remove(audio_file)
+    ref = engine.probe(ref_path)
+    added = []
+    for t in tracks:
+        info = other["audio"][t]
+        file, tid, delay_ms = prepare_audio(other_path, t, analysis["speed"], analysis["offset"], workdir,
+                                            info.get("channels") or 2, ref["start"], other["start"])
+        added.append({"file": file, "tid": tid, "delay_ms": delay_ms, "language": info.get("language") or "",
+                      "name": f"{(info.get('language') or '?').upper()} (Lumina sync)"})
+    mux(ref_path, added, out_path, progress)
+    for a in added:
+        if a["file"] != other_path:
+            os.remove(a["file"])
 
     if progress:
         progress("verify", 0, 1)
-    ref_audio_count = len(engine.probe(ref_path)["audio"])
-    verify(out_path, ref_track, ref_audio_count, engine.probe(out_path)["duration"])
-    logger.info("audiosync: %s built (delay %d ms, speed %.5f)", out_name, delay_ms, analysis["speed"])
+    duration = engine.probe(out_path)["duration"]
+    for i in range(len(added)):
+        verify(out_path, ref_track, len(ref["audio"]) + i, duration)
+    logger.info("audiosync: %s built (%d tracks, delay %d ms, speed %.5f)", out_name, len(added),
+                added[0]["delay_ms"], analysis["speed"])
     return out_path

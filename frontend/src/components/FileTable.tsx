@@ -81,6 +81,9 @@ export default function FileTable({
 }: Props) {
   const { can } = useAuth();
   const [onlyBetter, setOnlyBetter] = useState(true);
+  // better files without the CZ/SK dub count too — the dub is moved over from the owned version
+  const [moveDub, setMoveDub] = useState(true);
+  const canMoveDub = !!upgradeFrom && can("audiosync") && can("library.delete") && hasLocalAudio(upgradeFrom);
   const upgrade = upgradeFrom && upgradeFrom.quality_score != null ? upgradeFrom : null;
   const [downloading, setDownloading] = useState<Record<string, string>>({});
   const [choosing, setChoosing] = useState<ScoredFile | null>(null);
@@ -170,7 +173,7 @@ export default function FileTable({
       if (!upgrade) return true;
       if ((f.film !== "yes" && f.film !== "unsure") || ownedSizes.has(f.size)) return false;
       if (f.quality_score <= (upgrade.quality_score ?? 0)) { hidden.quality += 1; return false; }
-      if (hasLocalAudio(upgrade) && f.lang_tier < 2) { hidden.language += 1; return false; }
+      if (hasLocalAudio(upgrade) && f.lang_tier < 2 && !(canMoveDub && moveDub)) { hidden.language += 1; return false; }
       return true;
     };
     const pass = (r: Row) => {
@@ -195,7 +198,7 @@ export default function FileTable({
         || a.size - b.size;
     });
     return { view: sorted, junk: junkRows, hiddenByUpgrade: hidden };
-  }, [rows, filters, showJunk, preferLocalAudio, upgrade, onlyBetter, ownedSizes]);
+  }, [rows, filters, showJunk, preferLocalAudio, upgrade, onlyBetter, ownedSizes, canMoveDub, moveDub]);
 
   const best = view.find((r) => r.file.film === "yes");
 
@@ -255,8 +258,25 @@ export default function FileTable({
             </button>
             {can("library.delete") && owned.map((v) => {
               const delta = v.quality_score != null ? choosing.quality_score - v.quality_score : null;
+              // the new file lacks the CZ/SK dub this version has → offer to move the dub over
+              const keepAudio = can("audiosync") && hasLocalAudio(v)
+                && !(choosing.audio_langs ?? []).some((l) => l === "cs" || l === "sk");
               return (
-                <button key={v.id} onClick={() => runDownload(choosing, { mode: "replace", file_id: v.id })}
+                <div key={v.id} className="space-y-2">
+                {keepAudio && (
+                  <button onClick={() => runDownload(choosing, { mode: "replace", file_id: v.id, keep_audio: true })}
+                    className="w-full text-left rounded-lg border border-green-800 bg-green-950/20 hover:bg-green-900/30 p-3">
+                    <p className="text-green-200 font-medium">
+                      Nahradit a zachovat {v.language.replaceAll(",", "+")} zvuk: {versionLabel(v)}
+                      {delta != null && <span className="ml-2 text-xs text-zinc-400">kvalita {v.quality_score} → {choosing.quality_score}</span>}
+                    </p>
+                    <p className="text-[11px] text-zinc-400 mt-1">
+                      Po stažení Lumina přenese CZ/SK stopu ze staré verze do nové, zkontroluje, že sedí, a teprve pak starou smaže.
+                      Když zvuk nesedí, nic se nesmaže — nový soubor zůstane jako další verze.
+                    </p>
+                  </button>
+                )}
+                <button onClick={() => runDownload(choosing, { mode: "replace", file_id: v.id })}
                   className={`w-full text-left rounded-lg border hover:border-orange-600 hover:bg-orange-950/20 p-3 ${
                     v.id === upgrade?.id ? "border-orange-700 ring-1 ring-orange-700/60" : "border-zinc-700"}`}>
                   <p className="text-zinc-100 font-medium">
@@ -272,6 +292,7 @@ export default function FileTable({
                     Stará verze se smaže až po úspěšném stažení a jen když délka filmu sedí.
                   </p>
                 </button>
+                </div>
               );
             })}
             <button onClick={() => setChoosing(null)} className="text-sm text-zinc-500 hover:text-zinc-300">Zrušit</button>
@@ -287,8 +308,14 @@ export default function FileTable({
           </p>
           <label className="flex items-center gap-2 text-xs text-zinc-300">
             <input type="checkbox" checked={onlyBetter} onChange={(e) => setOnlyBetter(e.target.checked)} />
-            Jen lepší: vyšší kvalita{hasLocalAudio(upgrade) ? ", s CZ/SK zvukem" : ""}
+            Jen lepší: vyšší kvalita{hasLocalAudio(upgrade) && !(canMoveDub && moveDub) ? ", s CZ/SK zvukem" : ""}
           </label>
+          {canMoveDub && (
+            <label className="flex items-center gap-2 text-xs text-zinc-300">
+              <input type="checkbox" checked={moveDub} onChange={(e) => setMoveDub(e.target.checked)} />
+              I bez CZ/SK zvuku — dabing přenesu z tvé verze (zkontroluje se, že sedí)
+            </label>
+          )}
           {onlyBetter && (hiddenByUpgrade.quality > 0 || hiddenByUpgrade.language > 0) && (
             <p className="text-xs text-zinc-500">
               Skryto: {hiddenByUpgrade.quality} bez lepší kvality
@@ -337,6 +364,9 @@ export default function FileTable({
                     {row === best && <span title="Doporučená volba" className="mr-1 text-yellow-400">★</span>}
                     {file.name}
                   </div>
+                  {canMoveDub && moveDub && file.lang_tier < 2 && (
+                    <span className="text-[10px] text-green-300/80">+ dabing z tvé verze</span>
+                  )}
                   <div className="flex flex-wrap items-center gap-1 mt-0.5">
                     {row.copies.map((c) => <SourceBadge key={keyOf(c)} file={c} />)}
                     {ownedSizes.has(file.size) && (

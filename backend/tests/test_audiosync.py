@@ -65,3 +65,42 @@ def test_judge_cut_and_no_match():
 
     bad = [_w(t, 0.0, good=i % 3 == 0) for i, t in enumerate(range(200, 7000, 300))]
     assert judge(bad, 1.0, 7200)[0] == "no_match"
+
+
+def test_keep_audio_picks_the_missing_local_tracks():
+    from app.modules.audiosync.keep_audio import missing_local_tracks
+    new = [{"index": 0, "language": "eng"}, {"index": 1, "language": "fre"}]
+    old = [{"index": 0, "language": "cze"}, {"index": 1, "language": "slo"}, {"index": 2, "language": "ces"},
+           {"index": 3, "language": "eng"}]
+    assert missing_local_tracks(new, old) == [0, 1]            # one CZ (the first) + SK, not EN
+    assert missing_local_tracks(new + [{"index": 2, "language": "cs"}], old) == [1]
+    assert missing_local_tracks([{"index": 0, "language": "slk"}, {"index": 1, "language": "cze"}], old) == []
+
+
+async def test_keep_audio_download_is_held_back_from_the_library(monkeypatch):
+    from app.core import events
+    from app.modules.audiosync import keep_audio
+    from app.modules.library import imports
+
+    started, imported = [], []
+
+    async def fake_keep(payload):
+        started.append(payload)
+
+    async def fake_import(payload):
+        imported.append(payload)
+
+    monkeypatch.setattr(keep_audio, "_keep_audio", fake_keep)
+    monkeypatch.setattr(imports, "import_movie", fake_import)
+    events.subscribe("download.completed", keep_audio.on_download_completed, 20, owner="audiosync")
+    events.subscribe("download.completed", imports.on_download_completed, 30, owner="library")
+
+    base = {"tmdb_id": 605, "title": "M", "content_type": "movie", "path": "/d/m.mkv"}
+    held = await events.emit("download.completed",
+                             {**base, "library_action": {"mode": "replace", "file_id": 3, "keep_audio": True}})
+    import asyncio
+    await asyncio.sleep(0)
+    assert held["held_by"] == "audiosync" and not imported and len(started) == 1
+    # a normal replace goes straight to the library
+    await events.emit("download.completed", {**base, "library_action": {"mode": "replace", "file_id": 3}})
+    assert len(imported) == 1 and len(started) == 1

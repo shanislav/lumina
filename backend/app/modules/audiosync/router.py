@@ -35,9 +35,15 @@ CREATE TABLE IF NOT EXISTS audiosync_results (
 CREATE INDEX IF NOT EXISTS audiosync_results_pair ON audiosync_results(reference_id, other_id);
 """
 
-# one comparison at a time — it decodes audio for about a minute
+# one job at a time (it decodes audio / writes a whole film); _job is what the UI shows —
+# a comparison, a transfer, or keeping the audio of a replaced version after a download
 _job: dict = {"running": False}
 _task: asyncio.Task | None = None
+_lock = asyncio.Lock()
+
+
+def busy() -> bool:
+    return bool(_job.get("running")) or _lock.locked()
 
 
 async def _file(movie_id: int) -> dict:
@@ -74,8 +80,8 @@ class AnalyzeBody(BaseModel):
 @router.post("/analyze", dependencies=[Depends(require("audiosync"))])
 async def start_analysis(body: AnalyzeBody) -> dict:
     global _task
-    if _job.get("running"):
-        raise HTTPException(409, "Už porovnávám jinou dvojici, počkej chvilku")
+    if busy():
+        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
     if body.reference_id == body.other_id:
         raise HTTPException(400, "Vyber dvě různé verze")
     ref, other = await _file(body.reference_id), await _file(body.other_id)
@@ -89,6 +95,11 @@ async def start_analysis(body: AnalyzeBody) -> dict:
 
 
 async def _run(body: AnalyzeBody, ref_path: str, other_path: str) -> None:
+    async with _lock:
+        await _analysis(body, ref_path, other_path)
+
+
+async def _analysis(body: AnalyzeBody, ref_path: str, other_path: str) -> None:
     loop = asyncio.get_running_loop()
 
     def progress(phase: str, done: int, total: int) -> None:
@@ -151,7 +162,7 @@ async def start_transfer(body: TransferBody, user: User = Depends(require("audio
     # the replaced file is deleted once the new one is in the library
     if not user.can("library.delete" if body.mode == "replace" else "library.edit"):
         raise HTTPException(403, "Na tohle nemáš oprávnění (nahradit = mazat v knihovně, nová verze = upravovat knihovnu)")
-    if _job.get("running"):
+    if busy():
         raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
     db = await get_db()
     try:
@@ -182,6 +193,11 @@ async def start_transfer(body: TransferBody, user: User = Depends(require("audio
 
 
 async def _run_transfer(body: TransferBody, row: dict, analysis: dict, ref: dict, other: dict, downloads: Path) -> None:
+    async with _lock:
+        await _transfer(body, row, analysis, ref, other, downloads)
+
+
+async def _transfer(body: TransferBody, row: dict, analysis: dict, ref: dict, other: dict, downloads: Path) -> None:
     loop = asyncio.get_running_loop()
 
     def progress(phase: str, done: int, total: int) -> None:

@@ -165,7 +165,8 @@ def _durations_agree(a: int, b: int) -> bool:
 
 
 async def on_download_completed(payload: dict) -> None:
-    if payload.get("imported"):
+    # held_by: another module works on the file first and emits the event again when done
+    if payload.get("imported") or payload.get("held_by"):
         return
     content_type = payload.get("content_type") or "movie"
     if content_type == "tv":

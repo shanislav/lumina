@@ -938,7 +938,7 @@ export interface OwnedVersion {
 }
 
 /** What to do with an owned movie once a download finishes. */
-export type LibraryAction = { mode: "version" } | { mode: "replace"; file_id: number };
+export type LibraryAction = { mode: "version" } | { mode: "replace"; file_id: number; keep_audio?: boolean };
 
 export async function getOwned(tmdbIds: number[]): Promise<Record<string, OwnedVersion[]>> {
   const ids = tmdbIds.filter(Boolean);

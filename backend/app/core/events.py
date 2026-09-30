@@ -8,7 +8,9 @@ Known events:
     download.completed     {download_id, tmdb_id, title, year, content_type, path, library_action}
                            handlers may change "path" (e.g. after renaming/moving the file);
                            the library sets "imported": True once it took the file over
-                           (later handlers then leave it alone)
+                           (later handlers then leave it alone); "held_by": <module> = that module
+                           took the file for more work and emits the event again later
+                           (library_action.keep_audio → audiosync keeps the CZ/SK dub on replace)
     library.collect_hints  {path, hints: [(tmdb_id, source), ...]}
                            emitted per movie file during a library scan; handlers append hints
     library.movie_updated  {movie_id, status, tmdb_id, file_path, folder, media, tmdb, versions, ...}
