@@ -253,51 +253,64 @@ def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int |
     can go at once (they share its timing, so one analysis is enough); dubs the reference already
     has are left out (``report["skipped"]``). ``ref_keep``: the reference's audio tracks to keep
     (None = all) — to drop unwanted ones, or a track that is being replaced by its fixed copy."""
-    cut = analysis.get("verdict") == "cuts"
-    if analysis.get("verdict") not in ("constant", "speed", "cuts") or (cut and not analysis.get("pieces")):
-        raise TransferError("Zvuk k tomuto obrazu nesedí — není co přenést")
     tracks = [other_tracks] if isinstance(other_tracks, int) else list(other_tracks)
-    other = engine.probe(other_path)
-    if not tracks or any(t >= len(other["audio"]) for t in tracks):
-        raise TransferError("Zvuková stopa ve zdrojové verzi nenalezena")
+    return transfer_many(ref_path, ref_track, [{"path": other_path, "tracks": tracks, "analysis": analysis}],
+                         workdir, out_name, progress, report, ref_keep, dedupe)
+
+
+def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: Path, out_name: str,
+                  progress=None, report: dict | None = None, ref_keep: list[int] | None = None,
+                  dedupe: bool = True) -> str:
+    """Tracks from several versions into the reference in one go: ``sources`` =
+    [{path, tracks, analysis}] (analysis = reference → that version). One mux, every added track checked."""
     workdir.mkdir(parents=True, exist_ok=True)
     out_path = str(workdir / out_name)
-
     if progress:
         progress("prepare", 0, 1)
     ref = engine.probe(ref_path)
     if ref_keep is not None and ref_track not in ref_keep:
         raise TransferError("Stopa, se kterou se porovnává, musí zůstat")
-    if dedupe:
-        tracks = distinct_tracks(ref_path, ref, other_path, other, tracks, analysis, report, ref_keep)
-    if not tracks:
+    added, checks = [], []
+    for k, src in enumerate(sources):
+        analysis = src["analysis"]
+        cut = analysis.get("verdict") == "cuts"
+        if analysis.get("verdict") not in ("constant", "speed", "cuts") or (cut and not analysis.get("pieces")):
+            raise TransferError("Zvuk k tomuto obrazu nesedí — není co přenést")
+        other = engine.probe(src["path"])
+        tracks = list(src["tracks"])
+        if not tracks or any(t >= len(other["audio"]) for t in tracks):
+            raise TransferError("Zvuková stopa ve zdrojové verzi nenalezena")
+        if dedupe:
+            tracks = distinct_tracks(ref_path, ref, src["path"], other, tracks, analysis, report, ref_keep)
+        srcdir = workdir / f"src{k}"
+        srcdir.mkdir(exist_ok=True)
+        for t in tracks:
+            info = other["audio"][t]
+            if cut:
+                file, tid, delay_ms = assemble_audio(src["path"], t, analysis["pieces"], analysis["speed"], srcdir,
+                                                     info.get("channels") or 2, ref["start"])
+            else:
+                file, tid, delay_ms = prepare_audio(src["path"], t, analysis["speed"], analysis["offset"], srcdir,
+                                                    info.get("channels") or 2, ref["start"], other["start"])
+            added.append({"file": file, "tid": tid, "delay_ms": delay_ms, "language": info.get("language") or "",
+                          "name": track_name(info), "source": src["path"]})
+            checks.append(analysis.get("pieces") if cut else None)
+    if not added:
         raise NothingToAdd("Tyto dabingy už soubor má — není co přidat")
     if report is not None:
-        report["added"] = [track_name(other["audio"][t]) for t in tracks]
-    added = []
-    for t in tracks:
-        info = other["audio"][t]
-        if cut:
-            file, tid, delay_ms = assemble_audio(other_path, t, analysis["pieces"], analysis["speed"], workdir,
-                                                 info.get("channels") or 2, ref["start"])
-        else:
-            file, tid, delay_ms = prepare_audio(other_path, t, analysis["speed"], analysis["offset"], workdir,
-                                                info.get("channels") or 2, ref["start"], other["start"])
-        added.append({"file": file, "tid": tid, "delay_ms": delay_ms, "language": info.get("language") or "",
-                      "name": track_name(info)})
+        report["added"] = [a["name"] for a in added]
     mux(ref_path, added, out_path, progress, ref_keep)
     for a in added:
-        if a["file"] != other_path:
+        if a["file"] != a["source"]:
             os.remove(a["file"])
 
     if progress:
         progress("verify", 0, 1)
     duration = engine.probe(out_path)["duration"]
     kept = list(range(len(ref["audio"]))) if ref_keep is None else sorted(ref_keep)
-    for i in range(len(added)):
-        verify(out_path, kept.index(ref_track), len(kept) + i, duration, analysis.get("pieces") if cut else None)
-    logger.info("audiosync: %s built (%d tracks, delay %d ms, speed %.5f)", out_name, len(added),
-                added[0]["delay_ms"], analysis["speed"])
+    for i, pieces in enumerate(checks):
+        verify(out_path, kept.index(ref_track), len(kept) + i, duration, pieces)
+    logger.info("audiosync: %s built (%d tracks from %d versions)", out_name, len(added), len(sources))
     return out_path
 
 

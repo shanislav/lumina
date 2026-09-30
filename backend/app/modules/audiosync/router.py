@@ -17,6 +17,7 @@ from app.core import events
 from app.core.auth import User, require
 from app.db import get_db
 from app.modules.audiosync import analyze as engine
+from app.modules.audiosync import filmmap
 from app.modules.audiosync import preview as clips
 from app.modules.audiosync import transfer as muxer
 
@@ -493,3 +494,222 @@ async def preview_track(body: TrackPreviewBody) -> dict:
         logger.exception("audiosync track preview failed")
         raise HTTPException(500, f"Ukázku se nepodařilo vyrobit: {e}")
     return {"name": f"{name}.mp4", "at": at}
+
+
+# ── the audio of the whole film (all versions): dubs, where they are, add to one version ──
+
+MAPS = """
+CREATE TABLE IF NOT EXISTS audiosync_maps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tmdb_id INTEGER NOT NULL,
+    target_id INTEGER NOT NULL,
+    versions TEXT NOT NULL,
+    result TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS audiosync_maps_film ON audiosync_maps(tmdb_id);
+"""
+
+
+async def _versions(tmdb_id: int) -> list[dict]:
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT id, tmdb_id, title, year, file_path, filename, file_size, quality, language FROM library_movies "
+            "WHERE tmdb_id = ? AND status IN ('matched', 'manual') ORDER BY file_size DESC", (tmdb_id,))
+        rows = [dict(r) for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+    return [r for r in rows if r["file_path"] and os.path.isfile(r["file_path"])]
+
+
+async def _save_result(ref_id: int, ref_track: int, other_id: int, other_track: int, data: dict) -> int:
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "INSERT INTO audiosync_results (reference_id, reference_track, other_id, other_track, verdict, result) "
+            "VALUES (?, ?, ?, ?, ?, ?)", (ref_id, ref_track, other_id, other_track, data["verdict"], json.dumps(data)))
+        await db.commit()
+        return cursor.lastrowid
+    finally:
+        await db.close()
+
+
+class MapBody(BaseModel):
+    tmdb_id: int
+    target_id: int
+
+
+@router.post("/map", dependencies=[Depends(require("audiosync"))])
+async def start_map(body: MapBody) -> dict:
+    global _task
+    if busy():
+        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
+    versions = await _versions(body.tmdb_id)
+    if not any(v["id"] == body.target_id for v in versions):
+        raise HTTPException(404, "Cílová verze nenalezena")
+    _job.clear()
+    _job.update(running=True, kind="map", phase="align", done=0, total=len(versions) - 1,
+                title=versions[0]["title"], request=body.model_dump(), error=None)
+    _task = asyncio.create_task(_run_map(body, versions))
+    return _job
+
+
+async def _run_map(body: MapBody, versions: list[dict]) -> None:
+    async with _lock:
+        loop = asyncio.get_running_loop()
+
+        def progress(phase: str, done: int, total: int) -> None:
+            loop.call_soon_threadsafe(_job.update, {"phase": phase, "done": done, "total": total})
+
+        try:
+            target = next(v for v in versions if v["id"] == body.target_id)
+            infos = {v["id"]: await asyncio.to_thread(engine.probe, v["file_path"]) for v in versions}
+            ref_track = 0
+            ref_lang = engine.lang_code((infos[target["id"]]["audio"] or [{}])[0].get("language", ""))
+            placed, alignments = [], {}
+            k = 0
+            for v in versions:
+                if v["id"] == target["id"]:
+                    placed.append({"id": v["id"], "path": v["file_path"], "analysis": None,
+                                   "audio": infos[v["id"]]["audio"]})
+                    continue
+                audio = infos[v["id"]]["audio"]
+                if not audio:
+                    continue
+                # align with the track most likely shared with the target's first one (same language)
+                other_track = next((a["index"] for a in audio if engine.lang_code(a.get("language", "")) == ref_lang), 0)
+                _job.update(phase="align", done=k, total=len(versions) - 1, current=v["filename"])
+                result = await asyncio.to_thread(engine.analyze, target["file_path"], ref_track, v["file_path"],
+                                                 other_track)
+                data = result.to_dict()
+                rid = await _save_result(target["id"], ref_track, v["id"], other_track, data)
+                alignments[v["id"]] = {"result_id": rid, "verdict": data["verdict"], "speed": data["speed"],
+                                       "offset": data["offset"], "pieces": data.get("pieces") or []}
+                usable = data["verdict"] != "no_match"
+                placed.append({"id": v["id"], "path": v["file_path"], "audio": audio, "usable": usable,
+                               # a version whose audio does not fit cannot be compared on the timeline
+                               "analysis": data if usable else {"speed": 1.0, "offset": 0.0}})
+                k += 1
+            duration = infos[target["id"]]["duration"]
+            dubs = await asyncio.to_thread(filmmap.cluster, placed, duration, progress)
+            result = {"target_id": target["id"], "ref_track": ref_track, "duration": duration,
+                      "versions": [{"id": v["id"], "filename": v["filename"], "quality": v["quality"],
+                                    "file_size": v["file_size"], "audio": infos[v["id"]]["audio"],
+                                    "alignment": alignments.get(v["id"])} for v in versions],
+                      "dubs": dubs}
+            db = await get_db()
+            try:
+                cursor = await db.execute(
+                    "INSERT INTO audiosync_maps (tmdb_id, target_id, versions, result) VALUES (?, ?, ?, ?)",
+                    (body.tmdb_id, target["id"], ",".join(str(v["id"]) for v in versions), json.dumps(result)))
+                await db.commit()
+                _job.update(map_id=cursor.lastrowid)
+            finally:
+                await db.close()
+        except Exception as e:  # noqa: BLE001 — shown to the user
+            logger.exception("audiosync film map failed")
+            _job.update(error=str(e))
+        finally:
+            _job.update(running=False)
+
+
+@router.get("/map/{tmdb_id}", dependencies=[Depends(require("audiosync"))])
+async def get_map(tmdb_id: int) -> dict | None:
+    """The latest map of the film; ``stale`` when the versions changed since."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT * FROM audiosync_maps WHERE tmdb_id = ? ORDER BY id DESC LIMIT 1", (tmdb_id,))
+        row = await cursor.fetchone()
+    finally:
+        await db.close()
+    if not row:
+        return None
+    now = ",".join(str(v["id"]) for v in await _versions(tmdb_id))
+    return {"id": row["id"], "created_at": row["created_at"], "stale": now != row["versions"], **json.loads(row["result"])}
+
+
+class ApplyBody(BaseModel):
+    map_id: int
+    picks: list[dict] = []         # [{version_id, track}] — the dubs to add, from where
+    drop_tracks: list[int] = []    # target tracks to leave out
+    mode: str = "replace"          # replace the target | keep it and add a new version
+
+
+@router.post("/map/apply")
+async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync"))) -> dict:
+    global _task
+    if body.mode not in ("version", "replace"):
+        raise HTTPException(400, "Neznámý režim")
+    if not user.can("library.delete" if body.mode == "replace" or body.drop_tracks else "library.edit"):
+        raise HTTPException(403, "Na tohle nemáš oprávnění")
+    if busy():
+        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT * FROM audiosync_maps WHERE id = ?", (body.map_id,))
+        row = await cursor.fetchone()
+    finally:
+        await db.close()
+    if not row:
+        raise HTTPException(404, "Mapa nenalezena")
+    fmap = json.loads(row["result"])
+    target = await _file(fmap["target_id"])
+    by_version = {v["id"]: v for v in fmap["versions"]}
+    sources: dict[int, dict] = {}
+    for p in body.picks:
+        v = by_version.get(p.get("version_id"))
+        if not v or v["id"] == target["id"] or not v.get("alignment"):
+            raise HTTPException(400, "Neplatný zdroj stopy")
+        if v["alignment"]["verdict"] == "no_match":
+            raise HTTPException(400, f"Zvuk verze {v['filename']} k cíli nesedí")
+        sources.setdefault(v["id"], {"result_id": v["alignment"]["result_id"], "tracks": []})["tracks"].append(int(p["track"]))
+    if not sources and not body.drop_tracks:
+        raise HTTPException(400, "Nic k přidání ani odebrání")
+    downloads = await _work_dir(target)
+    _job.clear()
+    _job.update(running=True, kind="apply", phase="start", done=0, total=0, title=target["title"],
+                request=body.model_dump(), error=None, imported=None)
+    _task = asyncio.create_task(_run_apply(body, fmap, target, sources, downloads))
+    return _job
+
+
+async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, downloads: Path) -> None:
+    async with _lock:
+        loop = asyncio.get_running_loop()
+
+        def progress(phase: str, done: int, total: int) -> None:
+            loop.call_soon_threadsafe(_job.update, {"phase": phase, "done": done, "total": total})
+
+        workdir = downloads / f".lumina-map-{target['id']}"
+        report: dict = {}
+        try:
+            count = len((await asyncio.to_thread(engine.probe, target["file_path"]))["audio"])
+            keep = [i for i in range(count) if i not in body.drop_tracks]
+            if not keep:
+                raise muxer.TransferError("Aspoň jedna zvuková stopa musí zůstat")
+            ref_track = fmap.get("ref_track", 0)
+            if ref_track not in keep:
+                ref_track = keep[0]
+            if sources:
+                srcs = []
+                for vid, src in sources.items():
+                    row = await _result_row(src["result_id"])
+                    srcs.append({"path": (await _file(vid))["file_path"], "tracks": sorted(set(src["tracks"])),
+                                 "analysis": clips.with_adjustment(json.loads(row["result"]))})
+                out_name = Path(target["filename"]).stem + " [audio].mkv"
+                out = await asyncio.to_thread(muxer.transfer_many, target["file_path"], ref_track, srcs, workdir,
+                                              out_name, progress, report, keep, False)
+            else:
+                out_name = Path(target["filename"]).stem + " [tracks].mkv"
+                out = await asyncio.to_thread(muxer.strip, target["file_path"], keep, workdir, out_name, progress)
+            _job.update(report=report)
+            await _hand_over(out, downloads / out_name, target, body.mode, f"map-{target['id']}", progress)
+        except muxer.TransferError as e:
+            _job.update(error=str(e))
+        except Exception as e:  # noqa: BLE001 — shown to the user
+            logger.exception("audiosync map apply failed")
+            _job.update(error=str(e))
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+            _job.update(running=False)

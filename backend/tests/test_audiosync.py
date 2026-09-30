@@ -125,3 +125,25 @@ def test_cut_point_uses_the_known_shape_of_a_cut():
     c1 = noise() + np.where(frames < 4000, 0.2, 0.0)
     c2 = noise() + np.where(frames >= 7300, 0.2, 0.0)          # 70–73 s: fits but quiet
     assert abs(cut_point(c1, c2, 3000, guard) - 4000) <= 300
+
+
+def test_film_map_groups_the_same_dub_across_versions(monkeypatch):
+    from app.modules.audiosync import filmmap
+
+    # the "dub" key stands for the content: equal key = the same dub
+    monkeypatch.setattr(filmmap, "same_dub", lambda a, b, d: a["info"]["dub"] == b["info"]["dub"])
+    uhd = {"id": 1, "path": "uhd", "analysis": None, "audio": [
+        {"index": 0, "language": "eng", "codec": "truehd", "channels": 8, "title": "", "dub": "en"}]}
+    web = {"id": 2, "path": "web", "analysis": {"speed": 1.0, "offset": 0.0}, "audio": [
+        {"index": 0, "language": "cze", "codec": "ac3", "channels": 6, "title": "CZ kino", "dub": "cz-kino"},
+        {"index": 1, "language": "eng", "codec": "dts", "channels": 6, "title": "", "dub": "en"},
+        {"index": 2, "language": "cze", "codec": "aac", "channels": 2, "title": "", "dub": "cz-kino"}]}
+    tv = {"id": 3, "path": "tv", "analysis": {"speed": 1.0, "offset": 0.0}, "audio": [
+        {"index": 0, "language": "cze", "codec": "ac3", "channels": 2, "title": "CZ Nova", "dub": "cz-nova"},
+        {"index": 1, "language": "slo", "codec": "ac3", "channels": 2, "title": "", "dub": "sk"}]}
+    dubs = filmmap.cluster([uhd, web, tv], 7000)
+    by_name = {d["name"]: d for d in dubs}
+    assert set(by_name) == {"EN 1", "CZ kino", "CZ Nova", "SK 1"}
+    assert [(m["version_id"], m["track"]) for m in by_name["EN 1"]["members"]] == [(1, 0), (2, 1)]
+    # the 5.1 and the 2.0 of one dub are one row, the better one first
+    assert [(m["version_id"], m["track"]) for m in by_name["CZ kino"]["members"]] == [(2, 0), (2, 2)]

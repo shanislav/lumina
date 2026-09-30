@@ -152,7 +152,7 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
   return (
     <details className="rounded-lg border border-zinc-800 bg-zinc-950/40" open={!!job?.running || undefined}>
       <summary className="cursor-pointer select-none px-3 py-2 text-xs uppercase tracking-wide text-zinc-400 hover:text-zinc-200">
-        Přenos zvuku mezi verzemi{result ? ` — ${result.verdict === "no_match" ? "nesedí" : result.verdict === "cuts" ? "jiný střih" : "sedí"}` : ""}
+        Pokročilé: ruční porovnání dvou verzí{result ? ` — ${result.verdict === "no_match" ? "nesedí" : result.verdict === "cuts" ? "jiný střih" : "sedí"}` : ""}
       </summary>
       <div className="space-y-3 px-3 pb-3">
       <div className="grid gap-2 sm:grid-cols-2 text-xs">

@@ -43,6 +43,7 @@ import DownloadPanel from "@/components/DownloadPanel";
 import { useAuth } from "@/components/AuthGate";
 import AudioSyncPanel from "@/components/AudioSyncPanel";
 import AudioTracksPanel from "@/components/AudioTracksPanel";
+import FilmAudioMap from "@/components/FilmAudioMap";
 
 type Tab = "filmy" | "serialy";
 type MovieFilter = "all" | "versions" | "review" | "unmatched";
@@ -1093,6 +1094,7 @@ export default function LibraryPage() {
                 <p className="text-[11px] text-zinc-500 mt-1 break-all">{v.filename}</p>
               </button>
             ))}
+            {can("audiosync") && versionsOf.versions.length >= 2 && <FilmAudioMap key={versionsOf.key} versions={versionsOf.versions} onChanged={loadData} />}
             {can("audiosync") && versionsOf.versions.length >= 2 && <AudioSyncPanel versions={versionsOf.versions} onChanged={loadData} />}
             <button onClick={() => setVersionsOf(null)} className="text-sm text-zinc-500 hover:text-zinc-300">Zavřít</button>
           </div>

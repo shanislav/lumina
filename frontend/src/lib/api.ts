@@ -1051,7 +1051,8 @@ export interface AudioSyncResult {
 
 export interface AudioSyncJob {
   running: boolean;
-  kind?: "analyze" | "transfer" | "check" | "strip" | "upgrade";
+  kind?: "analyze" | "transfer" | "check" | "strip" | "upgrade" | "map" | "apply";
+  map_id?: number;
   result_id?: number;
   imported?: boolean | null;
   path?: string;
@@ -1176,3 +1177,48 @@ export const startPlayer = (movieId: number, at: number, audio: number, mode: Pl
 export const playerUrl = (session: string) => `${API_BASE}/api/player/s/${session}/index.m3u8`;
 export const stopPlayer = (session: string) =>
   playerCall<{ ok: boolean }>(`/s/${session}`, { method: "DELETE" }).catch(() => ({ ok: false }));
+
+
+// ── the audio of the whole film: dubs × versions ──
+
+export interface FilmMapVersion {
+  id: number;
+  filename: string;
+  quality: string;
+  file_size: number;
+  audio: AudioTrackInfo[];
+  alignment: { result_id: number; verdict: AudioSyncResult["verdict"]; speed: number; offset: number } | null;
+}
+
+export interface FilmMapMember {
+  version_id: number;
+  track: number;
+  codec: string;
+  channels: number;
+  title: string;
+  language: string;
+}
+
+export interface FilmMap {
+  id: number;
+  created_at: string;
+  stale: boolean;
+  target_id: number;
+  ref_track: number;
+  duration: number;
+  versions: FilmMapVersion[];
+  dubs: { id: number; lang: string; name: string; members: FilmMapMember[] }[];
+}
+
+export const startFilmMap = (tmdbId: number, targetId: number) =>
+  audioSyncCall<AudioSyncJob>("/map", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tmdb_id: tmdbId, target_id: targetId }),
+  });
+export const getFilmMap = (tmdbId: number) => audioSyncCall<FilmMap | null>(`/map/${tmdbId}`);
+export const applyFilmMap = (mapId: number, picks: { version_id: number; track: number }[], dropTracks: number[],
+                             mode: "replace" | "version") =>
+  audioSyncCall<AudioSyncJob>("/map/apply", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ map_id: mapId, picks, drop_tracks: dropTracks, mode }),
+  });
