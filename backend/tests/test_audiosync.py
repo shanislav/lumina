@@ -73,9 +73,10 @@ def test_keep_audio_takes_every_local_dub_and_names_them():
     old = [{"index": 0, "language": "cze", "title": "CZ dabing Nova"}, {"index": 1, "language": "eng"},
            {"index": 2, "language": "ces", "title": "CZ dabing Prima"}, {"index": 3, "language": "slo"}]
     assert local_tracks(old) == [0, 2, 3]                  # both CZ dubs + SK; which the new file has = content check
-    assert track_name(old[0]) == "CZ dabing Nova (Lumina sync)"
-    assert track_name(old[3]) == "SLO (Lumina sync)"
-    assert track_name({"language": "slo", "title": "SLO (Lumina sync)"}) == "SLO (Lumina sync)"
+    assert track_name(old[0]) == "CZ Nova (Lumina sync)"
+    assert track_name(old[3]) == "SK (Lumina sync)"
+    assert track_name({"language": "slo", "title": "SLO (Lumina sync)"}) == "SK (Lumina sync)"
+    assert track_name({"language": "slo", "title": "Slovak AC3 2.0 @ 192 kbps"}) == "SK (Lumina sync)"
 
 
 async def test_keep_audio_download_is_held_back_from_the_library(monkeypatch):

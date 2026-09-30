@@ -240,10 +240,10 @@ def distinct_tracks(ref_path: str, ref: dict, other_path: str, other: dict, trac
 
 
 def track_name(info: dict) -> str:
-    """The original title keeps the dub apart („CZ dabing Nova“), else the language."""
-    title = (info.get("title") or "").replace("(Lumina sync)", "").strip()   # moved once more: one mark
-    lang = (info.get("language") or "?").upper()
-    return f"{title} (Lumina sync)" if title else f"{lang} (Lumina sync)"
+    """Readable like in the film map: "CZ", "CZ Nova", "SK" — plus the mark of a moved track."""
+    from app.modules.audiosync.filmmap import dub_name
+    title = (info.get("title") or "").replace("(Lumina sync)", "")
+    return f"{dub_name(engine.lang_code(info.get('language', '')), title)} (Lumina sync)"
 
 
 def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int | list[int], analysis: dict,
