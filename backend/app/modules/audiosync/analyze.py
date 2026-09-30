@@ -31,9 +31,11 @@ N_BANDS = 16
 WINDOW_S = 40.0           # reference piece looked up in the other file
 MARGIN_S = 150.0          # how far around the expected place it is looked for
 WINDOWS = 24
-GOOD_SCORE = 0.25         # normalized correlation of a trustworthy match (tuned on real files)
-GOOD_SHARPNESS = 1.25     # best peak vs best peak elsewhere
-SAME_OFFSET_S = 0.08      # offsets closer than this are the same (lip sync tolerance ~40–80 ms)
+# Trustworthy match. Tuned on Matrix Revolutions CS vs SK dub: the correlation itself stays low
+# (0.04–0.37, the speech differs) but the right place stands out 2–12× above any other one.
+GOOD_SCORE = 0.04
+GOOD_SHARPNESS = 1.8
+SAME_OFFSET_S = 0.1       # offsets closer than this are the same (lip sync tolerance ~40–80 ms)
 
 # frame rate pairs seen in the wild: film 23.976 / 24, PAL 25
 SPEEDS = sorted({1.0, 23.976 / 25, 25 / 23.976, 24 / 25, 25 / 24, 23.976 / 24, 24 / 23.976})
@@ -159,7 +161,7 @@ class Segment:
 @dataclass
 class Result:
     verdict: str                     # constant | speed | cuts | no_match
-    speed: float
+    speed: float                     # t_other = speed * t_reference + offset
     offset: float                    # the main (longest segment) offset
     confidence: float                # share of trustworthy windows
     segments: list[Segment] = field(default_factory=list)
@@ -167,6 +169,7 @@ class Result:
     reference: dict = field(default_factory=dict)
     other: dict = field(default_factory=dict)
     note: str = ""
+    drift_s: float = 0.0             # how much a pure-offset mapping would drift over the film
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -204,19 +207,39 @@ def segments_from(windows: list[Window]) -> list[Segment]:
             for s in segs]
 
 
-def judge(windows: list[Window], speed: float) -> tuple[str, float, list[Segment], float, str]:
+def fit_line(windows: list[Window]) -> tuple[float, float]:
+    """Robust line offset = a + b·t (Theil–Sen: medians of pairwise slopes) → (b, a)."""
+    if len(windows) < 2:
+        return 0.0, windows[0].offset if windows else 0.0
+    slopes = [(y.offset - x.offset) / (y.at - x.at) for i, x in enumerate(windows) for y in windows[i + 1:]
+              if y.at > x.at]
+    slope = float(np.median(slopes))
+    return slope, float(np.median([w.offset - slope * w.at for w in windows]))
+
+
+def judge(windows: list[Window], speed: float, duration: float
+          ) -> tuple[str, float, float, list[Segment], float, str, float]:
+    """→ (verdict, speed, offset, segments, confidence, note, drift_s)."""
     good = [w for w in windows if w.good]
     confidence = len(good) / max(1, len(windows))
     if confidence < 0.5:
-        return "no_match", 0.0, [], confidence, "Zvuk se nedaří spárovat — jiný film, jiný střih nebo příliš odlišný zvuk"
+        return ("no_match", speed, 0.0, [], confidence,
+                "Zvuk se nedaří spárovat — jiný film, jiný střih nebo příliš odlišný zvuk", 0.0)
+    slope, intercept = fit_line(good)
+    on_line = [w for w in good if abs(w.offset - (intercept + slope * w.at)) <= SAME_OFFSET_S]
+    if len(on_line) >= 0.85 * len(good):
+        # one mapping for the whole film; a tiny slope is a speed a hair off the nominal one
+        drift = slope * duration
+        exact = speed + slope if abs(drift) > SAME_OFFSET_S / 2 else speed
+        seg = [Segment(start=good[0].at, end=good[-1].at + WINDOW_S, offset=intercept)]
+        verdict = "constant" if abs(exact - 1) < 1e-9 else "speed"
+        return verdict, exact, intercept, seg, confidence, "", drift
     segs = segments_from(windows)
     # a lone window with its own offset is noise, not a cut
     real = [s for s in segs if sum(1 for w in good if s.start <= w.at < s.end) >= 2] or segs
     main = max(real, key=lambda s: s.end - s.start)
-    if len(real) == 1:
-        verdict = "constant" if abs(speed - 1) < 1e-9 else "speed"
-        return verdict, main.offset, real, confidence, ""
-    return "cuts", main.offset, real, confidence, f"Offset se mění na {len(real) - 1} místech — jiný střih"
+    return ("cuts", speed, main.offset, real, confidence,
+            f"Posun se mění na {len(real) - 1} místech — jiný střih", 0.0)
 
 
 def analyze(ref_path: str, ref_track: int, other_path: str, other_track: int, progress=None) -> Result:
@@ -244,6 +267,6 @@ def analyze(ref_path: str, ref_track: int, other_path: str, other_track: int, pr
         if progress:
             progress("windows", i + 1, len(positions))
 
-    verdict, offset, segs, confidence, note = judge(windows, best_speed)
-    return Result(verdict=verdict, speed=best_speed, offset=offset, confidence=confidence, segments=segs,
-                  windows=windows, reference=ref, other=other, note=note)
+    verdict, speed, offset, segs, confidence, note, drift = judge(windows, best_speed, ref["duration"])
+    return Result(verdict=verdict, speed=speed, offset=offset, confidence=confidence, segments=segs,
+                  windows=windows, reference=ref, other=other, note=note, drift_s=drift)
