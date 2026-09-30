@@ -24,16 +24,18 @@ class MovieContext:
     runtime: int = 0
     people: list[str] = field(default_factory=list)        # cast/director — allowed in file names
     other_parts: list[str] = field(default_factory=list)   # other films of the series
+    namesakes: list[dict] = field(default_factory=list)    # other films of the same name and year
 
     def as_dict(self) -> dict:
         return {"titles": self.titles, "year": self.year, "runtime": self.runtime,
-                "people": self.people, "other_parts": self.other_parts}
+                "people": self.people, "other_parts": self.other_parts, "namesakes": self.namesakes}
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "MovieContext":
         d = d or {}
         return cls(titles=d.get("titles") or [], year=d.get("year"), runtime=d.get("runtime") or 0,
-                   people=d.get("people") or [], other_parts=d.get("other_parts") or [])
+                   people=d.get("people") or [], other_parts=d.get("other_parts") or [],
+                   namesakes=d.get("namesakes") or [])
 
 
 def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dict | None = None,
@@ -49,7 +51,8 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
     if "sample" in name.lower() and 0 < size < SAMPLE_MAX_BYTES:
         film, reasons = "no", ["sample"]
     else:
-        verdict = judge(name, ctx.titles, ctx.year, facts.duration_s, ctx.runtime, ctx.people, ctx.other_parts)
+        verdict = judge(name, ctx.titles, ctx.year, facts.duration_s, ctx.runtime, ctx.people, ctx.other_parts,
+                        ctx.namesakes)
         film, reasons = verdict.status, verdict.reasons
     tier = language_tier(facts, prefs)
     return {

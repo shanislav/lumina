@@ -108,6 +108,39 @@ def _unique_names(names: list[str]) -> list[str]:
     return out
 
 
+MAX_NAMESAKES = 3
+
+
+async def _namesakes(client: TMDBClient, film: dict, titles: list[str]) -> list[dict]:
+    """Other films with the same name from about the same year — uploaders name them alike, so
+    their files must not pass as ours ("Runner" 2026 vs "Běžkyně / The Runner" 2026)."""
+    from app.core.film_match import STOPWORDS, tokens
+
+    ours = {frozenset(tokens(t) - STOPWORDS) for t in titles if t} | {frozenset(tokens(film.get("original_title", "")) - STOPWORDS)}
+    found: dict[int, dict] = {}
+    for query in {film.get("original_title") or "", film.get("title") or ""} - {""}:
+        try:
+            results = await client.search_movie_raw(query)
+        except Exception as e:
+            logger.info("TMDB namesakes of %s failed: %s", query, e)
+            continue
+        for r in results:
+            year = int((r.get("release_date") or "0000")[:4] or 0)
+            names = {frozenset(tokens(r.get(k) or "") - STOPWORDS) for k in ("title", "original_title")}
+            if (r.get("id") != film["tmdb_id"] and film.get("year") and year and abs(year - film["year"]) <= 1
+                    and names & ours):
+                found.setdefault(r["id"], r)
+    out = []
+    for other_id in list(found)[:MAX_NAMESAKES]:
+        try:
+            other = await client.get_movie_full(other_id)
+        except Exception:
+            continue
+        out.append({"title": other["title"], "titles": other["titles"], "year": other["year"],
+                    "runtime": other["runtime"]})
+    return out
+
+
 @dataclass
 class Offers:
     movie: MovieContext
@@ -145,6 +178,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
                               *full.get("alternative_titles", [])]
                 ctx.people = full.get("people", [])
                 ctx.other_parts = full.get("other_parts", [])
+                ctx.namesakes = await _namesakes(client, full, ctx.titles)
             else:
                 en_title = await client.get_english_title(tmdb_id, media_type)
         except Exception as e:

@@ -64,10 +64,14 @@ def length_verdict(duration_s: int, runtime_min: int) -> str | None:
 
 def judge(name: str, titles: list[str], year: int | None = None,
           duration_s: int = 0, runtime_min: int = 0,
-          people: list[str] | None = None, other_parts: list[str] | None = None) -> Verdict:
+          people: list[str] | None = None, other_parts: list[str] | None = None,
+          namesakes: list[dict] | None = None) -> Verdict:
     """people: cast/director names — allowed extra words in a name.
     other_parts: titles of the other films of the same series — a name covering one of them
-    (with the words that make it that film) is another part."""
+    (with the words that make it that film) is another part.
+    namesakes: other films of the same name and year ([{title, titles, year, runtime}], e.g.
+    "Runner" 2026 97 min vs "Běžkyně / The Runner" 2026 86 min) — a name with their own words,
+    or a length that fits them and not us, is that other film."""
     if _EPISODE.search(name):
         return Verdict("no", ["epizoda seriálu"])
     if years_mismatch(name, year):
@@ -90,6 +94,14 @@ def judge(name: str, titles: list[str], year: int | None = None,
         distinct = other_words - all_title_words
         if distinct and other_words <= file_words:
             return Verdict("no", [f"jiný díl série ({other})"])
+    for other in namesakes or []:
+        label = f"{other['title']} ({other['year']})" if other.get("year") else other["title"]
+        for t in other.get("titles") or [other["title"]]:
+            other_words = tokens(t) - STOPWORDS
+            if other_words - all_title_words and other_words <= file_words:
+                return Verdict("no", [f"jiný film se stejným jménem: {label}"])
+        if length and other.get("runtime") and duration_s and not length_verdict(duration_s, other["runtime"]):
+            return Verdict("no", [f"jiný film se stejným jménem: {label}, {other['runtime']} min"])
     people_words = set().union(*(tokens(p) for p in people or [])) if people else set()
     extra = file_words - all_title_words - people_words
     if not file_words & all_title_words:

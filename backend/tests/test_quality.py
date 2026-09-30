@@ -148,3 +148,17 @@ def test_bitrate_from_the_film_runtime_when_the_source_knows_no_duration():
     assert ev["bitrate"] == 8_000_000 and "~8.0 Mb/s" in ev["quality_summary"]
     assert not any("neznámý" in label for label, _ in ev["quality_parts"])
     assert ev["film"] == "yes"   # no length verdict from an estimate
+
+
+RUNNER_NAMESAKES = [{"title": "Běžkyně", "titles": ["Běžkyně", "The Runner"], "year": 2026, "runtime": 86}]
+
+
+@pytest.mark.parametrize("name, duration, status, reason", [
+    ("Běžkyně - The Runner (2026) CZ-EN Dabing 2160p HEVC.mkv", 0, "no", "jiný film se stejným jménem: Běžkyně (2026)"),
+    ("The Runner 2026 CZ Dabing.mkv", 5151, "no", "jiný film se stejným jménem: Běžkyně (2026), 86 min"),
+    ("Runner 2026 1080p AMZN WEB-DL.mkv", 5926, "yes", "název sedí"),
+    ("Runner 2026 odd cut.mkv", 3000, "length", "délka 50 min, film má 97 min"),      # fits neither → just length
+])
+def test_namesakes_of_the_same_year(name, duration, status, reason):
+    v = judge(name, ["Runner"], 2026, duration, 97, namesakes=RUNNER_NAMESAKES)
+    assert (v.status, v.reasons[0]) == (status, reason)
