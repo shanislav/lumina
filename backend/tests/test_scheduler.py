@@ -41,6 +41,10 @@ async def setup(monkeypatch):
         conn.execute("UPDATE automations SET enabled = 1, config = ? WHERE type = 'scheduler'",
                      (json.dumps({"auto_download_wanted": "true"}),))
 
+    async def no_poster(tmdb_id):
+        return None
+    monkeypatch.setattr(importlib.import_module("app.modules.wanted.router"), "_tmdb_poster", no_poster)
+
     async def fake_find(cfg, query, **kw):
         name = "The.Matrix.1999.1080p.x265.CZ.mkv"
         return Offers(CTX, Prefs(), [{"ident": "fhd", "name": name, "size": 4_000_000_000, "source": "webshare",

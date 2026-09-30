@@ -33,12 +33,32 @@ def _out(row) -> dict:
     return d
 
 
+async def _tmdb_poster(tmdb_id: int) -> str | None:
+    from app.clients.tmdb import TMDBClient
+    from app.config import get_effective_settings
+    cfg = await get_effective_settings()
+    client = TMDBClient(cfg.get("tmdb_api_key", ""))
+    try:
+        return (await client.get_movie_full(tmdb_id)).get("poster_url")
+    except Exception:
+        return None
+    finally:
+        await client.close()
+
+
 @router.get("")
 async def list_wanted():
     db = await get_db()
     try:
         cursor = await db.execute("SELECT * FROM wanted ORDER BY status = 'done', added_at DESC")
-        return [_out(r) for r in await cursor.fetchall()]
+        rows = [_out(r) for r in await cursor.fetchall()]
+        # films added without a poster (e.g. through the API) get it from TMDB once
+        for row in [r for r in rows if not r["poster_url"] and r["tmdb_id"]][:5]:
+            row["poster_url"] = await _tmdb_poster(row["tmdb_id"])
+            if row["poster_url"]:
+                await db.execute("UPDATE wanted SET poster_url = ? WHERE id = ?", (row["poster_url"], row["id"]))
+        await db.commit()
+        return rows
     finally:
         await db.close()
 
@@ -63,7 +83,8 @@ async def add_wanted(body: WantedAdd):
                 "INSERT INTO wanted (tmdb_id, wikidata_id, title, original_title, year, poster_url, profile_id, added_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (body.tmdb_id or None, body.wikidata_id or "", body.title, body.original_title, body.year[:4],
-                 body.poster_url, body.profile_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                 body.poster_url or (await _tmdb_poster(body.tmdb_id) if body.tmdb_id else None),
+                 body.profile_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
             )
             wanted_id = cursor.lastrowid
         await db.commit()

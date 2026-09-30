@@ -28,6 +28,10 @@ async def wanted(monkeypatch):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("INSERT INTO settings (key, value) VALUES ('tmdb_api_key', 'x')")
 
+    async def no_poster(tmdb_id):
+        return None
+    monkeypatch.setattr(importlib.import_module("app.modules.wanted.router"), "_tmdb_poster", no_poster)
+
     async def fake_find(cfg, query, **kw):
         return Offers(CTX, Prefs(), [
             row("The.Matrix.1999.2160p.HDR.CZ.mkv", 30_000_000_000, "4k"),
