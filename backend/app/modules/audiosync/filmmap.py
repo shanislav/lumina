@@ -59,6 +59,26 @@ def dub_name(lang: str, title: str) -> str:
     return f"{code} {rest}" if len(rest) >= 2 else code
 
 
+def track_delta(target_path: str, ref_track: int, path: str, track: int, analysis: dict,
+                duration: float) -> tuple[float, bool]:
+    """How much later than the version's mapping this particular track sits → (delta s, fits).
+    Six windows near the expected place; a track that matches nowhere does not fit."""
+    speed = analysis.get("speed", 1.0)
+    found = []
+    for t in np.linspace(duration * 0.12, duration * 0.88, 6):
+        off = engine.mapping_at(analysis, float(t))
+        if off is None:
+            continue
+        w = engine._measure(target_path, ref_track, path, track, float(t), speed, off, margin=10.0)
+        if w.good:
+            found.append(w.offset - off)
+    if len(found) < 3:
+        return 0.0, False
+    delta = float(np.median(found))
+    spread = max(abs(d - delta) for d in found)
+    return (round(delta, 3) if abs(delta) > 0.04 else 0.0), spread <= 0.15
+
+
 def source_rank(info: dict) -> tuple:
     return (info.get("channels") or 0, _CODEC_RANK.get(info.get("codec") or "", 0))
 
@@ -68,9 +88,13 @@ def cluster(versions: list[dict], duration: float, progress=None) -> list[dict]:
     [{id, lang, name, members: [{version_id, track, codec, channels, title, language}]}]."""
     tracks = []
     for v in versions:
+        fits = v.get("tracks") or {}
         for a in v["audio"]:
-            tracks.append({"version_id": v["id"], "path": v["path"], "track": a["index"], "analysis": v["analysis"],
-                           "info": a, "target": v["analysis"] is None, "usable": v.get("usable", True)})
+            tf = fits.get(a["index"]) or {"delta": 0.0, "ok": True}
+            analysis = v["analysis"] if v["analysis"] is None else engine.shifted(v["analysis"], tf["delta"])
+            tracks.append({"version_id": v["id"], "path": v["path"], "track": a["index"], "analysis": analysis,
+                           "info": a, "target": v["analysis"] is None,
+                           "usable": v.get("usable", True) and tf["ok"]})
     # the target's tracks first (they name the groups), then the better sources
     tracks.sort(key=lambda x: (not x["target"], [-r for r in source_rank(x["info"])]))
     dubs: list[dict] = []

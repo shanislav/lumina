@@ -1187,7 +1187,11 @@ export interface FilmMapVersion {
   quality: string;
   file_size: number;
   audio: AudioTrackInfo[];
-  alignment: { result_id: number; verdict: AudioSyncResult["verdict"]; speed: number; offset: number } | null;
+  alignment: {
+    result_id: number; verdict: AudioSyncResult["verdict"]; speed: number; offset: number;
+    // each track on its own: dubs muxed in from another release can sit elsewhere than the first track
+    tracks?: Record<string, { delta: number; ok: boolean }>;
+  } | null;
 }
 
 export interface FilmMapMember {

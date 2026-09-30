@@ -587,7 +587,17 @@ async def _run_map(body: MapBody, versions: list[dict]) -> None:
                 alignments[v["id"]] = {"result_id": rid, "verdict": data["verdict"], "speed": data["speed"],
                                        "offset": data["offset"], "pieces": data.get("pieces") or []}
                 usable = data["verdict"] != "no_match"
-                placed.append({"id": v["id"], "path": v["file_path"], "audio": audio, "usable": usable,
+                # every track on its own: dubs muxed in from another release may sit elsewhere
+                fits = {}
+                if usable:
+                    for a in audio:
+                        _job.update(phase="tracks", current=f"{v['filename']} · stopa {a['index'] + 1}")
+                        delta, ok = await asyncio.to_thread(filmmap.track_delta, target["file_path"], ref_track,
+                                                            v["file_path"], a["index"], data,
+                                                            infos[target["id"]]["duration"])
+                        fits[a["index"]] = {"delta": delta, "ok": ok}
+                alignments[v["id"]]["tracks"] = fits
+                placed.append({"id": v["id"], "path": v["file_path"], "audio": audio, "usable": usable, "tracks": fits,
                                # a version whose audio does not fit cannot be compared on the timeline
                                "analysis": data if usable else {"speed": 1.0, "offset": 0.0}})
                 k += 1
@@ -656,14 +666,21 @@ async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync")))
     fmap = json.loads(row["result"])
     target = await _file(fmap["target_id"])
     by_version = {v["id"]: v for v in fmap["versions"]}
-    sources: dict[int, dict] = {}
+    sources: dict[tuple, dict] = {}
     for p in body.picks:
         v = by_version.get(p.get("version_id"))
         if not v or v["id"] == target["id"] or not v.get("alignment"):
             raise HTTPException(400, "Neplatný zdroj stopy")
         if v["alignment"]["verdict"] == "no_match":
             raise HTTPException(400, f"Zvuk verze {v['filename']} k cíli nesedí")
-        sources.setdefault(v["id"], {"result_id": v["alignment"]["result_id"], "tracks": []})["tracks"].append(int(p["track"]))
+        track = int(p["track"])
+        fit = (v["alignment"].get("tracks") or {}).get(str(track)) or {"delta": 0.0, "ok": True}
+        if not fit["ok"]:
+            raise HTTPException(400, f"Stopa {track + 1} verze {v['filename']} k cíli nesedí")
+        # tracks of one version with the same own shift go together (one mapping)
+        key = (v["id"], fit["delta"])
+        sources.setdefault(key, {"version_id": v["id"], "result_id": v["alignment"]["result_id"],
+                                 "delta": fit["delta"], "tracks": []})["tracks"].append(track)
     if not sources and not body.drop_tracks:
         raise HTTPException(400, "Nic k přidání ani odebrání")
     downloads = await _work_dir(target)
@@ -693,10 +710,11 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, d
                 ref_track = keep[0]
             if sources:
                 srcs = []
-                for vid, src in sources.items():
+                for src in sources.values():
                     row = await _result_row(src["result_id"])
-                    srcs.append({"path": (await _file(vid))["file_path"], "tracks": sorted(set(src["tracks"])),
-                                 "analysis": clips.with_adjustment(json.loads(row["result"]))})
+                    analysis = engine.shifted(clips.with_adjustment(json.loads(row["result"])), src["delta"])
+                    srcs.append({"path": (await _file(src["version_id"]))["file_path"],
+                                 "tracks": sorted(set(src["tracks"])), "analysis": analysis})
                 out_name = Path(target["filename"]).stem + " [audio].mkv"
                 out = await asyncio.to_thread(muxer.transfer_many, target["file_path"], ref_track, srcs, workdir,
                                               out_name, progress, report, keep, False)

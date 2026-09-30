@@ -88,6 +88,11 @@ export default function FilmAudioMap({ versions, onChanged }: { versions: Librar
     }
   };
 
+  const fitOf = (m: FilmMapMember) => {
+    const v = map?.versions.find((x) => x.id === m.version_id);
+    return v?.alignment?.tracks?.[String(m.track)] ?? { delta: 0, ok: true };
+  };
+
   async function preview(m: FilmMapMember) {
     if (!map) return;
     setClipBusy(true);
@@ -95,9 +100,10 @@ export default function FilmAudioMap({ versions, onChanged }: { versions: Librar
     try {
       const at = map.duration * 0.4;
       const v = map.versions.find((x) => x.id === m.version_id)!;
+      // a track with its own shift: place it where it really fits (adjust + = later ⇒ −delta)
       const r = m.version_id === map.target_id
         ? await makeTrackPreview(map.target_id, m.track, at)
-        : await makeAudioPreview(v.alignment!.result_id, at, 0, m.track);
+        : await makeAudioPreview(v.alignment!.result_id, at, -Math.round(fitOf(m).delta * 1000), m.track);
       setClip({ name: r.name, label: `${memberLabel(m)}${m.title ? ` „${m.title}“` : ""} z ${v.quality} — na obraze cíle` });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ukázka selhala");
@@ -163,7 +169,7 @@ export default function FilmAudioMap({ versions, onChanged }: { versions: Librar
                   const inTarget = d.members.filter((m) => m.version_id === map.target_id);
                   const sources = d.members.filter((m) => {
                     const v = map.versions.find((x) => x.id === m.version_id);
-                    return m.version_id !== map.target_id && v?.alignment && v.alignment.verdict !== "no_match";
+                    return m.version_id !== map.target_id && v?.alignment && v.alignment.verdict !== "no_match" && fitOf(m).ok;
                   });
                   const chosen = add[d.id];
                   return (
@@ -186,6 +192,14 @@ export default function FilmAudioMap({ versions, onChanged }: { versions: Librar
                                 <span className={isTarget && drop.includes(m.track) ? "text-red-300 line-through" : isTarget ? "text-emerald-200" : chosen === m ? "text-green-300" : "text-zinc-300"}>
                                   {isTarget ? "✓ " : ""}{memberLabel(m)}
                                 </span>
+                                {!isTarget && !fitOf(m).ok && (
+                                  <span className="rounded bg-red-900/50 px-1 text-[10px] text-red-200" title="Tato stopa k obrazu cíle nesedí (ani s vlastním posunem) — nejde použít">✗ nesedí</span>
+                                )}
+                                {!isTarget && fitOf(m).ok && fitOf(m).delta !== 0 && (
+                                  <span className="text-[10px] text-amber-300" title="Uploader ji do souboru vložil posunutou oproti první stopě — Lumina to vyrovná">
+                                    vlastní posun {fitOf(m).delta > 0 ? "+" : ""}{fitOf(m).delta.toFixed(2)} s
+                                  </span>
+                                )}
                                 <button onClick={() => preview(m)} disabled={clipBusy} title="Ukázka na obraze cíle"
                                   className="text-violet-300 hover:text-violet-200 disabled:opacity-40">▶</button>
                               </div>

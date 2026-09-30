@@ -295,6 +295,18 @@ def analyze(ref_path: str, ref_track: int, other_path: str, other_track: int, pr
                   windows=windows, reference=ref, other=other, note=note, drift_s=drift, pieces=pieces)
 
 
+def shifted(analysis: dict, delta: float) -> dict:
+    """The mapping of another track of the same file that sits ``delta`` s later (uploaders mux dubs
+    from other releases, not always in sync with the file's first track)."""
+    if not delta:
+        return analysis
+    out = dict(analysis)
+    out["offset"] = analysis.get("offset", 0.0) + delta
+    if analysis.get("pieces"):
+        out["pieces"] = [{**p, "offset": None if p["offset"] is None else p["offset"] + delta} for p in analysis["pieces"]]
+    return out
+
+
 def mapping_at(analysis: dict, at: float) -> float | None:
     """Offset of the other version at reference second ``at`` (None = it has no audio there)."""
     pieces = analysis.get("pieces") or [{"start": 0, "end": 1e12, "offset": analysis.get("offset", 0.0)}]
@@ -304,10 +316,10 @@ def mapping_at(analysis: dict, at: float) -> float | None:
     return pieces[-1]["offset"]
 
 
-# The same dub in two tracks (5.1 and 2.0, another encode) matches almost exactly; different dubs
-# of one language share only music and effects. Matrix Revolutions: CZ 5.1 vs CZ 2.0 0.82–0.94,
-# CZ vs EN 0.22–0.40, CZ vs SK 0.06–0.17.
-SAME_DUB_SCORE = 0.65
+# The same dub in two tracks matches closely; different dubs share only music and effects.
+# Median of 6 windows: same dub in one file (5.1 vs 2.0) 0.82–0.94 (Matrix Revolutions), the same dub
+# from another release (streaming mix vs Blu-ray) 0.58 (Shrek the Third); different dubs 0.13–0.35.
+SAME_DUB_SCORE = 0.45
 
 _LANG = {"cze": "cs", "ces": "cs", "slo": "sk", "slk": "sk", "eng": "en", "ger": "de", "deu": "de",
          "fre": "fr", "fra": "fr", "pol": "pl", "hun": "hu", "rus": "ru", "ita": "it", "spa": "es"}
