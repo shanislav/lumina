@@ -656,6 +656,16 @@ export async function updateVersion(movieId: number, data: { note?: string; pref
   if (!res.ok) throw new Error(`Update failed: ${res.status}`);
 }
 
+/** Delete this version from DISK and the library — definitive. */
+export async function deleteVersionFile(movieId: number): Promise<{ deleted: string[] }> {
+  const res = await fetch(`${API_BASE}/api/library/movies/${movieId}/file`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Smazání selhalo: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fixMovieMatch(movieId: number, tmdbId: number): Promise<void> {
   await fetch(`${API_BASE}/api/library/movies/${movieId}/fix`, {
     method: "PUT",

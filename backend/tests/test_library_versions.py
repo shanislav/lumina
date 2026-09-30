@@ -192,3 +192,26 @@ async def test_film_not_in_tmdb_is_imported_by_its_searched_title(setup, tmp_pat
         row = conn.execute("SELECT tmdb_id, title, year, status, overview FROM library_movies WHERE title = 'Pár Pařmenů'").fetchone()
     assert row == (None, "Pár Pařmenů", "2004", "manual", "fantasy parodie")
 
+
+async def test_delete_one_version_keeps_the_other(setup):
+    import importlib
+    lib = importlib.import_module("app.modules.library.router")
+    folder, old, new = setup
+    await events.emit("download.completed", _payload(new, {"mode": "version"}))
+    result = await lib.delete_version_file(1)
+    assert str(old) in result["deleted"] and not old.exists()
+    assert not (folder / (old.stem + ".cs.srt")).exists()
+    assert (folder / NEW_NAME).exists()
+    assert _rows() == [(NEW_NAME, "manual")]
+
+
+async def test_delete_the_last_version_removes_its_folder(setup):
+    import importlib
+    lib = importlib.import_module("app.modules.library.router")
+    folder, old, new = setup
+    (folder / "poster.jpg").write_bytes(b"img")
+    await lib.delete_version_file(1)
+    assert not folder.exists() and not folder.parent.exists()      # 1999/ was empty too
+    assert folder.parent.parent.exists()                           # the library root stays
+    assert _rows() == []
+

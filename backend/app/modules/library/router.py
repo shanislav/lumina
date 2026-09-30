@@ -1,6 +1,7 @@
 """Library router — movie/TV library listing, scan job control, manual match fixes."""
 
 import json
+import os
 import logging
 
 from fastapi import APIRouter
@@ -139,6 +140,29 @@ async def delete_library_movie(movie_id: int):
         await db.execute("DELETE FROM library_movies WHERE id = ?", (movie_id,))
         await db.commit()
         return {"ok": True}
+    finally:
+        await db.close()
+
+
+@router.delete("/movies/{movie_id}/file")
+async def delete_version_file(movie_id: int):
+    """Delete this version from DISK and the library — definitive (the UI asks first)."""
+    from app.modules.library.imports import delete_version
+
+    root = movies_library_dir(await get_effective_settings())
+    if not root:
+        raise HTTPException(400, "Knihovna filmů není nastavená")
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT file_path FROM library_movies WHERE id = ?", (movie_id,))
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Movie not found")
+        # only files inside the library — never anything else on the disk
+        if not os.path.normpath(row["file_path"]).startswith(os.path.normpath(root) + os.sep):
+            raise HTTPException(400, "Soubor není v knihovně filmů")
+        deleted = await delete_version(db, movie_id, root)
+        return {"deleted": deleted}
     finally:
         await db.close()
 

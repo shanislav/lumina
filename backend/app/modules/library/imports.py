@@ -117,6 +117,47 @@ def _delete_version(video: str, replacement: str = "") -> list[str]:
     return deleted
 
 
+async def delete_version(db, movie_id: int, root: str) -> list[str]:
+    """Delete one version of a movie from disk and the library (the user confirmed it; no trash).
+
+    The video goes with its subtitles/NFO. When it was the last video in its own folder, the whole
+    folder goes (posters, old NFOs …) and empty parents up to the library root. Returns deleted paths.
+    """
+    from app.modules.library.organize import _remove_empty_dirs
+
+    cursor = await db.execute("SELECT id, tmdb_id, file_path FROM library_movies WHERE id = ?", (movie_id,))
+    row = await cursor.fetchone()
+    if not row:
+        return []
+    video, tmdb_id = row["file_path"], row["tmdb_id"]
+    folder = os.path.dirname(video)
+    deleted: list[str] = []
+    if os.path.exists(video):
+        deleted = _delete_version(video)
+        own_folder = os.path.normpath(folder) != os.path.normpath(root)
+        remaining = os.listdir(folder) if os.path.isdir(folder) else []
+        if own_folder and not any(os.path.splitext(e)[1].lower() in VIDEO_EXTS for e in remaining):
+            for entry in remaining:
+                path = os.path.join(folder, entry)
+                if os.path.isfile(path):
+                    os.remove(path)
+                    deleted.append(path)
+            _remove_empty_dirs(folder, root)
+    await db.execute("DELETE FROM library_movies WHERE id = ?", (movie_id,))
+    for path in deleted:
+        await db.execute("INSERT INTO file_operations (batch_id, movie_id, src, dst, status) VALUES (?, ?, ?, '', 'deleted')",
+                         (f"delete-{movie_id}", movie_id, path))
+    await db.commit()
+    logger.info("Deleted version %s (%d files)", video, len(deleted))
+    # the other versions' NFO (list of versions) follows
+    if tmdb_id:
+        cursor = await db.execute("SELECT id FROM library_movies WHERE tmdb_id = ? AND status IN ('matched', 'manual')", (tmdb_id,))
+        other = await cursor.fetchone()
+        if other:
+            await emit_movie_updated(db, other[0])
+    return deleted
+
+
 def _durations_agree(a: int, b: int) -> bool:
     if not a or not b:
         return True  # unknown → do not block on it

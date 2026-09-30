@@ -26,6 +26,7 @@ import {
   searchTMDBForFix,
   fixMovieMatch,
   updateVersion,
+  deleteVersionFile,
   checkUpgrades,
   getUpgradeJob,
   getUpgrades,
@@ -162,6 +163,9 @@ export default function LibraryPage() {
   const [selectedShow, setSelectedShow] = useState<LibraryShowDetail | null>(null);
   const [showLoading, setShowLoading] = useState(false);
   const [fixingMovie, setFixingMovie] = useState<LibraryMovie | null>(null);
+  // "Smazat tuto verzi": first click asks, second deletes (from disk, no trash)
+  const [confirmDelete, setConfirmDelete] = useState<"ask" | "busy" | string | null>(null);
+  useEffect(() => setConfirmDelete(null), [fixingMovie?.id]);
   const [fixQuery, setFixQuery] = useState("");
   const [fixResults, setFixResults] = useState<TMDBSearchResult[]>([]);
   const [fixSearching, setFixSearching] = useState(false);
@@ -838,6 +842,40 @@ export default function LibraryPage() {
                     {fixingMovie.preferred ? "★ Preferovaná verze" : "☆ Nastavit jako preferovanou"}
                   </button>
                 </div>
+              )}
+              {fixingMovie.file_path && (
+                confirmDelete === null ? (
+                  <button onClick={() => setConfirmDelete("ask")}
+                    className="mt-1 rounded px-2 py-1 text-xs border border-red-900/70 text-red-300/90 hover:text-red-200 hover:border-red-700">
+                    Smazat tuto verzi
+                  </button>
+                ) : (
+                  <div className="mt-1 rounded-lg border border-red-800 bg-red-950/30 p-3 space-y-2">
+                    <p className="text-sm text-red-200">
+                      Opravdu smazat z disku? {formatSize(fixingMovie.file_size)} — nevratně, bez koše.
+                    </p>
+                    <p className="text-[11px] text-zinc-400 break-all">{fixingMovie.filename} (+ jeho titulky a NFO; když je to poslední verze, i celá složka)</p>
+                    {confirmDelete !== "ask" && confirmDelete !== "busy" && <p className="text-xs text-red-400">{confirmDelete}</p>}
+                    <div className="flex gap-2">
+                      <button disabled={confirmDelete === "busy"}
+                        onClick={async () => {
+                          setConfirmDelete("busy");
+                          try {
+                            await deleteVersionFile(fixingMovie.id);
+                            setFixingMovie(null);
+                            setVersionsOf(null);
+                            loadData();
+                          } catch (e) {
+                            setConfirmDelete(e instanceof Error ? e.message : "Smazání selhalo");
+                          }
+                        }}
+                        className="rounded bg-red-700 px-3 py-1 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-50">
+                        {confirmDelete === "busy" ? "Mažu…" : "Ano, smazat"}
+                      </button>
+                      <button onClick={() => setConfirmDelete(null)} className="text-xs text-zinc-400 hover:text-zinc-200">Zrušit</button>
+                    </div>
+                  </div>
+                )
               )}
             </div>
 
