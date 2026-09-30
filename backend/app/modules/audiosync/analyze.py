@@ -44,10 +44,13 @@ SPEEDS = sorted({1.0, 23.976 / 25, 25 / 23.976, 24 / 25, 25 / 24, 23.976 / 24, 2
 # ── decoding ──
 
 def probe(path: str) -> dict:
-    """Duration and audio streams (index among audio streams, language, codec, channels)."""
+    """Duration, start time and audio streams (index among audio streams, language, codec, channels).
+
+    ``start``: the first timestamp of the file. ffmpeg seeks relative to it, so the analysis measures
+    times from the start of the file; muxing keeps the real timestamps (step 2 converts)."""
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries",
-         "format=duration:stream=index,codec_type,codec_name,channels:stream_tags=language,title",
+         "format=duration,start_time:stream=index,codec_type,codec_name,channels:stream_tags=language,title",
          "-of", "json", path], capture_output=True, text=True, timeout=60, check=True).stdout
     data = json.loads(out)
     audio = []
@@ -58,7 +61,8 @@ def probe(path: str) -> dict:
         audio.append({"index": len(audio), "language": (tags.get("language") or "").lower(),
                       "title": tags.get("title") or "", "codec": s.get("codec_name") or "",
                       "channels": s.get("channels") or 0})
-    return {"duration": float(data.get("format", {}).get("duration") or 0), "audio": audio}
+    fmt = data.get("format", {})
+    return {"duration": float(fmt.get("duration") or 0), "start": float(fmt.get("start_time") or 0), "audio": audio}
 
 
 def extract(path: str, track: int, start: float, duration: float) -> np.ndarray:
