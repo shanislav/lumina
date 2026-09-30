@@ -84,11 +84,15 @@ async def test_keep_audio_download_is_held_back_from_the_library(monkeypatch):
 
     started, imported = [], []
 
-    async def fake_keep(payload):
-        started.append(payload)
-
     async def fake_import(payload):
         imported.append(payload)
+
+    from app.core import registry
+    from app.db import init_db
+    await init_db(registry.discover())
+
+    async def fake_keep(payload, pending_id=None):
+        started.append(payload)
 
     monkeypatch.setattr(keep_audio, "_keep_audio", fake_keep)
     monkeypatch.setattr(imports, "import_movie", fake_import)

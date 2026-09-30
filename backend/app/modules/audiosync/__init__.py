@@ -8,7 +8,7 @@ Needs ffmpeg in the backend image.
 """
 
 from app.core.module import Module, Permission, Subscription
-from app.modules.audiosync.keep_audio import on_download_completed
+from app.modules.audiosync.keep_audio import PENDING, on_download_completed, resume_pending
 from app.modules.audiosync.router import RESULTS, router
 
 module = Module(
@@ -16,7 +16,8 @@ module = Module(
     title="Přenos zvuku",
     order=40,
     routers=[router],
-    migrations=[RESULTS],
+    migrations=[RESULTS, PENDING],
+    on_startup=[resume_pending],
     permissions=[Permission("audiosync", "Porovnávat a přenášet zvukové stopy mezi verzemi")],
     # after the renamer (p10), before the library import (p30): holds back "keep my CZ/SK audio" downloads
     subscriptions=[Subscription("download.completed", on_download_completed, priority=20)],

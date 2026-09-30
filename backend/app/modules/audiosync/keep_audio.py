@@ -7,6 +7,7 @@ the background: compares the audio, puts the CZ/SK tracks the new file lacks int
 result — and only then hands the new file to the library to replace the old version.
 If the audio does not fit (other cut, other film, failed check), nothing is deleted: the downloaded
 file goes into the library as another version.
+A held download is remembered in ``audiosync_pending`` — after a backend restart the work resumes.
 """
 
 import asyncio
@@ -24,6 +25,14 @@ from app.modules.audiosync import analyze as engine
 from app.modules.audiosync import transfer as muxer
 
 logger = logging.getLogger(__name__)
+
+PENDING = """
+CREATE TABLE IF NOT EXISTS audiosync_pending (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
 
 # ISO 639-1/2 codes of the local languages → one code
 LOCAL = {"cs": "cs", "cze": "cs", "ces": "cs", "sk": "sk", "slo": "sk", "slk": "sk"}
@@ -53,7 +62,43 @@ async def on_download_completed(payload: dict) -> None:
             or (payload.get("content_type") or "movie") != "movie" or not action.get("file_id")):
         return
     payload["held_by"] = "audiosync"       # the library leaves it alone; we emit again when done
-    asyncio.create_task(_keep_audio(dict(payload)))
+    held = {k: v for k, v in payload.items() if k != "held_by"}
+    db = await get_db()
+    try:
+        cursor = await db.execute("INSERT INTO audiosync_pending (payload) VALUES (?)", (json.dumps(held),))
+        await db.commit()
+        pending_id = cursor.lastrowid
+    finally:
+        await db.close()
+    asyncio.create_task(_keep_audio(held, pending_id))
+
+
+async def resume_pending() -> None:
+    """Startup: finish the downloads held back before a restart."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT id, payload FROM audiosync_pending ORDER BY id")
+        rows = await cursor.fetchall()
+    finally:
+        await db.close()
+    for row in rows:
+        payload = json.loads(row["payload"])
+        if os.path.isfile(payload.get("path") or ""):
+            logger.info("keep audio: resuming %s after a restart", payload.get("path"))
+            asyncio.create_task(_keep_audio(payload, row["id"]))
+        else:
+            await _forget(row["id"])
+
+
+async def _forget(pending_id: int | None) -> None:
+    if pending_id is None:
+        return
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM audiosync_pending WHERE id = ?", (pending_id,))
+        await db.commit()
+    finally:
+        await db.close()
 
 
 async def _release(payload: dict, path: str, action: dict, suffix: str) -> dict:
@@ -72,7 +117,7 @@ async def _old_file(file_id: int) -> dict | None:
     return dict(row) if row and row["file_path"] and os.path.isfile(row["file_path"]) else None
 
 
-async def _keep_audio(payload: dict) -> None:
+async def _keep_audio(payload: dict, pending_id: int | None = None) -> None:
     r = _router()
     action = payload["library_action"]
     new_path = payload["path"]
@@ -139,4 +184,5 @@ async def _keep_audio(payload: dict) -> None:
                 done = await _release(payload, new_path, as_version, "")
                 r._job.update(imported=bool(done.get("imported")), path=done.get("path"))
         finally:
+            await _forget(pending_id)
             r._job.update(running=False)
