@@ -54,6 +54,8 @@ async def get_effective_settings() -> dict[str, str]:
         "qbittorrent_password": db_settings.get("qbittorrent_password") or env.qbittorrent_password,
         "min_relevance_score": db_settings.get("min_relevance_score") or "70",
         "languages": db_settings.get("languages") or "cs",
+        # language of titles/overviews from TMDB (Objevit, search) — separate from the audio preference
+        "metadata_language": db_settings.get("metadata_language") or "cs",
         "quality_prefer_local": db_settings.get("quality_prefer_local") or "true",
         "quality_max_size_gb": db_settings.get("quality_max_size_gb") or "0",
         "quality_hdr": db_settings.get("quality_hdr") or "neutral",

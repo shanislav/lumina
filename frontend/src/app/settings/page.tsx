@@ -167,6 +167,10 @@ const SEARCH_SECTIONS = [
     title: "Vyhledávání",
     icon: "🔍",
     fields: [
+      { key: "metadata_language", label: "Jazyk názvů a popisů", type: "select_static", options: [
+        { value: "cs", label: "Čeština" }, { value: "sk", label: "Slovenčina" }, { value: "en", label: "English" },
+        { value: "de", label: "Deutsch" }, { value: "pl", label: "Polski" }, { value: "hu", label: "Magyar" },
+      ], hint: "Názvy, popisy a plakáty v Objevit a ve výsledcích hledání (TMDB). Preferované jazyky níže určují zvuk/dabing." },
       { key: "min_relevance_score", label: "AI: práh „je to ten film“", type: "range", hint: "AI posuzuje jen nejasné soubory (např. „Part Two“). Od této hodnoty je soubor uznán jako hledaný film, pod 30 jako jiný obsah." },
     ],
   },
@@ -389,7 +393,7 @@ export default function SettingsPage() {
               {/* Languages */}
               <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5 space-y-4">
                 <h3 className="text-sm font-medium text-zinc-300 flex items-center gap-2"><span>🌍</span>Preferované jazyky</h3>
-                <p className="text-[10px] text-zinc-600">Vyber jazyky pro detekci dabingu a TMDB metadata. Dropdown ve vyhledávání filtruje podle konkrétního jazyka.</p>
+                <p className="text-[10px] text-zinc-600">Jazyky zvuku, které chceš (dabing, řazení „Doporučené“). Jazyk názvů a popisů je nastavení výše.</p>
                 {allLanguages.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {allLanguages.map((lang) => {

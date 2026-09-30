@@ -18,11 +18,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["search"])
 
 
+# TMDB wants a real locale — "cs-CS" does not exist and TMDB then answers in English.
+TMDB_LOCALES = {"cs": "cs-CZ", "sk": "sk-SK", "en": "en-US", "de": "de-DE", "pl": "pl-PL", "hu": "hu-HU",
+                "fr": "fr-FR", "es": "es-ES", "it": "it-IT", "ru": "ru-RU", "uk": "uk-UA"}
+
+
+def _locale(cfg: dict, language: str | None) -> tuple[str, str]:
+    """(language code, TMDB locale) — an explicit request language, else the metadata language setting."""
+    code = (language or cfg.get("metadata_language") or "cs").strip().lower()
+    return code, TMDB_LOCALES.get(code, code)
+
+
 @router.get("/search/movies", response_model=list[TMDBMovie])
 async def search_movies(query: str, language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
-    lang_code = language or cfg.get("languages", "cs").split(",")[0].strip()
-    tmdb_locale = f"{lang_code}-{lang_code.upper()}"
+    lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
         results = await asyncio.gather(
@@ -67,8 +77,7 @@ async def _wikidata_films(query: str, lang_code: str) -> list[TMDBMovie]:
 @router.get("/discover/trending", response_model=list[TMDBMovie])
 async def discover_trending(language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
-    lang_code = language or cfg.get("languages", "cs").split(",")[0].strip()
-    tmdb_locale = f"{lang_code}-{lang_code.upper()}"
+    lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
         return await client.trending(language=tmdb_locale)
@@ -79,8 +88,7 @@ async def discover_trending(language: str | None = None) -> list[TMDBMovie]:
 @router.get("/discover/now-playing", response_model=list[TMDBMovie])
 async def discover_now_playing(language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
-    lang_code = language or cfg.get("languages", "cs").split(",")[0].strip()
-    tmdb_locale = f"{lang_code}-{lang_code.upper()}"
+    lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
         return await client.now_playing(language=tmdb_locale)
@@ -91,8 +99,7 @@ async def discover_now_playing(language: str | None = None) -> list[TMDBMovie]:
 @router.get("/discover/recently-digital", response_model=list[TMDBMovie])
 async def discover_recently_digital(language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
-    lang_code = language or cfg.get("languages", "cs").split(",")[0].strip()
-    tmdb_locale = f"{lang_code}-{lang_code.upper()}"
+    lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
         return await client.recently_digital(language=tmdb_locale)
@@ -103,8 +110,7 @@ async def discover_recently_digital(language: str | None = None) -> list[TMDBMov
 @router.get("/discover/recently-digital-tv", response_model=list[TMDBMovie])
 async def discover_recently_digital_tv(language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
-    lang_code = language or cfg.get("languages", "cs").split(",")[0].strip()
-    tmdb_locale = f"{lang_code}-{lang_code.upper()}"
+    lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
         return await client.recently_digital_tv(language=tmdb_locale)
@@ -115,8 +121,7 @@ async def discover_recently_digital_tv(language: str | None = None) -> list[TMDB
 @router.get("/discover/popular", response_model=list[TMDBMovie])
 async def discover_popular(language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
-    lang_code = language or cfg.get("languages", "cs").split(",")[0].strip()
-    tmdb_locale = f"{lang_code}-{lang_code.upper()}"
+    lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
         return await client.popular(language=tmdb_locale)
