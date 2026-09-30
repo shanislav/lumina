@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import {
   AudioSyncJob, AudioSyncResult, AudioTrackInfo, LibraryMovie,
-  getAudioSyncJob, getAudioSyncResults, getAudioTracks, startAudioSync,
+  getAudioSyncJob, getAudioSyncResults, getAudioTracks, startAudioSync, startAudioTransfer,
 } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
 
 const LOCAL = ["cs", "cze", "ces", "sk", "slo", "slk"];
 const SELECT = "rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-200 max-w-full";
@@ -31,7 +32,8 @@ function speedLabel(speed: number): string {
 }
 
 /** Step 1 of moving an audio track between versions: does the other version's audio fit this video? */
-export default function AudioSyncPanel({ versions }: { versions: LibraryMovie[] }) {
+export default function AudioSyncPanel({ versions, onChanged }: { versions: LibraryMovie[]; onChanged?: () => void }) {
+  const { can } = useAuth();
   const byScore = [...versions].sort((a, b) => (b.quality_score ?? 0) - (a.quality_score ?? 0));
   const [refId, setRefId] = useState(byScore[0].id);
   const [otherId, setOtherId] = useState(byScore[1].id);
@@ -40,7 +42,10 @@ export default function AudioSyncPanel({ versions }: { versions: LibraryMovie[] 
   const [otherTrack, setOtherTrack] = useState(0);
   const [job, setJob] = useState<AudioSyncJob | null>(null);
   const [result, setResult] = useState<AudioSyncResult | null>(null);
+  const [resultId, setResultId] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [done, setDone] = useState("");
+  const [confirmReplace, setConfirmReplace] = useState(false);
 
   // audio tracks of both files (ffprobe on the server)
   useEffect(() => {
@@ -67,10 +72,14 @@ export default function AudioSyncPanel({ versions }: { versions: LibraryMovie[] 
   // the last comparison of this pair
   useEffect(() => {
     setResult(null);
+    setResultId(null);
     getAudioSyncResults(refId, otherId)
       .then((r) => {
         const same = r.find((x) => x.reference_track === refTrack && x.other_track === otherTrack);
-        if (same) setResult(same.result);
+        if (same) {
+          setResult(same.result);
+          setResultId(same.id);
+        }
       })
       .catch(() => {});
   }, [refId, otherId, refTrack, otherTrack]);
@@ -88,15 +97,35 @@ export default function AudioSyncPanel({ versions }: { versions: LibraryMovie[] 
         setJob(j);
         if (!j.running) {
           if (j.error) setError(j.error);
-          if (j.result) setResult(j.result);
+          if (j.kind === "transfer" && !j.error) {
+            setDone(j.imported ? "✓ Hotovo — soubor s novou stopou je v knihovně"
+              : `Soubor je hotový, ale knihovna ho nepřevzala — zůstal ve stahování (${j.path ?? ""})`);
+            onChanged?.();
+          } else if (j.result) {
+            setResult(j.result);
+            setResultId(j.result_id ?? null);
+          }
         }
       } catch { /* next tick */ }
     }, 2000);
     return () => clearTimeout(t);
   }, [job]);
 
+  async function transfer(mode: "version" | "replace") {
+    if (!resultId) return;
+    setError("");
+    setDone("");
+    setConfirmReplace(false);
+    try {
+      setJob(await startAudioTransfer(resultId, mode));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Nepodařilo se spustit");
+    }
+  }
+
   async function run() {
     setError("");
+    setDone("");
     setResult(null);
     try {
       setJob(await startAudioSync({ reference_id: refId, other_id: otherId, reference_track: refTrack, other_track: otherTrack }));
@@ -139,15 +168,53 @@ export default function AudioSyncPanel({ versions }: { versions: LibraryMovie[] 
         </button>
         {job?.running && (
           <span className="text-xs text-violet-300 animate-pulse">
-            {job.phase === "windows" ? `Porovnávám úseky filmu ${job.done}/${job.total}`
-              : job.phase === "speed" ? `Zjišťuji rychlost ${job.done}/${job.total}` : "Začínám…"} (asi minuta)
+            {job.phase === "windows" ? `Porovnávám úseky filmu ${job.done}/${job.total} (asi minuta)`
+              : job.phase === "speed" ? `Zjišťuji rychlost ${job.done}/${job.total} (asi minuta)`
+              : job.phase === "prepare" ? "Připravuji stopu…"
+              : job.phase === "mux" ? `Skládám soubor ${job.done} % (pár minut)`
+              : job.phase === "verify" ? "Kontroluji výsledek…"
+              : job.phase === "import" ? "Předávám knihovně…" : "Začínám…"}
           </span>
         )}
         {error && <span className="text-xs text-red-400">{error}</span>}
       </div>
 
       {result && <ResultView result={result} />}
-      <p className="text-[10px] text-zinc-600">Zatím jen analýza — soubory se nemění. Samotný přenos stopy přijde v dalším kroku.</p>
+      {done && <p className="text-sm text-green-300">{done}</p>}
+
+      {result && resultId && (result.verdict === "constant" || result.verdict === "speed") && !job?.running && (
+        <div className="space-y-2 border-t border-zinc-800 pt-3">
+          <p className="text-xs text-zinc-400">
+            Vložit stopu do souboru s obrazem z „{label(versions.find((v) => v.id === refId) ?? versions[0])}“
+            {result.verdict === "speed" ? " (stopa se přepočítá na správnou rychlost — AC-3)" : " (bez překódování)"}.
+            Výsledek se před použitím zkontroluje.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {can("library.edit") && (
+              <button onClick={() => transfer("version")}
+                className="rounded border border-violet-700 px-3 py-1.5 text-xs text-violet-200 hover:bg-violet-900/40">
+                Uložit jako novou verzi
+              </button>
+            )}
+            {can("library.delete") && !confirmReplace && (
+              <button onClick={() => setConfirmReplace(true)}
+                className="rounded border border-orange-800 px-3 py-1.5 text-xs text-orange-200 hover:bg-orange-950/40">
+                Nahradit původní soubor
+              </button>
+            )}
+          </div>
+          {confirmReplace && (
+            <div className="rounded border border-orange-800 bg-orange-950/20 p-2 text-xs space-y-2">
+              <p className="text-orange-200">Nový soubor nahradí původní (ten se smaže, až bude nový v knihovně a sedí délka).</p>
+              <div className="flex gap-2">
+                <button onClick={() => transfer("replace")} className="rounded bg-orange-700 px-3 py-1 text-white hover:bg-orange-600">Ano, nahradit</button>
+                <button onClick={() => setConfirmReplace(false)} className="text-zinc-400 hover:text-zinc-200">Zrušit</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-[10px] text-zinc-600">Jiný střih zatím přenést nejde — přijde v dalším kroku.</p>
     </div>
   );
 }

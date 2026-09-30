@@ -1049,6 +1049,10 @@ export interface AudioSyncResult {
 
 export interface AudioSyncJob {
   running: boolean;
+  kind?: "analyze" | "transfer";
+  result_id?: number;
+  imported?: boolean | null;
+  path?: string;
   phase?: string;
   done?: number;
   total?: number;
@@ -1076,6 +1080,10 @@ export const startAudioSync = (body: { reference_id: number; other_id: number; r
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
 export const getAudioSyncJob = () => audioSyncCall<AudioSyncJob>("/job");
+export const startAudioTransfer = (resultId: number, mode: "version" | "replace") =>
+  audioSyncCall<AudioSyncJob>("/transfer", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ result_id: resultId, mode }),
+  });
 export const getAudioSyncResults = (referenceId: number, otherId: number) =>
   audioSyncCall<{ id: number; reference_track: number; other_track: number; created_at: string; result: AudioSyncResult }[]>(
     `/results?reference_id=${referenceId}&other_id=${otherId}`);

@@ -100,15 +100,16 @@ async def _run(body: AnalyzeBody, ref_path: str, other_path: str) -> None:
         data = result.to_dict()
         db = await get_db()
         try:
-            await db.execute(
+            cursor = await db.execute(
                 "INSERT INTO audiosync_results (reference_id, reference_track, other_id, other_track, verdict, result) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (body.reference_id, body.reference_track, body.other_id, body.other_track, result.verdict,
                  json.dumps(data)))
             await db.commit()
+            result_id = cursor.lastrowid
         finally:
             await db.close()
-        _job.update(result=data)
+        _job.update(result=data, result_id=result_id)
         logger.info("audiosync %s: %s speed %.5f offset %+.3f", _job.get("title"), result.verdict, result.speed,
                     result.offset)
     except Exception as e:  # noqa: BLE001 — shown to the user

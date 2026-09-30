@@ -1084,7 +1084,7 @@ export default function LibraryPage() {
                 <p className="text-[11px] text-zinc-500 mt-1 break-all">{v.filename}</p>
               </button>
             ))}
-            {can("audiosync") && versionsOf.versions.length >= 2 && <AudioSyncPanel versions={versionsOf.versions} />}
+            {can("audiosync") && versionsOf.versions.length >= 2 && <AudioSyncPanel versions={versionsOf.versions} onChanged={loadData} />}
             <button onClick={() => setVersionsOf(null)} className="text-sm text-zinc-500 hover:text-zinc-300">Zavřít</button>
           </div>
         </div>
