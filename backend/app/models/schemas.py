@@ -71,6 +71,7 @@ class ScoredFile(BaseModel):
     resolution: str = ""
     codec: str = ""
     bitrate: int = 0
+    video_bitrate: int = 0             # overall minus estimated audio (what the score uses)
     hdr: str = ""
     duration_s: int = 0
     audio: list[dict] = []

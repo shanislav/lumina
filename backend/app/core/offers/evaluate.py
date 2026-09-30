@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass, field
 
 from app.core.film_match import judge
-from app.core.quality import Prefs, facts_from_media, facts_from_name, language_tier, prefs_from_settings, score  # noqa: F401
+from app.core.quality import Prefs, facts_from_media, facts_from_name, language_tier, prefs_from_settings, score, video_bitrate  # noqa: F401
 
 SAMPLE_MAX_BYTES = 300 * 1024 * 1024
 # relevance shown for rule-based verdicts (AI gives its own number for unclear ones)
@@ -61,6 +61,7 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
         "resolution": facts.resolution,
         "codec": facts.codec,
         "bitrate": facts.bitrate,
+        "video_bitrate": video_bitrate(facts),
         "hdr": facts.hdr,
         "duration_s": facts.duration_s,
         "audio_langs": facts.audio_langs,

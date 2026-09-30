@@ -24,6 +24,7 @@ import {
 import { FLAG } from "@/components/LanguageSelect";
 import FolderBrowser from "@/components/FolderBrowser";
 import QualityWeightsEditor from "@/components/QualityWeights";
+import ProfilesEditor from "@/components/ProfilesEditor";
 import ModulesPanel from "@/components/ModulesPanel";
 import { getGroqModels, GroqModels } from "@/lib/api";
 
@@ -348,6 +349,7 @@ export default function SettingsPage() {
           {settingsLoading ? <p className="text-zinc-500">Načítám...</p> : (
             <div className="space-y-4">
               {renderSettingsSections(GENERAL_SECTIONS)}
+              <ProfilesEditor />
               <QualityWeightsEditor value={settings.quality_weights || ""}
                 onChange={(json) => handleSettingChange("quality_weights", json)} />
               {renderSaveButton()}

@@ -362,6 +362,51 @@ export async function getModules(): Promise<ModuleInfo[]> {
   return res.json();
 }
 
+/** Quality profile (backend core/profiles.py). */
+export interface QualityProfile {
+  id: number;
+  name: string;
+  is_default: boolean;
+  min_resolution: string;
+  max_resolution: string;
+  require_local_audio: boolean;
+  codecs: string[];
+  hdr: "any" | "require" | "forbid";
+  max_size_gb: number;
+  min_video_mbps: number;
+  max_video_mbps: number;
+  min_score: number;
+  cutoff: number;
+}
+
+export async function getProfiles(): Promise<QualityProfile[]> {
+  const res = await fetch(`${API_BASE}/api/settings/profiles`);
+  if (!res.ok) throw new Error(`Failed to load profiles: ${res.status}`);
+  return res.json();
+}
+
+export async function saveProfile(p: QualityProfile): Promise<QualityProfile> {
+  const { id, name, is_default, ...config } = p;
+  const res = await fetch(`${API_BASE}/api/settings/profiles${id ? `/${id}` : ""}`, {
+    method: id ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, is_default, config }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Uložení selhalo: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteProfile(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/settings/profiles/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Smazání selhalo: ${res.status}`);
+  }
+}
+
 export async function updateAppSettings(data: AppSettings): Promise<AppSettings> {
   const res = await fetch(`${API_BASE}/api/settings`, {
     method: "PUT",

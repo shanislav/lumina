@@ -1,7 +1,8 @@
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from app.clients.groq_scorer import DEFAULT_GROQ_MODEL, list_models
 from app.db import get_all_settings, set_settings
@@ -142,6 +143,85 @@ async def quality_preview(body: dict) -> list[dict]:
         result = score(facts_from_media({**media, "duration_s": 6600}, name, size), prefs)
         out.append({"label": label, "score": result.score, "parts": result.parts})
     return out
+
+
+# ─── Quality profiles (app/core/profiles.py, decisions/0005) ───
+
+class ProfileBody(BaseModel):
+    name: str
+    is_default: bool = False
+    config: dict = {}
+
+
+def _profile_out(p) -> dict:
+    return p.as_dict()
+
+
+@router.get("/profiles")
+async def list_profiles() -> list[dict]:
+    from app.core.profiles import load_profiles
+    return [_profile_out(p) for p in await load_profiles()]
+
+
+async def _save_profile(profile_id: int | None, body: ProfileBody) -> dict:
+    from app.core.profiles import CONFIG_FIELDS, Profile, profile_config
+    from app.db import get_db
+    p = Profile(name=body.name.strip()[:60] or "Profil", is_default=body.is_default)
+    defaults = Profile()
+    for key in CONFIG_FIELDS:
+        value = body.config.get(key, getattr(defaults, key))
+        setattr(p, key, value)
+    db = await get_db()
+    try:
+        if p.is_default:
+            await db.execute("UPDATE quality_profiles SET is_default = 0")
+        if profile_id is None:
+            cursor = await db.execute("INSERT INTO quality_profiles (name, config, is_default) VALUES (?, ?, ?)",
+                                      (p.name, profile_config(p), int(p.is_default)))
+            p.id = cursor.lastrowid
+        else:
+            cursor = await db.execute("UPDATE quality_profiles SET name = ?, config = ?, is_default = ? WHERE id = ?",
+                                      (p.name, profile_config(p), int(p.is_default), profile_id))
+            if not cursor.rowcount:
+                raise HTTPException(404, "Profil neexistuje")
+            p.id = profile_id
+        # there is always exactly one default
+        cursor = await db.execute("SELECT COUNT(*) FROM quality_profiles WHERE is_default = 1")
+        if (await cursor.fetchone())[0] == 0:
+            await db.execute("UPDATE quality_profiles SET is_default = 1 WHERE id = (SELECT MIN(id) FROM quality_profiles)")
+        await db.commit()
+    finally:
+        await db.close()
+    return _profile_out(p)
+
+
+@router.post("/profiles")
+async def create_profile(body: ProfileBody) -> dict:
+    return await _save_profile(None, body)
+
+
+@router.put("/profiles/{profile_id}")
+async def update_profile(profile_id: int, body: ProfileBody) -> dict:
+    return await _save_profile(profile_id, body)
+
+
+@router.delete("/profiles/{profile_id}")
+async def delete_profile(profile_id: int) -> dict:
+    """Films that used it fall back to the default profile."""
+    from app.db import get_db
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT is_default FROM quality_profiles WHERE id = ?", (profile_id,))
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Profil neexistuje")
+        if row[0]:
+            raise HTTPException(400, "Výchozí profil nejde smazat — nejdřív nastav jiný jako výchozí")
+        await db.execute("DELETE FROM quality_profiles WHERE id = ?", (profile_id,))
+        await db.commit()
+        return {"ok": True}
+    finally:
+        await db.close()
 
 
 @router.get("/browse")
