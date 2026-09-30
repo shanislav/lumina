@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 VERIFY_WINDOWS = 6
 VERIFY_TYPICAL = 0.06         # seconds — the typical (median) offset must be within lip-sync tolerance
 VERIFY_MAX = 0.2              # single pieces may be noisier (measured the same way as the analysis)
+NEAR_CUT_S = (3, 15, 30)      # where next to a cut the result is checked (the first trustworthy one counts)
 
 
 class TransferError(Exception):
@@ -176,23 +177,35 @@ def verify(out_path: str, ref_track: int, new_track: int, duration: float,
     if len(good) < VERIFY_WINDOWS - 1 or typical > VERIFY_TYPICAL or any(abs(w.offset) > VERIFY_MAX for w in good):
         offs = ", ".join(f"{w.offset:+.2f}" for w in good) or "žádná shoda"
         raise TransferError(f"Kontrola výsledku neprošla (posuny {offs} s) — soubor nepoužit")
-    # a different cut: right before and right after every cut the audio must fit too
+    # a different cut: next to every cut the audio must fit too. A quiet stretch cannot be measured,
+    # so a few places are tried; any trustworthy one that is off fails, and so does none at all.
     for p in (pieces or []) if pieces and len(pieces) > 1 else []:
         if p.get("offset") is None:
             continue
-        spots = []
-        if p["start"] > 0 and p["start"] + 3 + engine.WINDOW_S <= p["end"]:
-            spots.append(p["start"] + 3)
-        if p["end"] < duration - 1 and p["end"] - 3 - engine.WINDOW_S >= p["start"]:
-            spots.append(p["end"] - 3 - engine.WINDOW_S)
-        for at in spots:
-            w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0)
-            windows.append(w)
-            if not w.good or abs(w.offset) > VERIFY_MAX:
-                mm, ss = divmod(int(at), 60)
-                raise TransferError(f"U střihu kolem {mm // 60}:{mm % 60:02d}:{ss:02d} zvuk nesedí nebo nejde ověřit "
-                                    f"— soubor nepoužit")
+        sides = []
+        if p["start"] > 0:
+            sides.append([p["start"] + d for d in NEAR_CUT_S if p["start"] + d + engine.WINDOW_S <= p["end"]])
+        if p["end"] < duration - 1:
+            sides.append([p["end"] - d - engine.WINDOW_S for d in NEAR_CUT_S if p["end"] - d - engine.WINDOW_S >= p["start"]])
+        for spots in sides:
+            confirmed = False
+            for at in spots:
+                w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0)
+                windows.append(w)
+                if not w.good:
+                    continue
+                if abs(w.offset) > VERIFY_MAX:
+                    raise TransferError(f"U střihu kolem {_clock(at)} zvuk nesedí ({w.offset:+.2f} s) — soubor nepoužit")
+                confirmed = True
+                break
+            if spots and not confirmed:
+                raise TransferError(f"U střihu kolem {_clock(spots[0])} nejde ověřit, že zvuk sedí — soubor nepoužit")
     return windows
+
+
+def _clock(seconds: float) -> str:
+    m, s = divmod(int(seconds), 60)
+    return f"{m // 60}:{m % 60:02d}:{s:02d}"
 
 
 def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int | list[int], analysis: dict,
