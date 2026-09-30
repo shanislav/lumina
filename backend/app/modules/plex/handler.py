@@ -1,8 +1,10 @@
-"""Collect changed movie folders and scan them in Plex a moment later — a batch rename of
-hundreds of movies becomes one section scan instead of hundreds of requests."""
+"""Collect changed movie folders and scan them in Plex once things calm down — a batch rename
+of hundreds of movies becomes one section scan instead of hundreds of requests (Plex then sees
+the removed and the added file in the same scan and keeps the movie, see decisions/0008)."""
 
 import asyncio
 import logging
+import time
 
 from app.clients.plex import PlexClient
 from app.config import get_effective_settings, movies_library_dir
@@ -11,11 +13,14 @@ from app.modules.plex.paths import section_for, to_plex
 
 logger = logging.getLogger(__name__)
 
-DELAY_S = 5
-MAX_FOLDERS = 20          # more changed folders in one section → scan the whole section once
+QUIET_S = 15             # scan once no change came for this long …
+MAX_WAIT_S = 120         # … or after this long with a few folders (not for a big batch: that waits for quiet)
+MAX_FOLDERS = 20         # more changed folders in one section → scan the whole section once
 
 _pending: set[str] = set()
 _task: asyncio.Task | None = None
+_first = 0.0
+_last = 0.0
 
 
 async def on_movie_updated(payload: dict) -> None:
@@ -23,15 +28,24 @@ async def on_movie_updated(payload: dict) -> None:
     automation = await get_automation("plex")
     if not automation or not automation["enabled"]:
         return
+    global _first, _last
     if not payload.get("folder") or payload.get("folder_is_library_root"):
         return
+    now = time.monotonic()
+    if not _pending:
+        _first = now
+    _last = now
     _pending.add(payload["folder"])
     if _task is None or _task.done():
         _task = asyncio.create_task(_flush_later())
 
 
 async def _flush_later() -> None:
-    await asyncio.sleep(DELAY_S)
+    while True:
+        await asyncio.sleep(1)
+        now = time.monotonic()
+        if now - _last >= QUIET_S or (len(_pending) <= MAX_FOLDERS and now - _first >= MAX_WAIT_S):
+            break
     folders = sorted(_pending)
     _pending.clear()
     try:

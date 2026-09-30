@@ -44,6 +44,7 @@ import { useAuth } from "@/components/AuthGate";
 import AudioSyncPanel from "@/components/AudioSyncPanel";
 import AudioTracksPanel from "@/components/AudioTracksPanel";
 import FilmAudioMap from "@/components/FilmAudioMap";
+import RenameChecklist from "@/components/RenameChecklist";
 
 type Tab = "filmy" | "serialy";
 type MovieFilter = "all" | "versions" | "review" | "unmatched";
@@ -1120,6 +1121,8 @@ export default function LibraryPage() {
               <p className="text-green-400 text-sm">Všechny spárované filmy už odpovídají pravidlům.</p>
             ) : bulkPlans ? (
               <>
+                <RenameChecklist count={bulkPlans.length} onPick={(n) =>
+                  setBulkSelected(new Set(bulkPlans.filter((p) => !p.conflicts.length).slice(0, n).map((p) => p.movie_ids[0])))} />
                 <div className="flex items-center gap-3 text-sm text-zinc-400">
                   <span>{bulkPlans.length} filmů ke změně · vybráno {bulkSelected.size}</span>
                   <button className="text-violet-400 hover:text-violet-300" onClick={() => setBulkSelected(new Set(bulkPlans.filter((p) => !p.conflicts.length).map((p) => p.movie_ids[0])))}>vše</button>

@@ -241,7 +241,7 @@ def distinct_tracks(ref_path: str, ref: dict, other_path: str, other: dict, trac
 
 def track_name(info: dict) -> str:
     """The original title keeps the dub apart („CZ dabing Nova“), else the language."""
-    title = (info.get("title") or "").strip()
+    title = (info.get("title") or "").replace("(Lumina sync)", "").strip()   # moved once more: one mark
     lang = (info.get("language") or "?").upper()
     return f"{title} (Lumina sync)" if title else f"{lang} (Lumina sync)"
 

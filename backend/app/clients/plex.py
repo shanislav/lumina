@@ -28,5 +28,11 @@ class PlexClient:
                                     params={"path": path} if path else None)
         resp.raise_for_status()
 
+    async def prefs(self) -> dict[str, object]:
+        """Server settings by id (FSEventLibraryUpdatesEnabled, autoEmptyTrash, …)."""
+        resp = await self._http.get("/:/prefs")
+        resp.raise_for_status()
+        return {s["id"]: s.get("value") for s in resp.json().get("MediaContainer", {}).get("Setting", []) if "id" in s}
+
     async def close(self) -> None:
         await self._http.aclose()

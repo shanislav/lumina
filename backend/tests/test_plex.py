@@ -76,3 +76,15 @@ async def test_disabled_does_nothing(plex):
         conn.execute("UPDATE automations SET enabled = 0 WHERE type = 'plex'")
     await handler.on_movie_updated({"folder": FOLDER})
     assert not handler._pending
+
+
+async def test_a_long_rename_is_one_scan_after_it_calms_down(plex, monkeypatch):
+    """Changes keep coming (a big batch) → nothing is scanned until they stop, then once."""
+    import asyncio
+    monkeypatch.setattr(handler, "QUIET_S", 1.5)
+    for i in range(handler.MAX_FOLDERS + 5):
+        await handler.on_movie_updated({"folder": f"{ROOT}/2000/Movie {i} (2000)"})
+        await asyncio.sleep(0.1)
+    assert FakePlex.scans == []                     # still busy
+    await asyncio.wait_for(handler._task, 10)
+    assert FakePlex.scans == [("3", None)]          # one section scan

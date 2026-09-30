@@ -1222,3 +1222,20 @@ export const applyFilmMap = (mapId: number, picks: { version_id: number; track: 
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ map_id: mapId, picks, drop_tracks: dropTracks, mode }),
   });
+
+// ── before a big rename: what Plex does on its own ──
+
+export interface PlexMigrationCheck {
+  configured: boolean;
+  reachable?: boolean;
+  error?: string;
+  lumina_scans: boolean;
+  settings: { id: string; title: string; on: boolean }[];
+}
+
+export async function getPlexMigrationCheck(): Promise<PlexMigrationCheck | null> {
+  const res = await apiFetch(`${API_BASE}/api/plex/migration-check`);
+  if (res.status === 404) return null;        // the plex module is off
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
