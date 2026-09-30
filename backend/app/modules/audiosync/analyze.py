@@ -320,42 +320,33 @@ def _agreement(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.convolve(v, np.ones(k) / k, mode="same")
 
 
-def _fine_end(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
-              s1: float, o1: float) -> float:
-    """The window at ``s1`` fits o1 → where exactly in [s1 + W/2, s1 + W + step] o1 stops fitting.
-    Per-frame agreement is weak, so it is only read next to a stretch known to fit."""
-    length = WINDOW_S + SCAN_STEP_S
-    ref = onsets(extract(ref_path, ref_track, s1, length))
-    c = _agreement(ref, _aligned_other(other_path, other_track, speed, o1, s1, length))
-    half = int(WINDOW_S / 2 * FPS)
-    level = max(float(np.mean(c[:half])), 1e-3)
-    pre = np.cumsum(c - level / 2)
-    i = half + int(np.argmax(pre[half:])) if len(pre) > half else len(pre)
-    return s1 + i / FPS
-
-
-def _fine_start(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
-                s2: float, o2: float) -> float:
-    """The window at ``s2`` fits o2 → where exactly in [s2 − step, s2 + W/2] o2 starts fitting."""
-    lo = max(0.0, s2 - SCAN_STEP_S)
-    length = s2 + WINDOW_S - lo
-    ref = onsets(extract(ref_path, ref_track, lo, length))
-    c = _agreement(ref, _aligned_other(other_path, other_track, speed, o2, lo, length))
-    half = int(WINDOW_S / 2 * FPS)
-    level = max(float(np.mean(c[-half:])), 1e-3)
-    suf = np.cumsum((c - level / 2)[::-1])[::-1]
-    limit = max(1, len(suf) - half)
-    j = int(np.argmax(suf[:limit]))
-    return lo + j / FPS
+def cut_point(c1: np.ndarray, c2: np.ndarray, gap: int, guard: int) -> int:
+    """Frame t of the cut: o1 fits before t, o2 from t + gap (gap = frames the other version lacks,
+    0 when it has extra material instead). Each curve is measured against half of its typical level
+    (read at the ends, where the windows are known to fit); both curves decide together."""
+    n = min(len(c1), len(c2))
+    c1, c2 = c1[:n], c2[:n]
+    l1 = max(float(np.mean(c1[:guard])), 1e-3)
+    l2 = max(float(np.mean(c2[-guard:])), 1e-3)
+    pre = np.concatenate([[0.0], np.cumsum(c1 - l1 / 2)])                # pre[t] = frames before t
+    suf = np.concatenate([np.cumsum((c2 - l2 / 2)[::-1])[::-1], [0.0]])  # suf[t] = frames from t
+    lo, hi = guard, n - guard - gap
+    if hi < lo:
+        return max(0, (n - gap) // 2)
+    t = np.arange(lo, hi + 1)
+    return int(t[np.argmax(pre[t] + suf[t + gap])])
 
 
 def find_cut(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
              lo: float, hi: float, o1: float, o2: float) -> tuple[float, float]:
     """Between the window at ``lo`` (offset o1 fits) and the one at ``hi`` (o2 fits) → (t1, t2):
-    o1 fits until t1, o2 from t2 (between them the other version has nothing for the picture).
+    o1 fits until t1, o2 from t2.
 
+    The shape of a cut is known: if the other version lacks material, its audio continues at the
+    same place — so t2 − t1 = (o1 − o2) / speed exactly; if it has extra material, t1 = t2.
     1) windows every 20 s say which offset they fit — the last o1 and the first o2 one bound the cut;
-    2) the exact points come from the per-frame agreement right next to those windows."""
+    2) the per-frame agreement under both offsets (weak alone, fine next to known fitting windows)
+       picks the one point."""
     margin = abs(o1 - o2) / 2 + 20
     s1, s2 = lo, hi
     for at in np.arange(lo + SCAN_STEP_S, hi, SCAN_STEP_S):
@@ -366,11 +357,14 @@ def find_cut(ref_path: str, ref_track: int, other_path: str, other_track: int, s
             s1 = max(s1, float(at))
         elif abs(w.offset - o2) <= SAME_OFFSET_S:
             s2 = min(s2, float(at))
-    t1 = _fine_end(ref_path, ref_track, other_path, other_track, speed, s1, o1)
-    t2 = _fine_start(ref_path, ref_track, other_path, other_track, speed, s2, o2)
-    if t1 > t2:            # the other version has extra material: one cut point
-        t1 = t2 = (t1 + t2) / 2
-    return t1, t2
+    gap_s = max(0.0, (o1 - o2) / speed)
+    a, b = s1, max(s2 + WINDOW_S, s1 + WINDOW_S + gap_s + 1)
+    ref = onsets(extract(ref_path, ref_track, a, b - a))
+    c1 = _agreement(ref, _aligned_other(other_path, other_track, speed, o1, a, b - a))
+    c2 = _agreement(ref, _aligned_other(other_path, other_track, speed, o2, a, b - a))
+    t = cut_point(c1, c2, int(round(gap_s * FPS)), int(WINDOW_S / 2 * FPS))
+    t1 = a + t / FPS
+    return t1, t1 + gap_s
 
 
 def cut_pieces(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,

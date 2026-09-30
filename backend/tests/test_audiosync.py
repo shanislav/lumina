@@ -3,7 +3,7 @@
 
 import numpy as np
 
-from app.modules.audiosync.analyze import FPS, RATE, Window, judge, locate, onsets, stretch
+from app.modules.audiosync.analyze import FPS, RATE, Window, judge, cut_point, locate, onsets, stretch
 
 
 def _events(seconds: float, seed: int) -> np.ndarray:
@@ -109,3 +109,19 @@ async def test_keep_audio_download_is_held_back_from_the_library(monkeypatch):
     await events.emit("download.completed", {**base, "library_action": {"mode": "replace", "file_id": 3}})
     assert len(imported) == 1 and len(started) == 1
 
+
+
+def test_cut_point_uses_the_known_shape_of_a_cut():
+    rng = np.random.default_rng(5)
+    n, guard = 12000, 2000                       # 120 s of 10 ms frames
+    frames = np.arange(n)
+    noise = lambda: rng.normal(0, 0.05, n)       # noqa: E731
+    # the other version has extra material: mapping 1 until 50 s, mapping 2 from 50 s, no gap
+    c1 = noise() + np.where(frames < 5000, 0.2, 0.0)
+    c2 = noise() + np.where(frames >= 5000, 0.2, 0.0)
+    assert abs(cut_point(c1, c2, 0, guard) - 5000) < 100
+    # it lacks 30 s: mapping 1 fits until 40 s, mapping 2 from 70 s — a quiet 3 s after 70 s; a quiet
+    # stretch looks like a wrong mapping, so it bounds the error (nothing tells them apart)
+    c1 = noise() + np.where(frames < 4000, 0.2, 0.0)
+    c2 = noise() + np.where(frames >= 7300, 0.2, 0.0)          # 70–73 s: fits but quiet
+    assert abs(cut_point(c1, c2, 3000, guard) - 4000) <= 300
