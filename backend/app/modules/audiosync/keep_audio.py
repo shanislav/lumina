@@ -43,17 +43,10 @@ def _router():
     return importlib.import_module("app.modules.audiosync.router")
 
 
-def missing_local_tracks(new_audio: list[dict], old_audio: list[dict]) -> list[int]:
-    """Indexes of the old file's CZ/SK tracks whose language the new file does not have
-    (one per language — the first, usually the main mix)."""
-    have = {LOCAL.get(a.get("language", "")) for a in new_audio} - {None}
-    picked, langs = [], set()
-    for a in old_audio:
-        lang = LOCAL.get(a.get("language", ""))
-        if lang and lang not in have and lang not in langs:
-            picked.append(a["index"])
-            langs.add(lang)
-    return picked
+def local_tracks(old_audio: list[dict]) -> list[int]:
+    """All CZ/SK tracks of the old version — several dubs of one language (cinema, TV stations) too.
+    Dubs the new file already has are left out by the transfer (content comparison)."""
+    return [a["index"] for a in old_audio if LOCAL.get(a.get("language", ""))]
 
 
 async def on_download_completed(payload: dict) -> None:
@@ -141,7 +134,7 @@ async def _keep_audio(payload: dict, pending_id: int | None = None) -> None:
                 return
             new_info, old_info = await asyncio.gather(asyncio.to_thread(engine.probe, new_path),
                                                       asyncio.to_thread(engine.probe, old["file_path"]))
-            tracks = missing_local_tracks(new_info["audio"], old_info["audio"])
+            tracks = local_tracks(old_info["audio"])
             if not tracks:
                 logger.info("keep audio: %s already has the local audio — plain replace", new_path)
                 await _release(payload, new_path, plain_replace, "")
@@ -165,18 +158,24 @@ async def _keep_audio(payload: dict, pending_id: int | None = None) -> None:
             downloads = Path(cfg.get("plex_media_dir") or os.path.dirname(new_path))
             workdir = downloads / f".lumina-keepaudio-{os.getpid()}-{id(payload)}"
             out_name = Path(new_path).stem + " [audio].mkv"
+            report: dict = {}
             try:
                 built = await asyncio.to_thread(muxer.transfer, new_path, 0, old["file_path"], tracks, data,
-                                                workdir, out_name, progress)
+                                                workdir, out_name, progress, report)
                 final = Path(new_path).with_name(out_name)
                 os.replace(built, final)
+            except muxer.NothingToAdd:
+                logger.info("keep audio: %s already has all the dubs — plain replace", new_path)
+                await _release(payload, new_path, plain_replace, "")
+                return
             finally:
                 shutil.rmtree(workdir, ignore_errors=True)
+            r._job.update(report=report)
             os.remove(new_path)            # its video and tracks are all in the new file
             progress("import", 0, 1)
             done = await _release(payload, str(final), plain_replace, "-audio")
             r._job.update(imported=bool(done.get("imported")), path=done.get("path"))
-            logger.info("keep audio: %s — %d track(s) kept, old version replaced", final.name, len(tracks))
+            logger.info("keep audio: %s — kept %s, old version replaced", final.name, ", ".join(report.get("added", [])))
         except Exception as e:  # noqa: BLE001 — never lose anything: keep both versions
             logger.warning("keep audio failed for %s: %s — importing it as a new version", new_path, e)
             r._job.update(error=f"{e} — nový soubor uložen jako další verze, nic se nesmazalo")

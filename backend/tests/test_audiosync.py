@@ -67,14 +67,14 @@ def test_judge_cut_and_no_match():
     assert judge(bad, 1.0, 7200)[0] == "no_match"
 
 
-def test_keep_audio_picks_the_missing_local_tracks():
-    from app.modules.audiosync.keep_audio import missing_local_tracks
-    new = [{"index": 0, "language": "eng"}, {"index": 1, "language": "fre"}]
-    old = [{"index": 0, "language": "cze"}, {"index": 1, "language": "slo"}, {"index": 2, "language": "ces"},
-           {"index": 3, "language": "eng"}]
-    assert missing_local_tracks(new, old) == [0, 1]            # one CZ (the first) + SK, not EN
-    assert missing_local_tracks(new + [{"index": 2, "language": "cs"}], old) == [1]
-    assert missing_local_tracks([{"index": 0, "language": "slk"}, {"index": 1, "language": "cze"}], old) == []
+def test_keep_audio_takes_every_local_dub_and_names_them():
+    from app.modules.audiosync.keep_audio import local_tracks
+    from app.modules.audiosync.transfer import track_name
+    old = [{"index": 0, "language": "cze", "title": "CZ dabing Nova"}, {"index": 1, "language": "eng"},
+           {"index": 2, "language": "ces", "title": "CZ dabing Prima"}, {"index": 3, "language": "slo"}]
+    assert local_tracks(old) == [0, 2, 3]                  # both CZ dubs + SK; which the new file has = content check
+    assert track_name(old[0]) == "CZ dabing Nova (Lumina sync)"
+    assert track_name(old[3]) == "SLO (Lumina sync)"
 
 
 async def test_keep_audio_download_is_held_back_from_the_library(monkeypatch):

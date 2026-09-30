@@ -47,6 +47,13 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
   const [confirmReplace, setConfirmReplace] = useState(false);
+  // tracks of the other version to move over — several dubs of one language are fine (TV stations …)
+  const [chosen, setChosen] = useState<number[]>([]);
+  useEffect(() => {
+    const all = tracks[otherId] ?? [];
+    const local = all.filter((a) => LOCAL.includes(a.language)).map((a) => a.index);
+    setChosen(local.length ? local : [otherTrack]);
+  }, [otherId, tracks, otherTrack]);
 
   // audio tracks of both files (ffprobe on the server)
   useEffect(() => {
@@ -99,8 +106,11 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
         if (!j.running) {
           if (j.error) setError(j.error);
           if (j.kind === "transfer" && !j.error) {
-            setDone(j.imported ? "✓ Hotovo — soubor s novou stopou je v knihovně"
-              : `Soubor je hotový, ale knihovna ho nepřevzala — zůstal ve stahování (${j.path ?? ""})`);
+            const added = j.report?.added?.length ? ` Přidáno: ${j.report.added.join(", ")}.` : "";
+            const skipped = j.report?.skipped?.length
+              ? ` Vynecháno: ${j.report.skipped.map((s) => `stopa ${s.track + 1} (${s.reason})`).join(", ")}.` : "";
+            setDone((j.imported ? "✓ Hotovo — soubor je v knihovně."
+              : `Soubor je hotový, ale knihovna ho nepřevzala — zůstal ve stahování (${j.path ?? ""}).`) + added + skipped);
             onChanged?.();
           } else if (j.result) {
             setResult(j.result);
@@ -118,7 +128,7 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
     setDone("");
     setConfirmReplace(false);
     try {
-      setJob(await startAudioTransfer(resultId, mode));
+      setJob(await startAudioTransfer(resultId, mode, chosen));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Nepodařilo se spustit");
     }
@@ -197,9 +207,20 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
               : result.verdict === "speed" ? " (stopa se přepočítá na správnou rychlost — AC-3)" : " (bez překódování)"}.
             Výsledek se před použitím zkontroluje.
           </p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            <span className="text-zinc-400">Přenést stopy:</span>
+            {(tracks[otherId] ?? []).map((t) => (
+              <label key={t.index} className="flex items-center gap-1.5 text-zinc-300">
+                <input type="checkbox" checked={chosen.includes(t.index)}
+                  onChange={(e) => setChosen(e.target.checked ? [...chosen, t.index].sort((a, b) => a - b) : chosen.filter((x) => x !== t.index))} />
+                {trackLabel(t)}
+              </label>
+            ))}
+          </div>
+          <p className="text-[10px] text-zinc-500">Dabing, který cílový soubor už má (i jako 2.0 vedle 5.1), se nepřidá — pozná se podle obsahu.</p>
           <div className="flex flex-wrap gap-2">
             {can("library.edit") && (
-              <button onClick={() => transfer("version")}
+              <button onClick={() => transfer("version")} disabled={!chosen.length}
                 className="rounded border border-violet-700 px-3 py-1.5 text-xs text-violet-200 hover:bg-violet-900/40">
                 Uložit jako novou verzi
               </button>

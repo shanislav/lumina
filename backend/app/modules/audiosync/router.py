@@ -155,6 +155,7 @@ async def results(reference_id: int, other_id: int) -> list[dict]:
 class TransferBody(BaseModel):
     result_id: int            # an analysis of the pair (its mapping is used)
     mode: str = "version"     # version = keep both files | replace = the new file replaces the reference
+    other_tracks: list[int] | None = None   # tracks of the other version to add (None = the analysed one)
 
 
 @router.post("/transfer")
@@ -208,9 +209,12 @@ async def _transfer(body: TransferBody, row: dict, analysis: dict, ref: dict, ot
 
     workdir = downloads / f".lumina-audiosync-{row['id']}"
     out_name = Path(ref["filename"]).stem + " [audio].mkv"
+    report: dict = {}
     try:
         out = await asyncio.to_thread(muxer.transfer, ref["file_path"], row["reference_track"], other["file_path"],
-                                      row["other_track"], analysis, workdir, out_name, progress)
+                                      body.other_tracks or [row["other_track"]], analysis, workdir, out_name,
+                                      progress, report)
+        _job.update(report=report)
         # the library takes the file over like a finished download (naming, NFO, replacing the old file)
         final = downloads / out_name
         os.replace(out, final)

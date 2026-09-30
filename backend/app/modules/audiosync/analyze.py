@@ -292,6 +292,42 @@ def analyze(ref_path: str, ref_track: int, other_path: str, other_track: int, pr
                   windows=windows, reference=ref, other=other, note=note, drift_s=drift, pieces=pieces)
 
 
+def mapping_at(analysis: dict, at: float) -> float | None:
+    """Offset of the other version at reference second ``at`` (None = it has no audio there)."""
+    pieces = analysis.get("pieces") or [{"start": 0, "end": 1e12, "offset": analysis.get("offset", 0.0)}]
+    for p in pieces:
+        if p["start"] <= at < p["end"]:
+            return p["offset"]
+    return pieces[-1]["offset"]
+
+
+# The same dub in two tracks (5.1 and 2.0, another encode) matches almost exactly; different dubs
+# of one language share only music and effects. Matrix Revolutions: CZ 5.1 vs CZ 2.0 0.82–0.94,
+# CZ vs EN 0.22–0.40, CZ vs SK 0.06–0.17.
+SAME_DUB_SCORE = 0.65
+
+_LANG = {"cze": "cs", "ces": "cs", "slo": "sk", "slk": "sk", "eng": "en", "ger": "de", "deu": "de",
+         "fre": "fr", "fra": "fr", "pol": "pl", "hun": "hu", "rus": "ru", "ita": "it", "spa": "es"}
+
+
+def lang_code(language: str) -> str:
+    language = (language or "").lower()
+    return _LANG.get(language, language[:2])
+
+
+def same_audio(ref_path: str, ref_track: int, other_path: str, other_track: int, analysis: dict,
+               duration: float) -> bool:
+    """Is the other track the very same dub as the reference track (under the mapping)?"""
+    scores = []
+    for at in np.linspace(duration * 0.15, duration * 0.85, 6):
+        off = mapping_at(analysis, float(at))
+        if off is None:
+            continue
+        w = _measure(ref_path, ref_track, other_path, other_track, float(at), analysis.get("speed", 1.0), off, margin=3.0)
+        scores.append(w.score if abs(w.offset - off) <= SAME_OFFSET_S else 0.0)
+    return bool(scores) and float(np.median(scores)) >= SAME_DUB_SCORE
+
+
 # ── different cut ──
 
 SMOOTH_S = 1.0          # agreement is averaged over this much time

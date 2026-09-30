@@ -258,20 +258,21 @@ export default function FileTable({
             </button>
             {can("library.delete") && owned.map((v) => {
               const delta = v.quality_score != null ? choosing.quality_score - v.quality_score : null;
-              // the new file lacks the CZ/SK dub this version has → offer to move the dub over
-              const keepAudio = can("audiosync") && hasLocalAudio(v)
-                && !(choosing.audio_langs ?? []).some((l) => l === "cs" || l === "sk");
+              // this version has CZ/SK dubs → offer to move over the ones the new file lacks
+              // (several dubs of one language count — cinema, TV stations; same dubs are recognised by content)
+              const keepAudio = can("audiosync") && hasLocalAudio(v);
+              const newHasLocal = (choosing.audio_langs ?? []).some((l) => l === "cs" || l === "sk");
               return (
                 <div key={v.id} className="space-y-2">
                 {keepAudio && (
                   <button onClick={() => runDownload(choosing, { mode: "replace", file_id: v.id, keep_audio: true })}
                     className="w-full text-left rounded-lg border border-green-800 bg-green-950/20 hover:bg-green-900/30 p-3">
                     <p className="text-green-200 font-medium">
-                      Nahradit a zachovat {v.language.replaceAll(",", "+")} zvuk: {versionLabel(v)}
+                      {newHasLocal ? "Nahradit a přidat CZ/SK dabingy, které nový soubor nemá" : `Nahradit a zachovat ${v.language.replaceAll(",", "+")} zvuk`}: {versionLabel(v)}
                       {delta != null && <span className="ml-2 text-xs text-zinc-400">kvalita {v.quality_score} → {choosing.quality_score}</span>}
                     </p>
                     <p className="text-[11px] text-zinc-400 mt-1">
-                      Po stažení Lumina přenese CZ/SK stopu ze staré verze do nové, zkontroluje, že sedí, a teprve pak starou smaže.
+                      Po stažení Lumina přenese CZ/SK dabingy ze staré verze, které nový soubor ještě nemá, zkontroluje, že sedí, a teprve pak starou smaže.
                       Když zvuk nesedí, nic se nesmaže — nový soubor zůstane jako další verze.
                     </p>
                   </button>

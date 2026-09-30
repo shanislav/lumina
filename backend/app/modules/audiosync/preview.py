@@ -10,18 +10,11 @@ import subprocess
 import time
 from pathlib import Path
 
+from app.modules.audiosync.analyze import mapping_at
+
 PREVIEW_DIR = Path("data/audiosync-previews")
 CLIP_S = 20.0
 KEEP_S = 24 * 3600
-
-
-def mapping_at(analysis: dict, at: float) -> float | None:
-    """Offset of the other version at reference second ``at`` (None = it has no audio there)."""
-    pieces = analysis.get("pieces") or [{"start": 0, "end": 1e12, "offset": analysis.get("offset", 0.0)}]
-    for p in pieces:
-        if p["start"] <= at < p["end"]:
-            return p["offset"]
-    return pieces[-1]["offset"]
 
 
 def with_adjustment(analysis: dict) -> dict:

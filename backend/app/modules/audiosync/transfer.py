@@ -34,6 +34,10 @@ class TransferError(Exception):
     pass
 
 
+class NothingToAdd(TransferError):
+    """Every chosen track is a dub the reference already has."""
+
+
 def mkv_tracks(path: str) -> list[dict]:
     out = subprocess.run(["mkvmerge", "-J", path], capture_output=True, text=True, timeout=120).stdout
     try:
@@ -208,10 +212,40 @@ def _clock(seconds: float) -> str:
     return f"{m // 60}:{m % 60:02d}:{s:02d}"
 
 
+def distinct_tracks(ref_path: str, ref: dict, other_path: str, other: dict, tracks: list[int], analysis: dict,
+                    report: dict | None = None) -> list[int]:
+    """The chosen tracks without dubs the reference already has, and without repeating one dub
+    (5.1 + 2.0 of the same). Different dubs of one language (TV stations …) all stay."""
+    keep: list[int] = []
+    identity = {"speed": 1.0, "offset": 0.0}
+    for t in tracks:
+        lang = engine.lang_code(other["audio"][t].get("language", ""))
+        twin = next((r["index"] for r in ref["audio"] if engine.lang_code(r.get("language", "")) == lang
+                     and engine.same_audio(ref_path, r["index"], other_path, t, analysis, ref["duration"])), None)
+        if twin is None:
+            twin = next((k for k in keep if engine.lang_code(other["audio"][k].get("language", "")) == lang
+                         and engine.same_audio(other_path, k, other_path, t, identity, other["duration"])), None)
+            if twin is not None and report is not None:
+                report.setdefault("skipped", []).append({"track": t, "reason": f"stejný dabing jako stopa {twin + 1}"})
+        elif report is not None:
+            report.setdefault("skipped", []).append({"track": t, "reason": "tento dabing soubor už má"})
+        if twin is None:
+            keep.append(t)
+    return keep
+
+
+def track_name(info: dict) -> str:
+    """The original title keeps the dub apart („CZ dabing Nova“), else the language."""
+    title = (info.get("title") or "").strip()
+    lang = (info.get("language") or "?").upper()
+    return f"{title} (Lumina sync)" if title else f"{lang} (Lumina sync)"
+
+
 def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int | list[int], analysis: dict,
-             workdir: Path, out_name: str, progress=None) -> str:
+             workdir: Path, out_name: str, progress=None, report: dict | None = None) -> str:
     """Builds the new file in ``workdir`` and checks it → its path. Several tracks of the other file
-    can go at once (they share its timing, so one analysis is enough)."""
+    can go at once (they share its timing, so one analysis is enough); dubs the reference already
+    has are left out (``report["skipped"]``)."""
     cut = analysis.get("verdict") == "cuts"
     if analysis.get("verdict") not in ("constant", "speed", "cuts") or (cut and not analysis.get("pieces")):
         raise TransferError("Zvuk k tomuto obrazu nesedí — není co přenést")
@@ -225,6 +259,11 @@ def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int |
     if progress:
         progress("prepare", 0, 1)
     ref = engine.probe(ref_path)
+    tracks = distinct_tracks(ref_path, ref, other_path, other, tracks, analysis, report)
+    if not tracks:
+        raise NothingToAdd("Tyto dabingy už soubor má — není co přidat")
+    if report is not None:
+        report["added"] = [track_name(other["audio"][t]) for t in tracks]
     added = []
     for t in tracks:
         info = other["audio"][t]
@@ -235,7 +274,7 @@ def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int |
             file, tid, delay_ms = prepare_audio(other_path, t, analysis["speed"], analysis["offset"], workdir,
                                                 info.get("channels") or 2, ref["start"], other["start"])
         added.append({"file": file, "tid": tid, "delay_ms": delay_ms, "language": info.get("language") or "",
-                      "name": f"{(info.get('language') or '?').upper()} (Lumina sync)"})
+                      "name": track_name(info)})
     mux(ref_path, added, out_path, progress)
     for a in added:
         if a["file"] != other_path:

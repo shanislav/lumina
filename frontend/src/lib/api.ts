@@ -1061,6 +1061,7 @@ export interface AudioSyncJob {
   request?: { reference_id: number; other_id: number; reference_track: number; other_track: number };
   result?: AudioSyncResult | null;
   error?: string | null;
+  report?: { added?: string[]; skipped?: { track: number; reason: string }[] };
 }
 
 async function audioSyncCall<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1092,9 +1093,10 @@ export const setAudioAdjust = (resultId: number, adjustMs: number) =>
   audioSyncCall<{ id: number; adjust_ms: number }>(`/results/${resultId}`, {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ adjust_ms: adjustMs }),
   });
-export const startAudioTransfer = (resultId: number, mode: "version" | "replace") =>
+export const startAudioTransfer = (resultId: number, mode: "version" | "replace", otherTracks?: number[]) =>
   audioSyncCall<AudioSyncJob>("/transfer", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ result_id: resultId, mode }),
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ result_id: resultId, mode, other_tracks: otherTracks }),
   });
 export const getAudioSyncResults = (referenceId: number, otherId: number) =>
   audioSyncCall<{ id: number; reference_track: number; other_track: number; created_at: string; result: AudioSyncResult }[]>(
