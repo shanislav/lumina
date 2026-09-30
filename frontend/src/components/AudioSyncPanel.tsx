@@ -170,6 +170,7 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
           <span className="text-xs text-violet-300 animate-pulse">
             {job.phase === "windows" ? `Porovnávám úseky filmu ${job.done}/${job.total} (asi minuta)`
               : job.phase === "speed" ? `Zjišťuji rychlost ${job.done}/${job.total} (asi minuta)`
+              : job.phase === "cuts" ? `Hledám přesná místa střihu ${job.done}/${job.total}`
               : job.phase === "prepare" ? "Připravuji stopu…"
               : job.phase === "mux" ? `Skládám soubor ${job.done} % (pár minut)`
               : job.phase === "verify" ? "Kontroluji výsledek…"
@@ -182,11 +183,13 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
       {result && <ResultView result={result} />}
       {done && <p className="text-sm text-green-300">{done}</p>}
 
-      {result && resultId && (result.verdict === "constant" || result.verdict === "speed") && !job?.running && (
+      {result && resultId && (result.verdict === "constant" || result.verdict === "speed"
+        || (result.verdict === "cuts" && (result.pieces?.length ?? 0) > 1)) && !job?.running && (
         <div className="space-y-2 border-t border-zinc-800 pt-3">
           <p className="text-xs text-zinc-400">
             Vložit stopu do souboru s obrazem z „{label(versions.find((v) => v.id === refId) ?? versions[0])}“
-            {result.verdict === "speed" ? " (stopa se přepočítá na správnou rychlost — AC-3)" : " (bez překódování)"}.
+            {result.verdict === "cuts" ? " (stopa se poskládá po částech podle střihu — AC-3; kde druhé verzi scéna chybí, bude ticho)"
+              : result.verdict === "speed" ? " (stopa se přepočítá na správnou rychlost — AC-3)" : " (bez překódování)"}.
             Výsledek se před použitím zkontroluje.
           </p>
           <div className="flex flex-wrap gap-2">
@@ -214,7 +217,6 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
           )}
         </div>
       )}
-      <p className="text-[10px] text-zinc-600">Jiný střih zatím přenést nejde — přijde v dalším kroku.</p>
     </div>
   );
 }
@@ -224,7 +226,7 @@ function ResultView({ result: r }: { result: AudioSyncResult }) {
   const head = r.verdict === "no_match"
     ? <p className="text-sm text-red-300">✗ Zvuk k tomuto obrazu nesedí</p>
     : r.verdict === "cuts"
-      ? <p className="text-sm text-amber-300">⚠ Jiný střih — zvuk půjde přenést jen po částech</p>
+      ? <p className="text-sm text-amber-300">⚠ Jiný střih — zvuk se poskládá po částech</p>
       : <p className="text-sm text-green-300">✓ Zvuk sedí — {speedLabel(r.speed)}, posun {r.offset >= 0 ? "+" : ""}{r.offset.toFixed(2)} s</p>;
   return (
     <div className="space-y-2">
@@ -236,8 +238,12 @@ function ResultView({ result: r }: { result: AudioSyncResult }) {
       </p>
       {r.verdict === "cuts" && (
         <ul className="text-[11px] text-zinc-400">
-          {r.segments.map((s, i) => (
-            <li key={i}>{clock(s.start)} – {clock(s.end)}: posun {s.offset >= 0 ? "+" : ""}{s.offset.toFixed(2)} s</li>
+          {(r.pieces?.length ? r.pieces : r.segments).map((s, i) => (
+            <li key={i} className={s.offset == null ? "text-amber-300/80" : ""}>
+              {clock(s.start)} – {clock(s.end)}:{" "}
+              {s.offset == null ? "ticho — ve druhé verzi tato část chybí"
+                : `posun ${s.offset >= 0 ? "+" : ""}${s.offset.toFixed(2)} s`}
+            </li>
           ))}
         </ul>
       )}

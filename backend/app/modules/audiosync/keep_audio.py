@@ -158,7 +158,7 @@ async def _keep_audio(payload: dict, pending_id: int | None = None) -> None:
             finally:
                 await db.close()
             r._job.update(result=data)
-            if result.verdict not in ("constant", "speed"):
+            if result.verdict not in ("constant", "speed", "cuts") or not result.pieces:
                 raise muxer.TransferError(f"Zvuk staré verze k novému obrazu nesedí ({result.verdict})")
 
             cfg = await get_effective_settings()

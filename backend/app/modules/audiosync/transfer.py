@@ -3,7 +3,8 @@
 - Same speed: the track is copied as it is (mkvmerge ``--sync`` shifts it), nothing is re-encoded.
 - Different speed (PAL …): the track is re-encoded to AC-3 with ffmpeg ``atempo`` first — players
   handle a stretched timestamp track badly.
-- Different cut: not yet (step 3).
+- Different cut: the track is assembled from the pieces of the analysis (ffmpeg: every piece from its
+  own place, silence where the other version lacks the scene) and encoded to AC-3.
 
 The result is a new MKV (video and all tracks of the reference + the new track, marked default).
 Before it goes anywhere it is checked: the new track must line up with the reference track in the
@@ -82,6 +83,50 @@ def prepare_audio(other_path: str, other_track: int, speed: float, offset: float
     return str(out), 0, round((ref_start - offset / speed) * 1000)
 
 
+_LAYOUTS = {1: "mono", 2: "stereo", 6: "5.1"}
+
+
+def assemble_audio(other_path: str, other_track: int, pieces: list[dict], speed: float, workdir: Path,
+                   channels: int, ref_start: float = 0.0) -> tuple[str, int, int]:
+    """A track for a different cut: each piece of the reference timeline is taken from the other file
+    at its own offset (silence where the other version has nothing) → (file, track id, delay ms).
+    Times of the pieces are from the start of the reference; the result starts at reference 0."""
+    layout = _LAYOUTS.get(channels, "5.1" if channels > 2 else "stereo")
+    args, labels, filters = ["ffmpeg", "-nostdin", "-v", "error", "-y"], [], []
+    n = 0
+    for p in pieces:
+        length = p["end"] - p["start"]
+        if length <= 0.01:
+            continue
+        if p.get("offset") is None:
+            args += ["-f", "lavfi", "-t", f"{length:.3f}", "-i", f"anullsrc=r=48000:cl={layout}"]
+            filters.append(f"[{n}:a]aformat=sample_rates=48000:channel_layouts={layout}[p{n}]")
+        else:
+            start = speed * p["start"] + p["offset"]
+            lead = 0.0
+            if start < 0:                      # the other version starts later — silence first
+                lead, start = -start / speed, 0.0
+            args += ["-ss", f"{start:.3f}", "-t", f"{speed * (length - lead):.3f}", "-i", other_path]
+            chain = f"[{n}:a:{other_track}]"
+            chain += f"atempo={speed:.8f}," if abs(speed - 1) > 1e-9 else ""
+            chain += f"aresample=48000,aformat=sample_rates=48000:channel_layouts={layout}"
+            if lead:
+                chain += f",adelay={int(lead * 1000)}:all=1"
+            # exact length: pad a short end, cut a long one
+            chain += f",apad=whole_dur={length:.3f},atrim=0:{length:.3f}[p{n}]"
+            filters.append(chain)
+        labels.append(f"[p{n}]")
+        n += 1
+    if not labels:
+        raise TransferError("Nic k poskládání")
+    graph = ";".join(filters) + ";" + "".join(labels) + f"concat=n={len(labels)}:v=0:a=1[out]"
+    out = workdir / f"audio-{other_track}.mka"
+    bitrate = "640k" if channels > 2 else "224k"
+    subprocess.run(args + ["-filter_complex", graph, "-map", "[out]", "-c:a", "ac3", "-b:a", bitrate, str(out)],
+                   check=True, capture_output=True, timeout=3 * 3600)
+    return str(out), 0, round(ref_start * 1000)
+
+
 def mux(ref_path: str, added: list[dict], out_path: str, progress=None) -> None:
     """Reference file as it is + the added tracks ({file, tid, delay_ms, language, name}); the first
     added track becomes the default audio."""
@@ -107,10 +152,24 @@ def mux(ref_path: str, added: list[dict], out_path: str, progress=None) -> None:
     _run_mkvmerge(cmd, progress)
 
 
-def verify(out_path: str, ref_track: int, new_track: int, duration: float) -> list[engine.Window]:
+def verify(out_path: str, ref_track: int, new_track: int, duration: float,
+           pieces: list[dict] | None = None) -> list[engine.Window]:
     """The new track must line up with the reference track of the same file."""
     # the middle of the film — logos and credits are the least alike
     positions = [float(x) for x in np.linspace(duration * 0.08, duration * 0.88, VERIFY_WINDOWS)]
+    if pieces and len(pieces) > 1:
+        # not across a cut or in a stretch the other version lacks: inside pieces with audio
+        inside = [(p["start"] + 30, p["end"] - engine.WINDOW_S - 30) for p in pieces if p.get("offset") is not None]
+        inside = [(a, b) for a, b in inside if b > a]
+        total = sum(b - a for a, b in inside)
+        positions = []
+        for k in range(VERIFY_WINDOWS):
+            x = total * (k + 0.5) / VERIFY_WINDOWS
+            for a, b in inside:
+                if x <= b - a:
+                    positions.append(a + x)
+                    break
+                x -= b - a
     windows = [engine._measure(out_path, ref_track, out_path, new_track, at, 1.0) for at in positions]
     good = [w for w in windows if w.good]
     typical = float(np.median([abs(w.offset) for w in good])) if good else 99.0
@@ -124,8 +183,9 @@ def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int |
              workdir: Path, out_name: str, progress=None) -> str:
     """Builds the new file in ``workdir`` and checks it → its path. Several tracks of the other file
     can go at once (they share its timing, so one analysis is enough)."""
-    if analysis.get("verdict") not in ("constant", "speed"):
-        raise TransferError("Přenést jde zatím jen zvuk, který sedí celý (jiný střih přijde později)")
+    cut = analysis.get("verdict") == "cuts"
+    if analysis.get("verdict") not in ("constant", "speed", "cuts") or (cut and not analysis.get("pieces")):
+        raise TransferError("Zvuk k tomuto obrazu nesedí — není co přenést")
     tracks = [other_tracks] if isinstance(other_tracks, int) else list(other_tracks)
     other = engine.probe(other_path)
     if not tracks or any(t >= len(other["audio"]) for t in tracks):
@@ -139,8 +199,12 @@ def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int |
     added = []
     for t in tracks:
         info = other["audio"][t]
-        file, tid, delay_ms = prepare_audio(other_path, t, analysis["speed"], analysis["offset"], workdir,
-                                            info.get("channels") or 2, ref["start"], other["start"])
+        if cut:
+            file, tid, delay_ms = assemble_audio(other_path, t, analysis["pieces"], analysis["speed"], workdir,
+                                                 info.get("channels") or 2, ref["start"])
+        else:
+            file, tid, delay_ms = prepare_audio(other_path, t, analysis["speed"], analysis["offset"], workdir,
+                                                info.get("channels") or 2, ref["start"], other["start"])
         added.append({"file": file, "tid": tid, "delay_ms": delay_ms, "language": info.get("language") or "",
                       "name": f"{(info.get('language') or '?').upper()} (Lumina sync)"})
     mux(ref_path, added, out_path, progress)
@@ -152,7 +216,7 @@ def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int |
         progress("verify", 0, 1)
     duration = engine.probe(out_path)["duration"]
     for i in range(len(added)):
-        verify(out_path, ref_track, len(ref["audio"]) + i, duration)
+        verify(out_path, ref_track, len(ref["audio"]) + i, duration, analysis.get("pieces") if cut else None)
     logger.info("audiosync: %s built (%d tracks, delay %d ms, speed %.5f)", out_name, len(added),
                 added[0]["delay_ms"], analysis["speed"])
     return out_path

@@ -11,6 +11,9 @@ up in the other file by cross-correlation — in ~24 places across the film. The
 found offsets tells which case it is; weak or ambiguous matches are reported, never guessed.
 
 Mapping found: ``t_other = speed * t_reference + offset`` (per segment when the cut differs).
+With a different cut the exact places are found between the segments (``find_cut``) and the film
+is described as ``pieces``: reference time ranges with their offset, or None where the other
+version has no audio for the picture (a scene it lacks).
 """
 
 import json
@@ -174,6 +177,8 @@ class Result:
     other: dict = field(default_factory=dict)
     note: str = ""
     drift_s: float = 0.0             # how much a pure-offset mapping would drift over the film
+    # the whole reference timeline: [{start, end, offset}] — offset None = the other version lacks it
+    pieces: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -276,5 +281,89 @@ def analyze(ref_path: str, ref_track: int, other_path: str, other_track: int, pr
             progress("windows", i + 1, len(positions))
 
     verdict, speed, offset, segs, confidence, note, drift = judge(windows, best_speed, ref["duration"])
+    pieces: list[dict] = []
+    if verdict in ("constant", "speed"):
+        pieces = [{"start": 0.0, "end": ref["duration"], "offset": offset}]
+    elif verdict == "cuts":
+        if progress:
+            progress("cuts", 0, len(segs) - 1)
+        pieces = cut_pieces(ref_path, ref_track, other_path, other_track, speed, segs, ref["duration"], progress)
     return Result(verdict=verdict, speed=speed, offset=offset, confidence=confidence, segments=segs,
-                  windows=windows, reference=ref, other=other, note=note, drift_s=drift)
+                  windows=windows, reference=ref, other=other, note=note, drift_s=drift, pieces=pieces)
+
+
+# ── different cut ──
+
+SMOOTH_S = 1.0          # agreement is averaged over this much time
+MIN_GAP_S = 0.3         # shorter "missing" stretches are noise at the cut point
+
+
+def _aligned_other(other_path: str, other_track: int, speed: float, offset: float, lo: float,
+                   length: float) -> np.ndarray:
+    """The other file's onsets on the reference grid [lo, lo + length) under this offset."""
+    start = speed * lo + offset
+    pad = 0
+    if start < 0:
+        pad = int(round(-start / speed * FPS))
+        start = 0.0
+    f = stretch(onsets(extract(other_path, other_track, start, speed * length + 1)), speed)
+    if pad:
+        f = np.vstack([np.zeros((pad, N_BANDS), np.float32), f])
+    return f
+
+
+def _agreement(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    n = min(len(a), len(b))
+    v = (a[:n] * b[:n]).sum(axis=1) / N_BANDS
+    k = max(1, int(SMOOTH_S * FPS))
+    return np.convolve(v, np.ones(k) / k, mode="same")
+
+
+def split_point(c1: np.ndarray, c2: np.ndarray) -> tuple[int, int]:
+    """Frames (i, j), i ≤ j: the first mapping fits before i, the second from j on (between them
+    neither — the other version lacks that stretch). Maximizes the agreement of both sides, each
+    measured against half of its own typical agreement."""
+    n = min(len(c1), len(c2))
+    c1, c2 = c1[:n], c2[:n]
+    edge = max(1, n // 10)
+    a = c1 - max(float(np.mean(c1[:edge])), 1e-3) / 2
+    b = c2 - max(float(np.mean(c2[-edge:])), 1e-3) / 2
+    pre = np.concatenate([[0.0], np.cumsum(a)])                 # pre[i] = a[:i]
+    suf = np.concatenate([np.cumsum(b[::-1])[::-1], [0.0]])     # suf[j] = b[j:]
+    best_i = np.zeros(n + 1, dtype=int)
+    cur = 0
+    for j in range(n + 1):
+        if pre[j] > pre[cur]:
+            cur = j
+        best_i[j] = cur
+    total = pre[best_i] + suf
+    j = int(np.argmax(total))
+    return int(best_i[j]), j
+
+
+def find_cut(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
+             lo: float, hi: float, o1: float, o2: float) -> tuple[float, float]:
+    """Between ``lo`` (offset o1 fits) and ``hi`` (o2 fits) → (t1, t2) in reference seconds."""
+    length = hi - lo
+    ref = onsets(extract(ref_path, ref_track, lo, length))
+    c1 = _agreement(ref, _aligned_other(other_path, other_track, speed, o1, lo, length))
+    c2 = _agreement(ref, _aligned_other(other_path, other_track, speed, o2, lo, length))
+    i, j = split_point(c1, c2)
+    return lo + i / FPS, lo + j / FPS
+
+
+def cut_pieces(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
+               segments: list[Segment], duration: float, progress=None) -> list[dict]:
+    pieces: list[dict] = []
+    start = 0.0
+    for k, (s1, s2) in enumerate(zip(segments, segments[1:])):
+        lo, hi = s1.end - WINDOW_S, s2.start + WINDOW_S
+        t1, t2 = find_cut(ref_path, ref_track, other_path, other_track, speed, lo, hi, s1.offset, s2.offset)
+        pieces.append({"start": start, "end": t1, "offset": s1.offset})
+        if t2 - t1 >= MIN_GAP_S:
+            pieces.append({"start": t1, "end": t2, "offset": None})
+        start = t2 if t2 - t1 >= MIN_GAP_S else t1
+        if progress:
+            progress("cuts", k + 1, len(segments) - 1)
+    pieces.append({"start": start, "end": duration, "offset": segments[-1].offset})
+    return pieces

@@ -173,8 +173,8 @@ async def start_transfer(body: TransferBody, user: User = Depends(require("audio
     if not row:
         raise HTTPException(404, "Porovnání nenalezeno")
     analysis = json.loads(row["result"])
-    if analysis["verdict"] not in ("constant", "speed"):
-        raise HTTPException(400, "Přenést jde zatím jen zvuk, který sedí celý")
+    if analysis["verdict"] not in ("constant", "speed", "cuts") or not analysis.get("pieces"):
+        raise HTTPException(400, "Zvuk k tomuto obrazu nesedí — není co přenést")
     ref, other = await _file(row["reference_id"]), await _file(row["other_id"])
 
     cfg = await get_effective_settings()

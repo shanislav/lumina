@@ -1045,6 +1045,7 @@ export interface AudioSyncResult {
   other: { duration: number; audio: AudioTrackInfo[] };
   note: string;
   drift_s: number;
+  pieces?: { start: number; end: number; offset: number | null }[];
 }
 
 export interface AudioSyncJob {
