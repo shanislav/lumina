@@ -143,7 +143,17 @@ def test_film_map_groups_the_same_dub_across_versions(monkeypatch):
         {"index": 1, "language": "slo", "codec": "ac3", "channels": 2, "title": "", "dub": "sk"}]}
     dubs = filmmap.cluster([uhd, web, tv], 7000)
     by_name = {d["name"]: d for d in dubs}
-    assert set(by_name) == {"EN 1", "CZ kino", "CZ Nova", "SK 1"}
-    assert [(m["version_id"], m["track"]) for m in by_name["EN 1"]["members"]] == [(1, 0), (2, 1)]
+    assert set(by_name) == {"EN", "CZ kino", "CZ Nova", "SK"}
+    assert [(m["version_id"], m["track"]) for m in by_name["EN"]["members"]] == [(1, 0), (2, 1)]
     # the 5.1 and the 2.0 of one dub are one row, the better one first
     assert [(m["version_id"], m["track"]) for m in by_name["CZ kino"]["members"]] == [(2, 0), (2, 2)]
+
+
+def test_dub_names_drop_the_technical_part():
+    from app.modules.audiosync.filmmap import dub_name
+    assert dub_name("cs", "Cze AC3 6ch 48kHz - 640 kbps - 16 bits") == "CZ"
+    assert dub_name("cs", "CZ dabing Nova (Lumina sync)") == "CZ Nova"
+    assert dub_name("sk", "SLO (Lumina sync)") == "SK"
+    assert dub_name("en", "English DTS-HD MA 7.1") == "EN"
+    assert dub_name("en", "Commentary by director") == "EN Commentary by director"
+    assert dub_name("cs", "") == "CZ"

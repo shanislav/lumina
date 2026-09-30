@@ -7,6 +7,7 @@ different dubs ~0.1–0.4 (decisions/0007). The result is a table: rows = dubs, 
 """
 
 import logging
+import re
 
 import numpy as np
 
@@ -40,6 +41,22 @@ def same_dub(a: dict, b: dict, duration: float) -> bool:
         w = engine._measure(a["path"], a["track"], b["path"], b["track"], ta, ratio, guess, margin=3.0)
         scores.append(w.score if abs(w.offset - guess) <= engine.SAME_OFFSET_S else 0.0)
     return bool(scores) and float(np.median(scores)) >= engine.SAME_DUB_SCORE
+
+
+# words in track titles that only describe the technical side or the language
+_TECH = re.compile(
+    r"\b(ac-?3|e-?ac-?3|dd\+?|dts(-hd)?|ma|hra|truehd|atmos|aac|flac|opus|mp3|pcm|lpcm|\d+(\.\d)?\s*ch|"
+    r"\d(\.\d)?|\d+\s*k(bps|hz)?|kbps|khz|\d+\s*bits?|bit|stereo|mono|surround|lumina\s+sync|"
+    r"cze?|ces|czech|česky|cz|slo|slk|slovak|slovensky|sk|eng?|english|en|dabing|dub(bing)?|audio|track|stopa)\b",
+    re.IGNORECASE)
+
+
+def dub_name(lang: str, title: str) -> str:
+    """"CZ" or "CZ Nova" — the language plus whatever in the title is not codec/channels/language."""
+    rest = _TECH.sub(" ", title or "")
+    rest = re.sub(r"[\s\-_,.;:/|()\[\]]+", " ", rest).strip()
+    code = {"cs": "CZ"}.get(lang, (lang or "?").upper())
+    return f"{code} {rest}" if len(rest) >= 2 else code
 
 
 def source_rank(info: dict) -> tuple:
@@ -76,17 +93,21 @@ def cluster(versions: list[dict], duration: float, progress=None) -> list[dict]:
             progress("compare", k + 1, len(tracks))
     out = []
     for i, d in enumerate(dubs):
-        title = next((m["info"].get("title") for m in d["members"] if (m["info"].get("title") or "").strip()), "")
+        names = [dub_name(d["lang"], m["info"].get("title") or "") for m in d["members"]]
+        # the most telling title of the members ("CZ Nova" beats "CZ")
         out.append({
-            "id": i, "lang": d["lang"], "name": title.replace(" (Lumina sync)", "").strip(),
+            "id": i, "lang": d["lang"], "name": max(names, key=len),
             "members": [{"version_id": m["version_id"], "track": m["track"], "codec": m["info"].get("codec"),
                          "channels": m["info"].get("channels"), "title": m["info"].get("title"),
                          "language": m["info"].get("language")} for m in d["members"]],
         })
-    # name the unnamed ones "CZ dabing 1, 2 …" within a language
-    counts: dict[str, int] = {}
+    # two different dubs with the same name get numbers ("CZ 1", "CZ 2")
+    seen: dict[str, int] = {}
     for d in out:
-        if not d["name"]:
-            counts[d["lang"]] = counts.get(d["lang"], 0) + 1
-            d["name"] = f"{(d['lang'] or '?').upper()} {counts[d['lang']]}"
+        seen[d["name"]] = seen.get(d["name"], 0) + 1
+    counter: dict[str, int] = {}
+    for d in out:
+        if seen[d["name"]] > 1:
+            counter[d["name"]] = counter.get(d["name"], 0) + 1
+            d["name"] = f"{d['name']} {counter[d['name']]}"
     return out
