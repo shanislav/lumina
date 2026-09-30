@@ -64,13 +64,14 @@ def probe(path: str) -> dict:
 def _video_args(info: dict) -> list[str]:
     if info["video"]["copy"]:
         return ["-c:v", "copy"]
-    chain = []
+    height = min(720, info["video"]["height"] or 720)
     if info["video"]["hdr"]:
-        chain.append("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,"
-                     "zscale=t=bt709:m=bt709:r=tv")
-    chain.append("scale=-2:'min(720,ih)'")
-    chain.append("format=yuv420p")
-    return ["-vf", ",".join(chain), "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        # scale down first, then tone-map: 9× fewer pixels than 4K for the expensive float math
+        chain = [f"zscale=w=-2:h={height}:t=linear:npl=100", "format=gbrpf32le", "zscale=p=bt709",
+                 "tonemap=tonemap=hable:desat=0", "zscale=t=bt709:m=bt709:r=tv", "format=yuv420p"]
+    else:
+        chain = [f"scale=-2:{height}", "format=yuv420p"]
+    return ["-vf", ",".join(chain), "-c:v", "libx264", "-preset", "superfast", "-crf", "23",
             "-g", str(SEGMENT_S * 24), "-sc_threshold", "0"]
 
 
