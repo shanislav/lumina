@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { AuthUser, UNAUTHORIZED_EVENT, getAuthStatus, login, logout, setupAdmin } from "@/lib/api";
 
 interface AuthState {
@@ -22,6 +23,8 @@ export function useAuth(): AuthState {
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<"loading" | "setup" | "login" | "ok" | "offline">("loading");
   const [user, setUser] = useState<AuthUser | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
 
   const load = useCallback(() => {
     getAuthStatus()
@@ -43,6 +46,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   }, [load]);
 
   const signedIn = (u: AuthUser) => {
+    // the sign-in form keeps the URL; after "Odhlásit se" on the account page start on the home page
+    if (pathname?.startsWith("/account")) router.replace("/");
     setUser(u);
     setState("ok");
   };
@@ -65,6 +70,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       try {
         await logout();
       } finally {
+        router.replace("/");
         setUser(null);
         setState("login");
       }
