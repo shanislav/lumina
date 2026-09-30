@@ -231,13 +231,18 @@ function HomeContent() {
           <div className="flex items-center gap-4">
             <button
               onClick={() => {
+                // opened from Objevit / Knihovna / Chci (no search results here) → back there
+                if (movies.length === 0 && window.history.length > 1) {
+                  router.back();
+                  return;
+                }
                 setSelectedMovie(null);
                 setFiles([]);
                 setResultsCollapsed(false);
               }}
               className="text-zinc-500 hover:text-zinc-300 transition-colors text-sm"
             >
-              &larr; Zpět na výsledky
+              &larr; Zpět
             </button>
             <h2 className="text-xl font-semibold text-zinc-100">
               {selectedMovie.title}
@@ -260,6 +265,21 @@ function HomeContent() {
               </button>
             )}
           </div>
+          {(selectedMovie.overview || selectedMovie.poster_url) && (
+            <div className="flex gap-3 text-sm text-zinc-400">
+              {selectedMovie.poster_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={selectedMovie.poster_url} alt="" className="w-12 h-[72px] rounded object-cover flex-shrink-0" />
+              )}
+              {selectedMovie.overview && <p className="line-clamp-3 max-w-3xl">{selectedMovie.overview}</p>}
+            </div>
+          )}
+          {!filesLoading && files.length === 0 && selectedMovie.media_type !== "tv" && (selectedMovie.tmdb_id || selectedMovie.wikidata_id) ? (
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-300 flex flex-wrap items-center gap-3">
+              <span>Zatím nic ke stažení. Přidej si ho do Chci — Lumina ho bude hledat, až se objeví:</span>
+              <WantButton movie={selectedMovie} />
+            </div>
+          ) : null}
           {selectedOwned.length > 0 && (
             <div className="rounded-lg border border-emerald-900 bg-emerald-950/30 px-4 py-3 text-sm">
               <p className="text-emerald-300 font-medium">

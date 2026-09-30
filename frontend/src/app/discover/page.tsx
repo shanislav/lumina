@@ -6,7 +6,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { TMDBMovie, getTrending, getRecentlyDigital, getRecentlyDigitalTV, getOwned, OwnedVersion, versionLabel } from "@/lib/api";
 import DownloadPanel from "@/components/DownloadPanel";
-import MovieDetailModal from "@/components/MovieDetailModal";
 
 interface Section {
   title: string;
@@ -31,7 +30,6 @@ export default function DiscoverPage() {
   const [tvData, setTvData] = useState<Record<string, TMDBMovie[]>>({});
   const [filmLoading, setFilmLoading] = useState(true);
   const [tvLoading, setTvLoading] = useState(true);
-  const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
   const [owned, setOwned] = useState<Record<string, OwnedVersion[]>>({});
 
   useEffect(() => {
@@ -132,7 +130,8 @@ export default function DiscoverPage() {
                 {items.map((movie) => (
                   <button
                     key={movie.tmdb_id}
-                    onClick={() => setSelectedMovie(movie)}
+                    onClick={() => handleSearch(movie)}
+                    title={movie.overview || movie.title}
                     className="group rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-violet-500 transition-colors text-left"
                   >
                     <div className="aspect-[2/3] relative bg-zinc-800">
@@ -172,15 +171,6 @@ export default function DiscoverPage() {
             </section>
           );
         })
-      )}
-
-      {/* Detail modal */}
-      {selectedMovie && (
-        <MovieDetailModal
-          movie={selectedMovie}
-          onClose={() => setSelectedMovie(null)}
-          onSearch={handleSearch}
-        />
       )}
 
       <DownloadPanel />
