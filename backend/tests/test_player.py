@@ -28,3 +28,22 @@ def test_segments_behind_the_player_are_deleted(tmp_path):
     sessions.pace(s)
     left = sorted(int(f.name[1:6]) for f in tmp_path.glob("s*.m4s"))
     assert left[0] == 50 - sessions.BEHIND and left[-1] == 59 and (tmp_path / "init.mp4").exists()
+
+
+def test_ffmpeg_is_paused_ahead_and_resumed(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(sessions, "_signal", lambda s, sig: sent.append(sig))
+
+    class Proc:
+        returncode = None
+        pid = 1
+
+    s = Session(id="x", user_id=1, movie_id=1, start=0, audio=0, dir=tmp_path, mode="original", proc=Proc())
+    for n in range(sessions.AHEAD + 2):
+        (tmp_path / f"s{n:05d}.m4s").write_bytes(b"x")
+    sessions.requested(s, "s00000.m4s")
+    sessions.pace(s)
+    assert s.paused and len(sent) == 1
+    sessions.requested(s, f"s{sessions.AHEAD - 5:05d}.m4s")      # the player caught up
+    sessions.pace(s)
+    assert not s.paused and len(sent) == 2

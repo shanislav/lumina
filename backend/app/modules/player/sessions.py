@@ -192,7 +192,7 @@ def pace(s: Session) -> None:
         if not s.paused and newest - s.last_segment > AHEAD:
             _signal(s, signal.SIGSTOP)
             s.paused = True
-        elif s.paused and newest - s.last_segment < AHEAD - 10:
+        elif s.paused and newest - s.last_segment < AHEAD // 2:
             _signal(s, signal.SIGCONT)
             s.paused = False
     for n in produced:
