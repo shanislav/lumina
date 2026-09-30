@@ -1,1 +1,20 @@
-"""Audio track transfer between versions of a film (decisions/0007) — step 1: analysis."""
+"""Audio track transfer between versions of a film (decisions/0007).
+
+Step 1 (this): compare two versions — find how the other version's audio lines up with the
+reference video (offset, speed, cuts) and how sure that is. Later steps mux the track in
+(mkvmerge), stretch for a different speed, split at cuts, preview clips, and the upgrade flow
+"replace, but keep my SK/CZ audio".
+Needs ffmpeg in the backend image.
+"""
+
+from app.core.module import Module, Permission
+from app.modules.audiosync.router import RESULTS, router
+
+module = Module(
+    name="audiosync",
+    title="Přenos zvuku",
+    order=40,
+    routers=[router],
+    migrations=[RESULTS],
+    permissions=[Permission("audiosync", "Porovnávat a přenášet zvukové stopy mezi verzemi")],
+)

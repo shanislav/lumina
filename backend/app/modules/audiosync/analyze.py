@@ -230,10 +230,14 @@ def judge(windows: list[Window], speed: float, duration: float
     if len(on_line) >= 0.85 * len(good):
         # one mapping for the whole film; a tiny slope is a speed a hair off the nominal one
         drift = slope * duration
-        exact = speed + slope if abs(drift) > SAME_OFFSET_S / 2 else speed
-        seg = [Segment(start=good[0].at, end=good[-1].at + WINDOW_S, offset=intercept)]
+        if abs(drift) > SAME_OFFSET_S:
+            exact, offset = speed + slope, intercept
+        else:
+            # below lip-sync tolerance over the whole film: keep the nominal speed, take the typical offset
+            exact, offset = speed, float(np.median([w.offset for w in on_line]))
+        seg = [Segment(start=good[0].at, end=good[-1].at + WINDOW_S, offset=offset)]
         verdict = "constant" if abs(exact - 1) < 1e-9 else "speed"
-        return verdict, exact, intercept, seg, confidence, "", drift
+        return verdict, exact, offset, seg, confidence, "", drift
     segs = segments_from(windows)
     # a lone window with its own offset is noise, not a cut
     real = [s for s in segs if sum(1 for w in good if s.start <= w.at < s.end) >= 2] or segs

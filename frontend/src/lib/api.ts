@@ -1016,3 +1016,66 @@ export function formatSize(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
+
+// ── audio sync (transfer a track between versions — step 1: analysis) ──
+
+export interface AudioTrackInfo {
+  index: number;
+  language: string;
+  title: string;
+  codec: string;
+  channels: number;
+}
+
+export interface AudioSyncWindow {
+  at: number;
+  offset: number;
+  score: number;
+  sharpness: number;
+}
+
+export interface AudioSyncResult {
+  verdict: "constant" | "speed" | "cuts" | "no_match";
+  speed: number;
+  offset: number;
+  confidence: number;
+  segments: { start: number; end: number; offset: number }[];
+  windows: AudioSyncWindow[];
+  reference: { duration: number; audio: AudioTrackInfo[] };
+  other: { duration: number; audio: AudioTrackInfo[] };
+  note: string;
+  drift_s: number;
+}
+
+export interface AudioSyncJob {
+  running: boolean;
+  phase?: string;
+  done?: number;
+  total?: number;
+  request?: { reference_id: number; other_id: number; reference_track: number; other_track: number };
+  result?: AudioSyncResult | null;
+  error?: string | null;
+}
+
+async function audioSyncCall<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await apiFetch(`${API_BASE}/api/audiosync${path}`, init);
+  if (!res.ok) {
+    let detail = `Chyba ${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+export const getAudioTracks = (movieId: number) =>
+  audioSyncCall<{ id: number; filename: string; duration: number; audio: AudioTrackInfo[] }>(`/tracks/${movieId}`);
+export const startAudioSync = (body: { reference_id: number; other_id: number; reference_track: number; other_track: number }) =>
+  audioSyncCall<AudioSyncJob>("/analyze", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+export const getAudioSyncJob = () => audioSyncCall<AudioSyncJob>("/job");
+export const getAudioSyncResults = (referenceId: number, otherId: number) =>
+  audioSyncCall<{ id: number; reference_track: number; other_track: number; created_at: string; result: AudioSyncResult }[]>(
+    `/results?reference_id=${referenceId}&other_id=${otherId}`);
