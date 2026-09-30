@@ -4,13 +4,18 @@ import asyncio
 import json
 import logging
 import os
+import shutil
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.auth import require
+from app.config import get_effective_settings
+from app.core import events
+from app.core.auth import User, require
 from app.db import get_db
 from app.modules.audiosync import analyze as engine
+from app.modules.audiosync import transfer as muxer
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +43,8 @@ _task: asyncio.Task | None = None
 async def _file(movie_id: int) -> dict:
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT id, tmdb_id, title, file_path, filename FROM library_movies WHERE id = ?",
+        cursor = await db.execute("SELECT id, tmdb_id, title, year, file_path, filename, file_size FROM library_movies "
+                                  "WHERE id = ?",
                                   (movie_id,))
         row = await cursor.fetchone()
     finally:
@@ -76,7 +82,7 @@ async def start_analysis(body: AnalyzeBody) -> dict:
     if ref["tmdb_id"] != other["tmdb_id"]:
         raise HTTPException(400, "Verze musí být stejného filmu")
     _job.clear()
-    _job.update(running=True, phase="start", done=0, total=0, request=body.model_dump(),
+    _job.update(running=True, kind="analyze", phase="start", done=0, total=0, request=body.model_dump(),
                 title=ref["title"], result=None, error=None)
     _task = asyncio.create_task(_run(body, ref["file_path"], other["file_path"]))
     return _job
@@ -129,3 +135,76 @@ async def results(reference_id: int, other_id: int) -> list[dict]:
     finally:
         await db.close()
     return [{**{k: r[k] for k in r.keys() if k != "result"}, "result": json.loads(r["result"])} for r in rows]
+
+
+class TransferBody(BaseModel):
+    result_id: int            # an analysis of the pair (its mapping is used)
+    mode: str = "version"     # version = keep both files | replace = the new file replaces the reference
+
+
+@router.post("/transfer")
+async def start_transfer(body: TransferBody, user: User = Depends(require("audiosync"))) -> dict:
+    global _task
+    if body.mode not in ("version", "replace"):
+        raise HTTPException(400, "Neznámý režim")
+    # the replaced file is deleted once the new one is in the library
+    if not user.can("library.delete" if body.mode == "replace" else "library.edit"):
+        raise HTTPException(403, "Na tohle nemáš oprávnění (nahradit = mazat v knihovně, nová verze = upravovat knihovnu)")
+    if _job.get("running"):
+        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT * FROM audiosync_results WHERE id = ?", (body.result_id,))
+        row = await cursor.fetchone()
+    finally:
+        await db.close()
+    if not row:
+        raise HTTPException(404, "Porovnání nenalezeno")
+    analysis = json.loads(row["result"])
+    if analysis["verdict"] not in ("constant", "speed"):
+        raise HTTPException(400, "Přenést jde zatím jen zvuk, který sedí celý")
+    ref, other = await _file(row["reference_id"]), await _file(row["other_id"])
+
+    cfg = await get_effective_settings()
+    downloads = Path(cfg.get("plex_media_dir") or "")
+    if not downloads.is_dir():
+        raise HTTPException(400, "Složka pro stahování filmů neexistuje")
+    free = shutil.disk_usage(downloads).free
+    if free < (ref["file_size"] or 0) * 1.05 + 2 * 1024**3:
+        raise HTTPException(507, f"Málo místa ve složce stahování ({free / 1024**3:.0f} GB volno)")
+
+    _job.clear()
+    _job.update(running=True, kind="transfer", phase="start", done=0, total=0, title=ref["title"],
+                request=body.model_dump(), result=None, error=None, imported=None)
+    _task = asyncio.create_task(_run_transfer(body, dict(row), analysis, ref, other, downloads))
+    return _job
+
+
+async def _run_transfer(body: TransferBody, row: dict, analysis: dict, ref: dict, other: dict, downloads: Path) -> None:
+    loop = asyncio.get_running_loop()
+
+    def progress(phase: str, done: int, total: int) -> None:
+        loop.call_soon_threadsafe(_job.update, {"phase": phase, "done": done, "total": total})
+
+    workdir = downloads / f".lumina-audiosync-{row['id']}"
+    out_name = Path(ref["filename"]).stem + " [audio].mkv"
+    try:
+        out = await asyncio.to_thread(muxer.transfer, ref["file_path"], row["reference_track"], other["file_path"],
+                                      row["other_track"], analysis, workdir, out_name, progress)
+        # the library takes the file over like a finished download (naming, NFO, replacing the old file)
+        final = downloads / out_name
+        os.replace(out, final)
+        progress("import", 0, 1)
+        action = {"mode": "replace", "file_id": ref["id"]} if body.mode == "replace" else {"mode": "version"}
+        payload = await events.emit("download.completed", {
+            "download_id": f"audiosync-{row['id']}", "tmdb_id": ref["tmdb_id"], "title": ref["title"],
+            "year": ref["year"], "content_type": "movie", "path": str(final), "library_action": action})
+        _job.update(imported=bool(payload.get("imported")), path=payload.get("path"))
+    except muxer.TransferError as e:
+        _job.update(error=str(e))
+    except Exception as e:  # noqa: BLE001 — shown to the user
+        logger.exception("audiosync transfer failed")
+        _job.update(error=str(e))
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        _job.update(running=False)
