@@ -462,7 +462,8 @@ export interface QualityProfile {
   is_default: boolean;
   min_resolution: string;
   max_resolution: string;
-  require_local_audio: boolean;
+  audio_langs: string[];          // wanted audio languages ("cs", "sk", "en" …); empty = any
+  audio_mode: "any" | "all";      // one of them is enough | every one of them
   codecs: string[];
   hdr: "any" | "require" | "forbid";
   max_size_gb: number;

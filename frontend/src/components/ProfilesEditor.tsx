@@ -10,9 +10,11 @@ import { QualityProfile, getProfiles, saveProfile, deleteProfile } from "@/lib/a
 
 const RES = [["", "—"], ["SD", "SD"], ["720p", "720p"], ["1080p", "1080p"], ["2160p", "4K"]] as const;
 const CODECS = ["H.265", "AV1", "H.264", "VC-1", "MPEG-2", "XviD"];
+const LANGS: [string, string][] = [["cs", "CZ"], ["sk", "SK"], ["en", "EN"], ["de", "DE"], ["pl", "PL"], ["hu", "HU"]];
+const langLabel = (code: string) => LANGS.find(([c]) => c === code)?.[1] ?? code.toUpperCase();
 const EMPTY: QualityProfile = {
   id: 0, name: "Nový profil", is_default: false, min_resolution: "", max_resolution: "",
-  require_local_audio: true, codecs: [], hdr: "any", max_size_gb: 0, min_video_mbps: 0,
+  audio_langs: ["cs", "sk"], audio_mode: "any", codecs: [], hdr: "any", max_size_gb: 0, min_video_mbps: 0,
   max_video_mbps: 0, min_score: 0, cutoff: 0,
 };
 
@@ -20,7 +22,8 @@ export default function ProfilesEditor() {
   const [profiles, setProfiles] = useState<QualityProfile[]>([]);
   const [editing, setEditing] = useState<QualityProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
   const load = () => getProfiles().then(setProfiles).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -52,7 +55,9 @@ export default function ProfilesEditor() {
     p.min_resolution || p.max_resolution
       ? `${p.min_resolution || "…"}${p.max_resolution && p.max_resolution !== p.min_resolution ? `–${p.max_resolution}` : p.max_resolution ? " jen" : "+"}`
       : "jakékoli rozlišení",
-    p.require_local_audio ? "CZ/SK zvuk" : "",
+    p.audio_langs.length
+      ? `zvuk ${p.audio_langs.map(langLabel).join(p.audio_mode === "all" ? " + " : " / ")}`
+      : "",
     p.codecs.length ? p.codecs.join("/") : "",
     p.hdr === "require" ? "jen HDR" : p.hdr === "forbid" ? "bez HDR" : "",
     p.max_size_gb ? `max ${p.max_size_gb} GB` : "",
@@ -87,10 +92,21 @@ export default function ProfilesEditor() {
                 <p className="text-xs text-zinc-500 truncate">{summary(p)}</p>
               </div>
               <button onClick={() => setEditing({ ...p })} className="text-xs text-violet-300 hover:text-violet-200">Upravit</button>
+              {p.is_default ? (
+                <span className="text-xs text-zinc-600" title="Výchozí profil nejde smazat — nejdřív nastav jiný jako výchozí">Smazat</span>
+              ) : confirmDelete === p.id ? (
+                <span className="flex items-center gap-2 text-xs">
+                  <button onClick={() => { setConfirmDelete(null); remove(p); }} className="text-red-400 hover:text-red-300">Opravdu smazat</button>
+                  <button onClick={() => setConfirmDelete(null)} className="text-zinc-500 hover:text-zinc-300">Ne</button>
+                </span>
+              ) : (
+                <button onClick={() => setConfirmDelete(p.id)} className="text-xs text-zinc-500 hover:text-red-400">Smazat</button>
+              )}
             </div>
           ))}
-          <button onClick={() => setEditing({ ...EMPTY })}
-            className="rounded bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700">+ Nový profil</button>
+          <button onClick={() => setEditing({ ...EMPTY, audio_langs: [...EMPTY.audio_langs] })}
+            className="rounded bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500">+ Nový profil</button>
+          <p className="text-[11px] text-zinc-600">Filmy se smazaným profilem použijí výchozí profil.</p>
           {error && !editing && <p className="text-xs text-red-400">{error}</p>}
         </div>
       )}
@@ -113,11 +129,25 @@ export default function ProfilesEditor() {
                 </select>
               </div>
 
-              <label className="text-zinc-400">Zvuk</label>
-              <label className="flex items-center gap-2 text-zinc-300">
-                <input type="checkbox" checked={editing.require_local_audio} onChange={(e) => set({ require_local_audio: e.target.checked })} />
-                musí mít CZ/SK zvuk
-              </label>
+              <label className="text-zinc-400 self-start pt-1">Zvuk</label>
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap gap-3">
+                  {LANGS.map(([code, label]) => (
+                    <label key={code} className="flex items-center gap-1 text-zinc-300">
+                      <input type="checkbox" checked={editing.audio_langs.includes(code)}
+                        onChange={(e) => set({ audio_langs: e.target.checked
+                          ? [...editing.audio_langs, code] : editing.audio_langs.filter((x) => x !== code) })} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <select value={editing.audio_mode} onChange={(e) => set({ audio_mode: e.target.value as QualityProfile["audio_mode"] })}
+                  disabled={editing.audio_langs.length < 2} className={`${field} disabled:opacity-50`}>
+                  <option value="any">stačí jeden z vybraných</option>
+                  <option value="all">musí mít všechny vybrané</option>
+                </select>
+                <p className="text-[11px] text-zinc-600">nic nezaškrtnuto = na zvuku nezáleží</p>
+              </div>
 
               <label className="text-zinc-400">Kodeky</label>
               <div className="flex flex-wrap gap-3">
@@ -158,9 +188,6 @@ export default function ProfilesEditor() {
             </div>
             {error && <p className="text-xs text-red-400">{error}</p>}
             <div className="flex items-center gap-3 pt-2">
-              {editing.id !== 0 && !editing.is_default && (
-                <button onClick={() => remove(editing)} className="text-xs text-red-400 hover:text-red-300">Smazat profil</button>
-              )}
               <div className="flex-1" />
               <button onClick={() => setEditing(null)} className="text-sm text-zinc-400 hover:text-zinc-200">Zrušit</button>
               <button onClick={save} className="rounded bg-violet-600 px-5 py-1.5 text-sm font-bold text-white hover:bg-violet-500">Uložit</button>

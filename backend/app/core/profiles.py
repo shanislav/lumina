@@ -33,7 +33,8 @@ class Profile:
     is_default: bool = False
     min_resolution: str = ""          # "" = any
     max_resolution: str = ""
-    require_local_audio: bool = False  # Czech/Slovak audio (languages from Settings)
+    audio_langs: list[str] = field(default_factory=list)   # wanted audio languages ("cs", "sk", "en" …); empty = any
+    audio_mode: str = "any"           # any = one of them is enough | all = every one of them
     codecs: list[str] = field(default_factory=list)   # allowed ("H.265", "AV1", "H.264" …); empty = any
     hdr: str = "any"                  # any | require | forbid
     max_size_gb: float = 0
@@ -51,6 +52,8 @@ CONFIG_FIELDS = [f for f in Profile.__dataclass_fields__ if f not in ("id", "nam
 
 def profile_from_row(row) -> Profile:
     config = json.loads(row["config"] or "{}")
+    if config.get("require_local_audio") and not config.get("audio_langs"):
+        config["audio_langs"] = ["cs", "sk"]          # profiles saved before 2026-09-30: "must have CZ/SK"
     p = Profile(id=row["id"], name=row["name"], is_default=bool(row["is_default"]))
     for key in CONFIG_FIELDS:
         if key in config:
@@ -63,9 +66,9 @@ def profile_config(p: Profile) -> str:
 
 
 DEFAULT_PROFILES = [
-    Profile(name="Standard", is_default=True, min_resolution="720p", require_local_audio=True, cutoff=70),
-    Profile(name="Full HD", min_resolution="1080p", max_resolution="1080p", require_local_audio=True, cutoff=75),
-    Profile(name="4K", min_resolution="2160p", require_local_audio=True, cutoff=85),
+    Profile(name="Standard", is_default=True, min_resolution="720p", audio_langs=["cs", "sk"], cutoff=70),
+    Profile(name="Full HD", min_resolution="1080p", max_resolution="1080p", audio_langs=["cs", "sk"], cutoff=75),
+    Profile(name="4K", min_resolution="2160p", audio_langs=["cs", "sk"], cutoff=85),
 ]
 
 
@@ -76,6 +79,10 @@ def seed_default_profiles() -> str:
     )
     return (f"INSERT INTO quality_profiles (name, config, is_default) SELECT * FROM (VALUES {rows}) "
             f"WHERE NOT EXISTS (SELECT 1 FROM quality_profiles);")
+
+
+def _lang_label(code: str) -> str:
+    return "CZ" if code.lower() == "cs" else code.upper()
 
 
 def _rank(resolution: str) -> int:
@@ -93,8 +100,13 @@ def block(row: dict, p: Profile) -> str | None:
         return f"rozlišení {res or '?'} < {p.min_resolution}"
     if p.max_resolution and (res == "" or _rank(res) > _rank(p.max_resolution)):
         return f"rozlišení {res or '?'} > {p.max_resolution}"
-    if p.require_local_audio and (row.get("lang_tier") or 0) < 2:
-        return "bez CZ/SK zvuku"
+    if p.audio_langs:
+        have = {l.lower() for l in row.get("audio_langs") or []}
+        want = {l.lower() for l in p.audio_langs}
+        if p.audio_mode == "all" and not want <= have:
+            return "chybí zvuk " + "+".join(sorted(_lang_label(l) for l in want - have))
+        if p.audio_mode != "all" and not want & have:
+            return "bez zvuku " + "/".join(_lang_label(l) for l in p.audio_langs)
     if p.codecs and (row.get("codec") or "") not in p.codecs:
         return f"kodek {row.get('codec') or '?'}"
     if p.hdr == "require" and not row.get("hdr"):
@@ -124,6 +136,7 @@ def row_from_media(media: dict, filename: str, size: int, prefs: Prefs) -> dict:
     return {
         "resolution": facts.resolution, "codec": facts.codec, "hdr": facts.hdr, "size": size,
         "video_bitrate": video_bitrate(facts), "lang_tier": language_tier(facts, prefs),
+        "audio_langs": facts.audio_langs,
         "quality_score": score(facts, prefs).score,
     }
 
