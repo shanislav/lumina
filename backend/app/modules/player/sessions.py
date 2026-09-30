@@ -1,17 +1,26 @@
-"""Streaming a library file to the browser: ffmpeg → HLS (H.264 + AAC stereo), from a chosen second.
+"""Streaming a library file to the browser: ffmpeg → HLS (fMP4 segments), from a chosen second.
 
-Browsers play neither MKV nor HEVC/DTS, so the file is turned into HLS on the fly. H.264 8-bit
-video is copied (no work); anything else is scaled to 720p and encoded (HDR tone-mapped to SDR).
-Reading runs at most at 2× real time, so a paused film does not keep the CPU busy. Seeking outside
-what is ready and switching the audio track start a new session at that second. One session per
-user, two at most; an unused one stops after 90 s. Files live in data/player/<session>.
+Browsers open neither MKV nor DTS/TrueHD, so the file is repackaged on the fly — nothing is copied
+to disk beyond a short window of segments:
+- "original": the video is taken from the file as it is (stream copy — no decoding, almost no CPU,
+  full resolution and HDR). Possible for H.264 8-bit, and for HEVC when the browser says it can
+  decode it (hardware); Dolby Vision profile 5 only where the browser supports it (Safari).
+- "transcode": scaled to 720p and encoded to H.264 (HDR scaled first, then tone-mapped to SDR).
+The audio is always converted to AAC stereo (cheap). Reading runs at most at 2× real time; when the
+stream gets more than AHEAD segments in front of what the player asked for, ffmpeg is paused, and
+segments more than BEHIND behind are deleted — so a film never piles up on the disk.
+Seeking outside what is ready and switching the audio start a new session at that second.
+One session per user, two at most; an unused one stops after 90 s. Files live in data/player/<id>.
 """
 
 import asyncio
 import json
 import logging
+import os
+import re
 import secrets
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -23,6 +32,9 @@ ROOT = Path("data/player")
 MAX_SESSIONS = 2
 IDLE_S = 90
 SEGMENT_S = 6
+AHEAD = 30          # segments in front of the player before ffmpeg is paused (3 min)
+BEHIND = 20         # segments kept behind the player (2 min)
+_SEGMENT = re.compile(r"^s(\d{5})\.m4s$")
 
 
 @dataclass
@@ -33,8 +45,11 @@ class Session:
     start: float
     audio: int
     dir: Path
+    mode: str                              # original | transcode
     proc: asyncio.subprocess.Process | None = None
     last_access: float = field(default_factory=time.monotonic)
+    last_segment: int = -1                 # the newest segment the player asked for
+    paused: bool = False
 
 
 _sessions: dict[str, Session] = {}
@@ -44,7 +59,7 @@ def probe(path: str) -> dict:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries",
          "format=duration:stream=index,codec_type,codec_name,pix_fmt,height,color_transfer,channels"
-         ":stream_tags=language,title", "-of", "json", path],
+         ":stream_tags=language,title:stream_side_data=dv_profile", "-of", "json", path],
         capture_output=True, text=True, timeout=60, check=True).stdout
     data = json.loads(out)
     video = next((s for s in data.get("streams", []) if s.get("codec_type") == "video"), {})
@@ -55,17 +70,41 @@ def probe(path: str) -> dict:
             audio.append({"index": len(audio), "language": (tags.get("language") or "").lower(),
                           "title": tags.get("title") or "", "codec": s.get("codec_name") or "",
                           "channels": s.get("channels") or 0})
-    hdr = video.get("color_transfer") in ("smpte2084", "arib-std-b67")
-    copy = video.get("codec_name") == "h264" and video.get("pix_fmt") == "yuv420p" and (video.get("height") or 0) <= 1080
+    dv = next((sd.get("dv_profile") for sd in video.get("side_data_list") or [] if "dv_profile" in sd), None)
     return {"duration": float(data.get("format", {}).get("duration") or 0), "audio": audio,
-            "video": {"codec": video.get("codec_name"), "height": video.get("height"), "hdr": hdr, "copy": copy}}
+            "video": {"codec": video.get("codec_name"), "height": video.get("height"),
+                      "pix_fmt": video.get("pix_fmt"), "dv_profile": dv,
+                      "hdr": video.get("color_transfer") in ("smpte2084", "arib-std-b67") or dv is not None}}
 
 
-def _video_args(info: dict) -> list[str]:
-    if info["video"]["copy"]:
-        return ["-c:v", "copy"]
-    height = min(720, info["video"]["height"] or 720)
-    if info["video"]["hdr"]:
+def choose_mode(video: dict, wanted: str, caps: dict) -> tuple[str, str]:
+    """→ (mode, reason). ``caps``: what the browser said it can decode (hevc, dv5)."""
+    if wanted == "transcode":
+        return "transcode", "převod zvolen ručně"
+    codec = video.get("codec")
+    if codec == "h264":
+        if video.get("pix_fmt") in ("yuv420p", "yuvj420p"):
+            return "original", "H.264 — prohlížeč ho umí"
+        return "transcode", "H.264 10-bit prohlížeče neumí"
+    if codec == "hevc":
+        if not caps.get("hevc"):
+            return "transcode", "tento prohlížeč neumí HEVC (Firefox, nebo bez hardwarového dekodéru)"
+        if video.get("dv_profile") == 5 and not caps.get("dv5"):
+            return "transcode", "Dolby Vision 5 umí jen Safari — převod (barvy nemusí sedět)"
+        return "original", "HEVC — prohlížeč ho umí"
+    return "transcode", f"{codec} prohlížeče neumí"
+
+
+def _video_args(info: dict, mode: str) -> list[str]:
+    video = info["video"]
+    if mode == "original":
+        args = ["-c:v", "copy"]
+        if video.get("codec") == "hevc":
+            # browsers want the parameter sets in the header (hvc1); DV 5 needs its own tag
+            args += ["-tag:v", "dvh1" if video.get("dv_profile") == 5 else "hvc1", "-strict", "unofficial"]
+        return args
+    height = min(720, video.get("height") or 720)
+    if video.get("hdr"):
         # scale down first, then tone-map: 9× fewer pixels than 4K for the expensive float math
         chain = [f"zscale=w=-2:h={height}:t=linear:npl=100", "format=gbrpf32le", "zscale=p=bt709",
                  "tonemap=tonemap=hable:desat=0", "zscale=t=bt709:m=bt709:r=tv", "format=yuv420p"]
@@ -75,8 +114,10 @@ def _video_args(info: dict) -> list[str]:
             "-g", str(SEGMENT_S * 24), "-sc_threshold", "0"]
 
 
-async def start(user_id: int, movie_id: int, path: str, at: float, audio: int) -> tuple[Session, dict]:
+async def start(user_id: int, movie_id: int, path: str, at: float, audio: int, wanted: str = "auto",
+                caps: dict | None = None) -> tuple[Session, dict, str]:
     info = await asyncio.to_thread(probe, path)
+    mode, reason = choose_mode(info["video"], wanted, caps or {})
     if not info["audio"]:
         audio = -1
     elif audio >= len(info["audio"]):
@@ -93,16 +134,16 @@ async def start(user_id: int, movie_id: int, path: str, at: float, audio: int) -
            "-ss", f"{at:.3f}", "-i", path, "-map", "0:v:0"]
     if audio >= 0:
         cmd += ["-map", f"0:a:{audio}", "-c:a", "aac", "-ac", "2", "-b:a", "160k"]
-    cmd += _video_args(info)
+    cmd += _video_args(info, mode)
     cmd += ["-f", "hls", "-hls_time", str(SEGMENT_S), "-hls_list_size", "0", "-hls_playlist_type", "event",
-            "-hls_segment_filename", str(d / "s%05d.ts"), str(d / "index.m3u8")]
+            "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4",
+            "-hls_segment_filename", str(d / "s%05d.m4s"), str(d / "index.m3u8")]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL,
                                                 stderr=asyncio.subprocess.PIPE)
-    s = Session(id=sid, user_id=user_id, movie_id=movie_id, start=at, audio=audio, dir=d, proc=proc)
+    s = Session(id=sid, user_id=user_id, movie_id=movie_id, start=at, audio=audio, dir=d, mode=mode, proc=proc)
     _sessions[sid] = s
-    logger.info("player: %s from %.0f s (audio %d, %s)", Path(path).name, at, audio,
-                "copy" if info["video"]["copy"] else "encode")
-    return s, info
+    logger.info("player: %s from %.0f s (audio %d, %s — %s)", Path(path).name, at, audio, mode, reason)
+    return s, info, reason
 
 
 async def stop(sid: str) -> None:
@@ -110,6 +151,8 @@ async def stop(sid: str) -> None:
     if not s:
         return
     if s.proc and s.proc.returncode is None:
+        if s.paused:
+            _signal(s, signal.SIGCONT)
         s.proc.kill()
         try:
             await asyncio.wait_for(s.proc.wait(), 5)
@@ -125,14 +168,51 @@ def get(sid: str) -> Session | None:
     return s
 
 
+def requested(s: Session, name: str) -> None:
+    """The player asked for this file — remember how far it is."""
+    m = _SEGMENT.match(name)
+    if m:
+        s.last_segment = max(s.last_segment, int(m.group(1)))
+
+
+def _signal(s: Session, sig: int) -> None:
+    try:
+        os.kill(s.proc.pid, sig)          # type: ignore[union-attr]
+    except (ProcessLookupError, AttributeError):
+        pass
+
+
+def pace(s: Session) -> None:
+    """Keep at most AHEAD segments in front of the player (pause ffmpeg) and BEHIND behind it (delete)."""
+    produced = [int(m.group(1)) for f in s.dir.iterdir() if (m := _SEGMENT.match(f.name))]
+    if not produced:
+        return
+    newest = max(produced)
+    if s.proc and s.proc.returncode is None:
+        if not s.paused and newest - s.last_segment > AHEAD:
+            _signal(s, signal.SIGSTOP)
+            s.paused = True
+        elif s.paused and newest - s.last_segment < AHEAD - 10:
+            _signal(s, signal.SIGCONT)
+            s.paused = False
+    for n in produced:
+        if n < s.last_segment - BEHIND:
+            (s.dir / f"s{n:05d}.m4s").unlink(missing_ok=True)
+
+
 async def reaper() -> None:
     while True:
-        await asyncio.sleep(15)
+        await asyncio.sleep(3)
         now = time.monotonic()
         for s in list(_sessions.values()):
             if now - s.last_access > IDLE_S:
                 logger.info("player: session %s idle — stopped", s.id)
                 await stop(s.id)
+            else:
+                try:
+                    pace(s)
+                except OSError:
+                    pass
 
 
 _reaper: asyncio.Task | None = None

@@ -1148,7 +1148,7 @@ export interface PlayerInfo {
   year: string;
   duration: number;
   audio: AudioTrackInfo[];
-  video: { codec: string; height: number; hdr: boolean; copy: boolean };
+  video: { codec: string; height: number; hdr: boolean; dv_profile: number | null; pix_fmt: string };
 }
 
 async function playerCall<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1164,10 +1164,15 @@ async function playerCall<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const getPlayerInfo = (movieId: number) => playerCall<PlayerInfo>(`/${movieId}/info`);
-export const startPlayer = (movieId: number, at: number, audio: number) =>
-  playerCall<{ session: string; start: number; audio: number }>(`/${movieId}/start`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ at, audio }),
-  });
+export type PlayerMode = "auto" | "original" | "transcode";
+
+export const startPlayer = (movieId: number, at: number, audio: number, mode: PlayerMode,
+                            caps: { hevc: boolean; dv5: boolean }) =>
+  playerCall<{ session: string; start: number; audio: number; mode: "original" | "transcode"; reason: string }>(
+    `/${movieId}/start`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ at, audio, mode, ...caps }),
+    });
 export const playerUrl = (session: string) => `${API_BASE}/api/player/s/${session}/index.m3u8`;
 export const stopPlayer = (session: string) =>
   playerCall<{ ok: boolean }>(`/s/${session}`, { method: "DELETE" }).catch(() => ({ ok: false }));

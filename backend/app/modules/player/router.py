@@ -37,16 +37,20 @@ async def info(movie_id: int) -> dict:
 class StartBody(BaseModel):
     at: float = 0.0
     audio: int = 0
+    mode: str = "auto"         # auto | original | transcode
+    hevc: bool = False         # the browser can decode HEVC (MediaSource.isTypeSupported)
+    dv5: bool = False          # … and Dolby Vision profile 5
 
 
 @router.post("/{movie_id}/start")
 async def start(movie_id: int, body: StartBody, user: User = Depends(require("player"))) -> dict:
     f = await _path(movie_id)
-    s, _ = await sessions.start(user.id, movie_id, f["file_path"], body.at, body.audio)
-    return {"session": s.id, "start": s.start, "audio": s.audio}
+    s, _, reason = await sessions.start(user.id, movie_id, f["file_path"], body.at, body.audio, body.mode,
+                                        {"hevc": body.hevc, "dv5": body.dv5})
+    return {"session": s.id, "start": s.start, "audio": s.audio, "mode": s.mode, "reason": reason}
 
 
-_NAME = re.compile(r"^(index\.m3u8|s\d{5}\.ts)$")
+_NAME = re.compile(r"^(index\.m3u8|init\.mp4|s\d{5}\.m4s)$")
 
 
 @router.get("/s/{sid}/{name}")
@@ -54,7 +58,11 @@ async def stream_file(sid: str, name: str, user: User = Depends(require("player"
     s = sessions.get(sid)
     if not s or s.user_id != user.id or not _NAME.match(name):
         raise HTTPException(404)
+    sessions.requested(s, name)
     path = s.dir / name
+    m = re.match(r"^s(\d{5})\.m4s$", name)
+    if m and not path.is_file() and int(m.group(1)) < s.last_segment - sessions.BEHIND:
+        raise HTTPException(404, "Tahle část už byla smazána — přetoč posuvníkem")
     # the encoder may be a moment behind the player — wait for the file a little
     for _ in range(60):
         if path.is_file() and (name != "index.m3u8" or path.stat().st_size > 0):
@@ -64,7 +72,7 @@ async def stream_file(sid: str, name: str, user: User = Depends(require("player"
         await asyncio.sleep(0.5)
     else:
         raise HTTPException(404, "Ještě není připraveno")
-    media = "application/vnd.apple.mpegurl" if name.endswith(".m3u8") else "video/mp2t"
+    media = "application/vnd.apple.mpegurl" if name.endswith(".m3u8") else "video/mp4"
     return FileResponse(path, media_type=media, headers={"Cache-Control": "no-store"})
 
 

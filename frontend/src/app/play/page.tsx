@@ -3,7 +3,23 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Hls from "hls.js";
-import { PlayerInfo, getPlayerInfo, playerUrl, startPlayer, stopPlayer } from "@/lib/api";
+import { PlayerInfo, PlayerMode, getPlayerInfo, playerUrl, startPlayer, stopPlayer } from "@/lib/api";
+
+/** What this browser can decode itself (HEVC needs a hardware decoder; DV 5 is Safari's). */
+function browserCaps(): { hevc: boolean; dv5: boolean } {
+  const MS = typeof window !== "undefined" ? (window.MediaSource ?? (window as unknown as { ManagedMediaSource?: typeof MediaSource }).ManagedMediaSource) : undefined;
+  const ok = (type: string) => {
+    try {
+      return !!MS?.isTypeSupported(type);
+    } catch {
+      return false;
+    }
+  };
+  return {
+    hevc: ok('video/mp4; codecs="hvc1.2.4.L153.B0"') || ok('video/mp4; codecs="hvc1.1.6.L150.B0"'),
+    dv5: ok('video/mp4; codecs="dvh1.05.06"'),
+  };
+}
 
 function clock(s: number): string {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
@@ -34,13 +50,19 @@ function Player() {
   const [seek, setSeek] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [mode, setMode] = useState<PlayerMode>("auto");
+  const [running, setRunning] = useState<{ mode: string; reason: string } | null>(null);
+  // measured in the browser (the first render also runs on the server, without window)
+  const caps = useRef({ hevc: false, dv5: false });
+  const [canHevc, setCanHevc] = useState<boolean | null>(null);
 
-  const play = useCallback(async (at: number, track: number) => {
+  const play = useCallback(async (at: number, track: number, wanted: PlayerMode = mode) => {
     setLoading(true);
     setError("");
     try {
       if (sessionRef.current) stopPlayer(sessionRef.current);
-      const s = await startPlayer(movieId, at, track);
+      const s = await startPlayer(movieId, at, track, wanted, caps.current);
+      setRunning({ mode: s.mode, reason: s.reason });
       sessionRef.current = s.session;
       setStart(s.start);
       setNow(s.start);
@@ -63,10 +85,12 @@ function Player() {
     } finally {
       setLoading(false);
     }
-  }, [movieId]);
+  }, [movieId, mode]);
 
   useEffect(() => {
     if (!movieId) return;
+    caps.current = browserCaps();
+    setCanHevc(caps.current.hevc);
     getPlayerInfo(movieId).then((i) => {
       setInfo(i);
       play(Number(params.get("t") ?? 0), audio);
@@ -89,9 +113,11 @@ function Player() {
         <h1 className="text-lg font-semibold text-zinc-100">
           {info?.title} {info?.year && <span className="text-zinc-500 font-normal">({info.year})</span>}
         </h1>
-        {info && (
-          <span className="text-xs text-zinc-500">
-            {info.video.copy ? "originální obraz" : `převod na 720p${info.video.hdr ? " (HDR → SDR)" : ""}`} · zvuk stereo
+        {running && (
+          <span className="text-xs text-zinc-500" title={running.reason}>
+            {running.mode === "original"
+              ? `originální obraz (${info?.video.codec?.toUpperCase()} ${info?.video.height}p${info?.video.hdr ? " HDR" : ""}) — bez převodu`
+              : `převod na 720p${info?.video.hdr ? " (HDR → SDR)" : ""}`} · zvuk stereo AAC · {running.reason}
           </span>
         )}
       </div>
@@ -122,6 +148,16 @@ function Player() {
             ))}
           </select>
         </label>
+        <label className="flex items-center gap-2 text-zinc-400"
+          title="Originál = obraz z disku bez převodu (plná kvalita, ale plný datový tok — přes pomalou síť se zasekne). Převod = 720p H.264.">
+          Obraz:
+          <select value={mode} className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200"
+            onChange={(e) => { const m = e.target.value as PlayerMode; setMode(m); play(now, audio, m); }}>
+            <option value="auto">automaticky</option>
+            <option value="original">originál</option>
+            <option value="transcode">převod 720p</option>
+          </select>
+        </label>
         {[-30, -10, 10, 30].map((d) => (
           <button key={d} onClick={() => play(Math.max(0, now + d), audio)}
             className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500">
@@ -132,7 +168,9 @@ function Player() {
         {error && <span className="text-red-400 text-xs">{error}</span>}
       </div>
       <p className="text-[11px] text-zinc-600">
-        Na test mimo Plex: server film převádí za běhu. Přetáčení a změna zvuku spustí převod od daného místa.
+        Na test mimo Plex. Prohlížeč neotevře MKV ani DTS, takže server film za běhu přebaluje (obraz buď beze změny,
+        nebo převedený na 720p) a zvuk převádí na stereo. Přetáčení posuvníkem a změna zvuku spustí přehrávání od daného místa.
+        {canHevc === null ? "" : canHevc ? " Tento prohlížeč umí HEVC." : " Tento prohlížeč neumí HEVC — HEVC filmy se převádějí."}
       </p>
     </main>
   );
