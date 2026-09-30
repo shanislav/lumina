@@ -214,7 +214,9 @@ async def _transfer(body: TransferBody, row: dict, analysis: dict, ref: dict, ot
             ref_keep = [i for i in range(count) if i not in body.drop_tracks]
         out = await asyncio.to_thread(muxer.transfer, ref["file_path"], row["reference_track"], other["file_path"],
                                       body.other_tracks or [row["other_track"]], analysis, workdir, out_name,
-                                      progress, report, ref_keep)
+                                      progress, report, ref_keep,
+                                      # fixing a track of the same file: that very track is wanted
+                                      row["reference_id"] != row["other_id"])
         _job.update(report=report)
         await _hand_over(out, downloads / out_name, ref, body.mode, f"audiosync-{row['id']}", progress)
     except muxer.TransferError as e:

@@ -248,7 +248,7 @@ def track_name(info: dict) -> str:
 
 def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int | list[int], analysis: dict,
              workdir: Path, out_name: str, progress=None, report: dict | None = None,
-             ref_keep: list[int] | None = None) -> str:
+             ref_keep: list[int] | None = None, dedupe: bool = True) -> str:
     """Builds the new file in ``workdir`` and checks it → its path. Several tracks of the other file
     can go at once (they share its timing, so one analysis is enough); dubs the reference already
     has are left out (``report["skipped"]``). ``ref_keep``: the reference's audio tracks to keep
@@ -268,7 +268,8 @@ def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int |
     ref = engine.probe(ref_path)
     if ref_keep is not None and ref_track not in ref_keep:
         raise TransferError("Stopa, se kterou se porovnává, musí zůstat")
-    tracks = distinct_tracks(ref_path, ref, other_path, other, tracks, analysis, report, ref_keep)
+    if dedupe:
+        tracks = distinct_tracks(ref_path, ref, other_path, other, tracks, analysis, report, ref_keep)
     if not tracks:
         raise NothingToAdd("Tyto dabingy už soubor má — není co přidat")
     if report is not None:
