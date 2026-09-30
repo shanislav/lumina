@@ -1,12 +1,13 @@
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 
 from app.db import get_db
 from app.models.schemas import SourceCreate, SourceResponse, SourceUpdate
 from app.sources.base import SourceType
 from app.sources.registry import SOURCE_CLASSES, SourceRegistry, _ensure_classes
+from app.core.auth import require
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def _row_to_response(row) -> SourceResponse:
     )
 
 
-@router.get("", response_model=list[SourceResponse])
+@router.get("", dependencies=[Depends(require("settings"))], response_model=list[SourceResponse])
 async def list_sources() -> list[SourceResponse]:
     db = await get_db()
     try:
@@ -50,7 +51,7 @@ async def list_sources() -> list[SourceResponse]:
         await db.close()
 
 
-@router.post("", response_model=SourceResponse, status_code=201)
+@router.post("", dependencies=[Depends(require("settings"))], response_model=SourceResponse, status_code=201)
 async def create_source(body: SourceCreate) -> SourceResponse:
     if body.type not in VALID_TYPES:
         raise HTTPException(400, f"Invalid type. Must be one of: {VALID_TYPES}")
@@ -74,7 +75,7 @@ async def create_source(body: SourceCreate) -> SourceResponse:
     return _row_to_response(row)
 
 
-@router.put("/{source_id}", response_model=SourceResponse)
+@router.put("/{source_id}", dependencies=[Depends(require("settings"))], response_model=SourceResponse)
 async def update_source(source_id: int, body: SourceUpdate) -> SourceResponse:
     db = await get_db()
     try:
@@ -122,7 +123,7 @@ async def update_source(source_id: int, body: SourceUpdate) -> SourceResponse:
     return _row_to_response(row)
 
 
-@router.delete("/{source_id}", status_code=204)
+@router.delete("/{source_id}", dependencies=[Depends(require("settings"))], status_code=204)
 async def delete_source(source_id: int) -> None:
     db = await get_db()
     try:
@@ -136,7 +137,7 @@ async def delete_source(source_id: int) -> None:
     await SourceRegistry.get().reload()
 
 
-@router.post("/{source_id}/test")
+@router.post("/{source_id}/test", dependencies=[Depends(require("settings"))])
 async def test_source(source_id: int) -> dict:
     """Test an existing source's connection."""
     source = SourceRegistry.get().get_source_by_id(source_id)
@@ -149,7 +150,7 @@ async def test_source(source_id: int) -> dict:
         return {"ok": False, "error": str(e)}
 
 
-@router.post("/test")
+@router.post("/test", dependencies=[Depends(require("settings"))])
 async def test_source_config(body: SourceCreate) -> dict:
     """Test a source config without saving it (for the 'Add' form)."""
     _ensure_classes()

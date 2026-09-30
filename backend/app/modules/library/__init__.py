@@ -2,7 +2,7 @@
 imports finished downloads (replaces Radarr/Sonarr)."""
 
 from app.core.migrations import add_column
-from app.core.module import Module, Subscription
+from app.core.module import Module, Permission, Subscription
 from app.modules.library.imports import on_download_completed
 from app.modules.library.organize import FILE_OPERATIONS
 from app.modules.library.router import router
@@ -69,6 +69,9 @@ module = Module(
     title="Knihovna",
     order=20,
     routers=[router],
+    permissions=[Permission("library.view", "Prohlížet knihovnu", default=True),
+                 Permission("library.edit", "Upravovat knihovnu: skenovat, opravit film, přejmenovat, profil filmu"),
+                 Permission("library.delete", "Mazat soubory a filmy z knihovny")],
     # after the renamer (p10): every finished download goes into the library
     subscriptions=[Subscription("download.completed", on_download_completed, priority=30),
                    Subscription("scheduler.run", on_scheduler_run_upgrades)],

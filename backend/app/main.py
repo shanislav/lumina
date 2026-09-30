@@ -2,10 +2,11 @@ import inspect
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core import registry
+from app.core.auth import register_permissions, require
 from app.db import init_db
 from app.sources.registry import SourceRegistry
 
@@ -15,6 +16,7 @@ logger = logging.getLogger("app")
 
 ALL_MODULES = registry.discover()
 ACTIVE_MODULES = registry.active(ALL_MODULES, registry.read_disabled())
+register_permissions(ACTIVE_MODULES)
 
 
 async def _run_hooks(hooks) -> None:
@@ -43,6 +45,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Lumina", version="0.3.0", lifespan=lifespan)
 
+# The UI calls the API on its own origin (nginx /api/); cross-origin callers get no cookies
+# (no allow_credentials), so they cannot act as a signed-in user.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -52,7 +56,8 @@ app.add_middleware(
 
 for _module in ACTIVE_MODULES:
     for _router in _module.routers:
-        app.include_router(_router)
+        # every module endpoint needs a signed-in user; permissions are checked per endpoint
+        app.include_router(_router, dependencies=[Depends(require())] if _module.requires_login else [])
 
 
 @app.get("/api/health")
@@ -60,7 +65,7 @@ async def health() -> dict:
     return {"status": "ok", "sources": len(SourceRegistry.get().sources)}
 
 
-@app.get("/api/modules")
+@app.get("/api/modules", dependencies=[Depends(require())])
 async def list_modules() -> list[dict]:
     """active = running now; enabled = what the setting says (differs until a backend restart)."""
     from app.core.registry import read_disabled

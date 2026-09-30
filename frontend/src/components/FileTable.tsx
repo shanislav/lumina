@@ -11,6 +11,7 @@ import {
   versionLabel,
   getFileDetails,
 } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
 
 interface Props {
   files: ScoredFile[];
@@ -78,6 +79,7 @@ export default function FileTable({
   files, loading, onDownloadStarted, tmdb_id, title, year, mediaType, owned = [], movie, preferLocalAudio = true,
   upgradeFrom = null,
 }: Props) {
+  const { can } = useAuth();
   const [onlyBetter, setOnlyBetter] = useState(true);
   const upgrade = upgradeFrom && upgradeFrom.quality_score != null ? upgradeFrom : null;
   const [downloading, setDownloading] = useState<Record<string, string>>({});
@@ -251,7 +253,7 @@ export default function FileTable({
               <p className="text-violet-200 font-medium">Stáhnout jako další verzi</p>
               <p className="text-xs text-zinc-400">Stávající zůstane, nová se uloží vedle ní (Plex je spojí do jednoho filmu).</p>
             </button>
-            {owned.map((v) => {
+            {can("library.delete") && owned.map((v) => {
               const delta = v.quality_score != null ? choosing.quality_score - v.quality_score : null;
               return (
                 <button key={v.id} onClick={() => runDownload(choosing, { mode: "replace", file_id: v.id })}
@@ -362,7 +364,7 @@ export default function FileTable({
                 <td className="py-2 px-3 text-zinc-400 font-mono text-xs whitespace-nowrap">{formatSize(file.size)}</td>
                 <td className="py-2 px-3"><FilmCell file={file} /></td>
                 <td className="py-2 px-3">
-                  {!dlState ? (
+                  {!can("download") ? null : !dlState ? (
                     <button onClick={() => handleDownload(file)}
                       className="rounded bg-violet-600 px-3 py-1 text-xs font-medium text-white hover:bg-violet-500 transition-colors">
                       Download

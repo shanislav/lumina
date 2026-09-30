@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { apiFetch } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -31,7 +32,7 @@ export default function FolderBrowser({ initialPath, onSelect, onCancel }: Props
   const browse = useCallback(async (path: string) => {
     setLoading(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_BASE}/api/settings/browse?path=${encodeURIComponent(path)}`
       );
       if (!res.ok) return;

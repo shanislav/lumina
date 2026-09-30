@@ -1,5 +1,95 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+/** Event fired when the API says the session is gone — AuthGate shows the sign-in form. */
+export const UNAUTHORIZED_EVENT = "lumina:unauthorized";
+
+/** fetch for the Lumina API: sends the session cookie, reports a lost session, and turns
+ *  "not allowed" into an error with the backend's explanation. */
+export async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  // the session cookie goes with same-origin requests (default); the UI calls its own /api
+  const res = await fetch(input, init);
+  if (res.status === 401 && typeof window !== "undefined" && !input.includes("/api/auth/")) {
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  }
+  if (res.status === 403) {
+    let detail = "Na tohle nemáš oprávnění";
+    try {
+      detail = (await res.clone().json()).detail || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return res;
+}
+
+// ── sign-in and users ──
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  role: "admin" | "user";
+  is_admin: boolean;
+  permissions: string[];
+}
+
+export interface ManagedUser extends AuthUser {
+  disabled: boolean;
+  created_at: string;
+  last_login: string | null;
+}
+
+export interface PermissionInfo {
+  name: string;
+  title: string;
+  default: boolean;
+}
+
+export interface SessionInfo {
+  id: string;
+  current: boolean;
+  remember: boolean;
+  created_at: string;
+  last_seen: string;
+  expires_at: string;
+  ip: string;
+  user_agent: string;
+}
+
+async function authCall<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const res = await apiFetch(`${API_BASE}/api/auth${path}`, {
+    method,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    let detail = `Chyba ${res.status}`;
+    try {
+      const data = await res.json();
+      detail = typeof data.detail === "string" ? data.detail : detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+export const getAuthStatus = () => authCall<{ setup_required: boolean; user: AuthUser | null }>("/status");
+export const setupAdmin = (code: string, username: string, password: string, remember: boolean) =>
+  authCall<{ user: AuthUser }>("/setup", "POST", { code, username, password, remember });
+export const login = (username: string, password: string, remember: boolean) =>
+  authCall<{ user: AuthUser }>("/login", "POST", { username, password, remember });
+export const logout = () => authCall<{ ok: boolean }>("/logout", "POST");
+export const changePassword = (current: string, next: string) =>
+  authCall<{ ok: boolean }>("/password", "POST", { current, new: next });
+export const getSessions = () => authCall<SessionInfo[]>("/sessions");
+export const endSession = (id: string) => authCall<{ ok: boolean }>(`/sessions/${id}`, "DELETE");
+export const endOtherSessions = () => authCall<{ ended: number }>("/sessions/end-others", "POST");
+export const getPermissions = () => authCall<PermissionInfo[]>("/permissions");
+export const getUsers = () => authCall<ManagedUser[]>("/users");
+export const createUser = (u: { username: string; password: string; role: string; permissions?: string[] }) =>
+  authCall<ManagedUser>("/users", "POST", u);
+export const updateUser = (id: number, change: { role?: string; permissions?: string[]; disabled?: boolean; password?: string }) =>
+  authCall<ManagedUser>(`/users/${id}`, "PATCH", change);
+export const deleteUser = (id: number) => authCall<{ ok: boolean }>(`/users/${id}`, "DELETE");
+
 export interface TMDBMovie {
   tmdb_id: number;
   title: string;
@@ -69,7 +159,7 @@ export async function getFileDetails(
   movie: MovieContext | null,
 ): Promise<Record<string, Partial<ScoredFile> | null>> {
   if (!files.length) return {};
-  const res = await fetch(`${API_BASE}/api/search/details`, {
+  const res = await apiFetch(`${API_BASE}/api/search/details`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ files, movie }),
@@ -101,7 +191,7 @@ export async function getTrending(language?: string): Promise<TMDBMovie[]> {
   const params = new URLSearchParams();
   if (language) params.set("language", language);
   const qs = params.toString() ? `?${params}` : "";
-  const res = await fetch(`${API_BASE}/api/discover/trending${qs}`);
+  const res = await apiFetch(`${API_BASE}/api/discover/trending${qs}`);
   if (!res.ok) throw new Error(`Trending failed: ${res.status}`);
   return res.json();
 }
@@ -110,7 +200,7 @@ export async function getNowPlaying(language?: string): Promise<TMDBMovie[]> {
   const params = new URLSearchParams();
   if (language) params.set("language", language);
   const qs = params.toString() ? `?${params}` : "";
-  const res = await fetch(`${API_BASE}/api/discover/now-playing${qs}`);
+  const res = await apiFetch(`${API_BASE}/api/discover/now-playing${qs}`);
   if (!res.ok) throw new Error(`Now playing failed: ${res.status}`);
   return res.json();
 }
@@ -119,7 +209,7 @@ export async function getRecentlyDigital(language?: string): Promise<TMDBMovie[]
   const params = new URLSearchParams();
   if (language) params.set("language", language);
   const qs = params.toString() ? `?${params}` : "";
-  const res = await fetch(`${API_BASE}/api/discover/recently-digital${qs}`);
+  const res = await apiFetch(`${API_BASE}/api/discover/recently-digital${qs}`);
   if (!res.ok) throw new Error(`Recently digital failed: ${res.status}`);
   return res.json();
 }
@@ -128,7 +218,7 @@ export async function getRecentlyDigitalTV(language?: string): Promise<TMDBMovie
   const params = new URLSearchParams();
   if (language) params.set("language", language);
   const qs = params.toString() ? `?${params}` : "";
-  const res = await fetch(`${API_BASE}/api/discover/recently-digital-tv${qs}`);
+  const res = await apiFetch(`${API_BASE}/api/discover/recently-digital-tv${qs}`);
   if (!res.ok) throw new Error(`Recently digital TV failed: ${res.status}`);
   return res.json();
 }
@@ -137,7 +227,7 @@ export async function getPopular(language?: string): Promise<TMDBMovie[]> {
   const params = new URLSearchParams();
   if (language) params.set("language", language);
   const qs = params.toString() ? `?${params}` : "";
-  const res = await fetch(`${API_BASE}/api/discover/popular${qs}`);
+  const res = await apiFetch(`${API_BASE}/api/discover/popular${qs}`);
   if (!res.ok) throw new Error(`Popular failed: ${res.status}`);
   return res.json();
 }
@@ -147,7 +237,7 @@ export async function getPopular(language?: string): Promise<TMDBMovie[]> {
 export async function searchMovies(query: string, language?: string): Promise<TMDBMovie[]> {
   const params = new URLSearchParams({ query });
   if (language) params.set("language", language);
-  const res = await fetch(`${API_BASE}/api/search/movies?${params}`);
+  const res = await apiFetch(`${API_BASE}/api/search/movies?${params}`);
   if (!res.ok) throw new Error(`Search failed: ${res.status}`);
   return res.json();
 }
@@ -166,7 +256,7 @@ export async function searchFiles(
   if (originalTitle && originalTitle !== query) params.set("original_title", originalTitle);
   if (tmdbId) params.set("tmdb_id", String(tmdbId));
   if (mediaType) params.set("media_type", mediaType);
-  const res = await fetch(`${API_BASE}/api/search/files?${params}`);
+  const res = await apiFetch(`${API_BASE}/api/search/files?${params}`);
   if (!res.ok) throw new Error(`File search failed: ${res.status}`);
   return res.json();
 }
@@ -186,7 +276,7 @@ export async function startDownload(
   target_dir: string;
   source: string;
 }> {
-  const res = await fetch(`${API_BASE}/api/download`, {
+  const res = await apiFetch(`${API_BASE}/api/download`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -220,7 +310,7 @@ export interface DownloadItem {
 }
 
 export async function getDownloads(): Promise<DownloadItem[]> {
-  const res = await fetch(`${API_BASE}/api/downloads`);
+  const res = await apiFetch(`${API_BASE}/api/downloads`);
   if (!res.ok) throw new Error(`Failed to load downloads: ${res.status}`);
   const data = await res.json();
   return data.downloads;
@@ -235,19 +325,19 @@ export async function removeDownload(
   if (backend === "qbittorrent") params.set("backend", "qbittorrent");
   if (active) params.set("active", "true");
   const qs = params.toString() ? `?${params}` : "";
-  await fetch(`${API_BASE}/api/download/${identifier}${qs}`, { method: "DELETE" });
+  await apiFetch(`${API_BASE}/api/download/${identifier}${qs}`, { method: "DELETE" });
 }
 
 // --- Source Management ---
 
 export async function getSources(): Promise<Source[]> {
-  const res = await fetch(`${API_BASE}/api/sources`);
+  const res = await apiFetch(`${API_BASE}/api/sources`);
   if (!res.ok) throw new Error(`Failed to load sources: ${res.status}`);
   return res.json();
 }
 
 export async function createSource(data: SourceCreate): Promise<Source> {
-  const res = await fetch(`${API_BASE}/api/sources`, {
+  const res = await apiFetch(`${API_BASE}/api/sources`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -260,7 +350,7 @@ export async function updateSource(
   id: number,
   data: { name?: string; enabled?: boolean; config?: Record<string, string> }
 ): Promise<Source> {
-  const res = await fetch(`${API_BASE}/api/sources/${id}`, {
+  const res = await apiFetch(`${API_BASE}/api/sources/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -270,14 +360,14 @@ export async function updateSource(
 }
 
 export async function deleteSource(id: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/sources/${id}`, {
+  const res = await apiFetch(`${API_BASE}/api/sources/${id}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`Failed to delete source: ${res.status}`);
 }
 
 export async function testSource(id: number): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${API_BASE}/api/sources/${id}/test`, {
+  const res = await apiFetch(`${API_BASE}/api/sources/${id}/test`, {
     method: "POST",
   });
   if (!res.ok) throw new Error(`Test failed: ${res.status}`);
@@ -287,7 +377,7 @@ export async function testSource(id: number): Promise<{ ok: boolean; error?: str
 export async function testSourceConfig(
   data: SourceCreate
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${API_BASE}/api/sources/test`, {
+  const res = await apiFetch(`${API_BASE}/api/sources/test`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -304,7 +394,7 @@ export interface SetupStatus {
 }
 
 export async function getSetupStatus(): Promise<SetupStatus> {
-  const res = await fetch(`${API_BASE}/api/settings/setup-status`);
+  const res = await apiFetch(`${API_BASE}/api/settings/setup-status`);
   if (!res.ok) throw new Error(`Failed to check setup: ${res.status}`);
   return res.json();
 }
@@ -312,7 +402,7 @@ export async function getSetupStatus(): Promise<SetupStatus> {
 export type AppSettings = Record<string, string>;
 
 export async function getAppSettings(): Promise<AppSettings> {
-  const res = await fetch(`${API_BASE}/api/settings`);
+  const res = await apiFetch(`${API_BASE}/api/settings`);
   if (!res.ok) throw new Error(`Failed to load settings: ${res.status}`);
   return res.json();
 }
@@ -333,13 +423,13 @@ export interface QualitySample {
 }
 
 export async function getQualityWeights(): Promise<{ defaults: QualityWeights; current: QualityWeights }> {
-  const res = await fetch(`${API_BASE}/api/settings/quality-weights`);
+  const res = await apiFetch(`${API_BASE}/api/settings/quality-weights`);
   if (!res.ok) throw new Error(`Failed to load quality weights: ${res.status}`);
   return res.json();
 }
 
 export async function previewQuality(weights: QualityWeights): Promise<QualitySample[]> {
-  const res = await fetch(`${API_BASE}/api/settings/quality-preview`, {
+  const res = await apiFetch(`${API_BASE}/api/settings/quality-preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ weights }),
@@ -357,7 +447,7 @@ export interface ModuleInfo {
 }
 
 export async function getModules(): Promise<ModuleInfo[]> {
-  const res = await fetch(`${API_BASE}/api/modules`);
+  const res = await apiFetch(`${API_BASE}/api/modules`);
   if (!res.ok) throw new Error(`Failed to load modules: ${res.status}`);
   return res.json();
 }
@@ -397,20 +487,20 @@ export interface SchedulerStatus {
 }
 
 export async function getScheduler(): Promise<SchedulerStatus> {
-  const res = await fetch(`${API_BASE}/api/scheduler`);
+  const res = await apiFetch(`${API_BASE}/api/scheduler`);
   if (!res.ok) throw new Error(`Scheduler status failed: ${res.status}`);
   return res.json();
 }
 
 export async function runSchedulerNow(): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/scheduler/run`, { method: "POST" });
+  const res = await apiFetch(`${API_BASE}/api/scheduler/run`, { method: "POST" });
   if (!res.ok) throw new Error(`Spuštění selhalo: ${res.status}`);
 }
 
 export interface WantedJob { running: boolean; total: number; done: number; current: string; found: number; queued: number }
 
 export async function getWanted(): Promise<WantedItem[]> {
-  const res = await fetch(`${API_BASE}/api/wanted`);
+  const res = await apiFetch(`${API_BASE}/api/wanted`);
   if (!res.ok) throw new Error(`Failed to load wanted: ${res.status}`);
   return res.json();
 }
@@ -419,7 +509,7 @@ export async function addWanted(item: {
   tmdb_id: number | null; wikidata_id: string | null; title: string; original_title: string; year: string;
   poster_url: string | null; profile_id: number | null;
 }): Promise<WantedItem> {
-  const res = await fetch(`${API_BASE}/api/wanted`, {
+  const res = await apiFetch(`${API_BASE}/api/wanted`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(item),
   });
   if (!res.ok) {
@@ -430,7 +520,7 @@ export async function addWanted(item: {
 }
 
 export async function updateWanted(id: number, data: { profile_id?: number | null; note?: string; status?: string }): Promise<WantedItem> {
-  const res = await fetch(`${API_BASE}/api/wanted/${id}`, {
+  const res = await apiFetch(`${API_BASE}/api/wanted/${id}`, {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
@@ -438,11 +528,11 @@ export async function updateWanted(id: number, data: { profile_id?: number | nul
 }
 
 export async function removeWanted(id: number): Promise<void> {
-  await fetch(`${API_BASE}/api/wanted/${id}`, { method: "DELETE" });
+  await apiFetch(`${API_BASE}/api/wanted/${id}`, { method: "DELETE" });
 }
 
 export async function checkWanted(ids: number[] = []): Promise<WantedJob> {
-  const res = await fetch(`${API_BASE}/api/wanted/check`, {
+  const res = await apiFetch(`${API_BASE}/api/wanted/check`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }),
   });
   if (!res.ok) throw new Error(`Kontrola selhala: ${res.status}`);
@@ -450,7 +540,7 @@ export async function checkWanted(ids: number[] = []): Promise<WantedJob> {
 }
 
 export async function getWantedJob(): Promise<WantedJob> {
-  const res = await fetch(`${API_BASE}/api/wanted/check/status`);
+  const res = await apiFetch(`${API_BASE}/api/wanted/check/status`);
   if (!res.ok) throw new Error(`Status failed: ${res.status}`);
   return res.json();
 }
@@ -474,14 +564,14 @@ export interface QualityProfile {
 }
 
 export async function getProfiles(): Promise<QualityProfile[]> {
-  const res = await fetch(`${API_BASE}/api/settings/profiles`);
+  const res = await apiFetch(`${API_BASE}/api/settings/profiles`);
   if (!res.ok) throw new Error(`Failed to load profiles: ${res.status}`);
   return res.json();
 }
 
 export async function saveProfile(p: QualityProfile): Promise<QualityProfile> {
   const { id, name, is_default, ...config } = p;
-  const res = await fetch(`${API_BASE}/api/settings/profiles${id ? `/${id}` : ""}`, {
+  const res = await apiFetch(`${API_BASE}/api/settings/profiles${id ? `/${id}` : ""}`, {
     method: id ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, is_default, config }),
@@ -494,7 +584,7 @@ export async function saveProfile(p: QualityProfile): Promise<QualityProfile> {
 }
 
 export async function deleteProfile(id: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/settings/profiles/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`${API_BASE}/api/settings/profiles/${id}`, { method: "DELETE" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `Smazání selhalo: ${res.status}`);
@@ -502,7 +592,7 @@ export async function deleteProfile(id: number): Promise<void> {
 }
 
 export async function updateAppSettings(data: AppSettings): Promise<AppSettings> {
-  const res = await fetch(`${API_BASE}/api/settings`, {
+  const res = await apiFetch(`${API_BASE}/api/settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -527,13 +617,13 @@ export interface GroqModels {
 }
 
 export async function getGroqModels(): Promise<GroqModels> {
-  const res = await fetch(`${API_BASE}/api/settings/groq-models`);
+  const res = await apiFetch(`${API_BASE}/api/settings/groq-models`);
   if (!res.ok) return { models: [], default: "", error: `HTTP ${res.status}` };
   return res.json();
 }
 
 export async function getLanguages(): Promise<LanguageOption[]> {
-  const res = await fetch(`${API_BASE}/api/settings/languages`);
+  const res = await apiFetch(`${API_BASE}/api/settings/languages`);
   if (!res.ok) throw new Error(`Failed to load languages: ${res.status}`);
   return res.json();
 }
@@ -549,7 +639,7 @@ export interface Automation {
 }
 
 export async function getIntegrations(): Promise<Automation[]> {
-  const res = await fetch(`${API_BASE}/api/integrations`);
+  const res = await apiFetch(`${API_BASE}/api/integrations`);
   if (!res.ok) throw new Error(`Failed to load integrations: ${res.status}`);
   return res.json();
 }
@@ -565,7 +655,7 @@ export interface PlexTestResult {
 
 export async function testPlex(url: string, token: string, path_map: string): Promise<PlexTestResult> {
   try {
-    const res = await fetch(`${API_BASE}/api/plex/test`, {
+    const res = await apiFetch(`${API_BASE}/api/plex/test`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, token, path_map }),
@@ -577,7 +667,7 @@ export async function testPlex(url: string, token: string, path_map: string): Pr
 }
 
 export async function updateIntegration(type: string, data: { enabled?: boolean; config?: Record<string, string> }): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/integrations/${type}`, {
+  const res = await apiFetch(`${API_BASE}/api/integrations/${type}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -694,51 +784,51 @@ export interface LibraryShowDetail {
 }
 
 export async function scanLibrary(force = false): Promise<ScanStatus & { started: boolean }> {
-  const res = await fetch(`${API_BASE}/api/library/scan?force=${force}`, { method: "POST" });
+  const res = await apiFetch(`${API_BASE}/api/library/scan?force=${force}`, { method: "POST" });
   if (!res.ok) throw new Error(`Scan failed: ${res.status}`);
   return res.json();
 }
 
 export async function getScanStatus(): Promise<ScanStatus> {
-  const res = await fetch(`${API_BASE}/api/library/scan/status`);
+  const res = await apiFetch(`${API_BASE}/api/library/scan/status`);
   if (!res.ok) throw new Error(`Scan status failed: ${res.status}`);
   return res.json();
 }
 
 export async function getLibrarySummary(): Promise<Partial<Record<LibraryStatus, number>>> {
-  const res = await fetch(`${API_BASE}/api/library/movies/summary`);
+  const res = await apiFetch(`${API_BASE}/api/library/movies/summary`);
   if (!res.ok) return {};
   return res.json();
 }
 
 export async function getLibraryMovies(): Promise<LibraryMovie[]> {
-  const res = await fetch(`${API_BASE}/api/library/movies`);
+  const res = await apiFetch(`${API_BASE}/api/library/movies`);
   if (!res.ok) throw new Error(`Failed to load library movies: ${res.status}`);
   return res.json();
 }
 
 export async function getLibraryShows(): Promise<LibraryShow[]> {
-  const res = await fetch(`${API_BASE}/api/library/shows`);
+  const res = await apiFetch(`${API_BASE}/api/library/shows`);
   if (!res.ok) throw new Error(`Failed to load library shows: ${res.status}`);
   return res.json();
 }
 
 export async function getShowDetail(tmdbId: number): Promise<LibraryShowDetail> {
-  const res = await fetch(`${API_BASE}/api/library/shows/${tmdbId}`);
+  const res = await apiFetch(`${API_BASE}/api/library/shows/${tmdbId}`);
   if (!res.ok) throw new Error(`Failed to load show detail: ${res.status}`);
   return res.json();
 }
 
 export async function deleteLibraryMovie(id: number): Promise<void> {
-  await fetch(`${API_BASE}/api/library/movies/${id}`, { method: "DELETE" });
+  await apiFetch(`${API_BASE}/api/library/movies/${id}`, { method: "DELETE" });
 }
 
 export async function deleteLibraryShow(tmdbId: number): Promise<void> {
-  await fetch(`${API_BASE}/api/library/shows/${tmdbId}`, { method: "DELETE" });
+  await apiFetch(`${API_BASE}/api/library/shows/${tmdbId}`, { method: "DELETE" });
 }
 
 export async function searchTMDBForFix(movieId: number, query: string): Promise<TMDBSearchResult[]> {
-  const res = await fetch(`${API_BASE}/api/library/movies/${movieId}/search-tmdb?query=${encodeURIComponent(query)}`);
+  const res = await apiFetch(`${API_BASE}/api/library/movies/${movieId}/search-tmdb?query=${encodeURIComponent(query)}`);
   if (!res.ok) return [];
   return res.json();
 }
@@ -760,13 +850,13 @@ export interface UpgradeCheck {
 export interface FilmSettings { profile_id: number | null; watch_upgrades: boolean }
 
 export async function getFilmSettings(): Promise<Record<string, FilmSettings>> {
-  const res = await fetch(`${API_BASE}/api/library/films`);
+  const res = await apiFetch(`${API_BASE}/api/library/films`);
   if (!res.ok) return {};
   return res.json();
 }
 
 export async function setFilmSettings(tmdbId: number, s: FilmSettings): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/library/films/${tmdbId}`, {
+  const res = await apiFetch(`${API_BASE}/api/library/films/${tmdbId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s),
   });
   if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
@@ -782,7 +872,7 @@ export interface UpgradeJob {
 }
 
 export async function checkUpgrades(tmdbIds: number[]): Promise<UpgradeJob> {
-  const res = await fetch(`${API_BASE}/api/library/upgrades/check`, {
+  const res = await apiFetch(`${API_BASE}/api/library/upgrades/check`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tmdb_ids: tmdbIds }),
@@ -792,19 +882,19 @@ export async function checkUpgrades(tmdbIds: number[]): Promise<UpgradeJob> {
 }
 
 export async function getUpgradeJob(): Promise<UpgradeJob> {
-  const res = await fetch(`${API_BASE}/api/library/upgrades/status`);
+  const res = await apiFetch(`${API_BASE}/api/library/upgrades/status`);
   if (!res.ok) throw new Error(`Upgrade status failed: ${res.status}`);
   return res.json();
 }
 
 export async function getUpgrades(): Promise<Record<string, UpgradeCheck>> {
-  const res = await fetch(`${API_BASE}/api/library/upgrades`);
+  const res = await apiFetch(`${API_BASE}/api/library/upgrades`);
   if (!res.ok) return {};
   return res.json();
 }
 
 export async function updateVersion(movieId: number, data: { note?: string; preferred?: boolean }): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/library/movies/${movieId}`, {
+  const res = await apiFetch(`${API_BASE}/api/library/movies/${movieId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -814,7 +904,7 @@ export async function updateVersion(movieId: number, data: { note?: string; pref
 
 /** Delete this version from DISK and the library — definitive. */
 export async function deleteVersionFile(movieId: number): Promise<{ deleted: string[] }> {
-  const res = await fetch(`${API_BASE}/api/library/movies/${movieId}/file`, { method: "DELETE" });
+  const res = await apiFetch(`${API_BASE}/api/library/movies/${movieId}/file`, { method: "DELETE" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `Smazání selhalo: ${res.status}`);
@@ -823,7 +913,7 @@ export async function deleteVersionFile(movieId: number): Promise<{ deleted: str
 }
 
 export async function fixMovieMatch(movieId: number, tmdbId: number): Promise<void> {
-  await fetch(`${API_BASE}/api/library/movies/${movieId}/fix`, {
+  await apiFetch(`${API_BASE}/api/library/movies/${movieId}/fix`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tmdb_id: tmdbId }),
@@ -853,7 +943,7 @@ export type LibraryAction = { mode: "version" } | { mode: "replace"; file_id: nu
 export async function getOwned(tmdbIds: number[]): Promise<Record<string, OwnedVersion[]>> {
   const ids = tmdbIds.filter(Boolean);
   if (!ids.length) return {};
-  const res = await fetch(`${API_BASE}/api/library/owned?tmdb_ids=${ids.join(",")}`);
+  const res = await apiFetch(`${API_BASE}/api/library/owned?tmdb_ids=${ids.join(",")}`);
   if (!res.ok) return {};
   return res.json();
 }
@@ -890,19 +980,19 @@ export interface OrganizeResult {
 }
 
 export async function getOrganizePlan(movieId: number): Promise<OrganizePlan> {
-  const res = await fetch(`${API_BASE}/api/library/movies/${movieId}/organize`);
+  const res = await apiFetch(`${API_BASE}/api/library/movies/${movieId}/organize`);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
   return res.json();
 }
 
 export async function getOrganizePlanAll(): Promise<OrganizePlan[]> {
-  const res = await fetch(`${API_BASE}/api/library/organize`);
+  const res = await apiFetch(`${API_BASE}/api/library/organize`);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
   return res.json();
 }
 
 export async function applyOrganize(movieIds: number[]): Promise<OrganizeResult> {
-  const res = await fetch(`${API_BASE}/api/library/organize`, {
+  const res = await apiFetch(`${API_BASE}/api/library/organize`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ movie_ids: movieIds }),
@@ -912,7 +1002,7 @@ export async function applyOrganize(movieIds: number[]): Promise<OrganizeResult>
 }
 
 export async function undoOrganize(batchId: string): Promise<{ undone: number }> {
-  const res = await fetch(`${API_BASE}/api/library/operations/${batchId}/undo`, { method: "POST" });
+  const res = await apiFetch(`${API_BASE}/api/library/operations/${batchId}/undo`, { method: "POST" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }

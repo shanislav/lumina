@@ -1,7 +1,7 @@
 """App settings API, setup status, folder browser, language list."""
 
 from app.clients.groq_scorer import DEFAULT_GROQ_MODEL, RETIRED_GROQ_MODELS
-from app.core.module import Module
+from app.core.module import Module, Permission
 from app.modules.settings.router import router
 
 _retired = ", ".join(f"'{m}'" for m in RETIRED_GROQ_MODELS)
@@ -14,4 +14,6 @@ MIGRATE_RETIRED_GROQ = (
 module = Module(
     name="settings", title="Nastavení", order=1, required=True, routers=[router],
     migrations=[MIGRATE_RETIRED_GROQ],
+    permissions=[Permission("settings", "Nastavení, zdroje, API klíče, automatizace a plánovač"),
+                 Permission("profiles", "Upravovat profily kvality")],
 )

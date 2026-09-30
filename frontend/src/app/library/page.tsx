@@ -40,6 +40,7 @@ import {
   formatSize,
 } from "@/lib/api";
 import DownloadPanel from "@/components/DownloadPanel";
+import { useAuth } from "@/components/AuthGate";
 
 type Tab = "filmy" | "serialy";
 type MovieFilter = "all" | "versions" | "review" | "unmatched";
@@ -125,6 +126,8 @@ const QUALITY_COLORS: Record<string, string> = {
 
 export default function LibraryPage() {
   const router = useRouter();
+  const { can } = useAuth();
+  const canEdit = can("library.edit");
   const [tab, setTab] = useState<Tab>("filmy");
   const [movies, setMovies] = useState<LibraryMovie[]>([]);
   const [shows, setShows] = useState<LibraryShow[]>([]);
@@ -384,7 +387,7 @@ export default function LibraryPage() {
           </Link>
           <h1 className="text-2xl font-bold text-zinc-100">Knihovna</h1>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        {canEdit && <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={openBulk}
             disabled={scanning}
@@ -408,7 +411,7 @@ export default function LibraryPage() {
           >
             {scanning ? "Skenuji..." : "Skenovat"}
           </button>
-        </div>
+        </div>}
       </div>
 
       {scanning && scan && (
@@ -492,7 +495,7 @@ export default function LibraryPage() {
             </summary>
             <div className="px-4 pb-3 pt-1 space-y-2">
               <div className="flex flex-wrap items-center gap-3 text-xs">
-                <button
+                {canEdit && <button
                   disabled={!!upgradeJob?.running || visibleGroups.filter((g) => identified.includes(g)).length === 0}
                   onClick={async () => {
                     const ids = visibleGroups.filter((g) => identified.includes(g)).map((g) => g.main.tmdb_id);
@@ -502,7 +505,7 @@ export default function LibraryPage() {
                   className="rounded bg-violet-600 px-3 py-1 font-medium text-white hover:bg-violet-500 disabled:opacity-40"
                 >
                   Hledat lepší verze ({Math.min(visibleGroups.filter((g) => identified.includes(g)).length, 200)})
-                </button>
+                </button>}
                 {upgradeJob?.running ? (
                   <span className="text-violet-300 animate-pulse">
                     Hledám {upgradeJob.done}/{upgradeJob.total}{upgradeJob.current ? ` · ${upgradeJob.current}` : ""} · nalezeno {upgradeJob.found}
@@ -802,7 +805,7 @@ export default function LibraryPage() {
               <p className="text-zinc-400 flex items-center gap-2">
                 Kvalita: <ScoreBadge score={fixingMovie.quality_score} tip={fixingMovie.quality_parts} />
                 <span>{fixingMovie.quality_summary}</span>
-                {fixingMovie.tmdb_id && (fixingMovie.status === "matched" || fixingMovie.status === "manual") ? (
+                {can("search") && fixingMovie.tmdb_id && (fixingMovie.status === "matched" || fixingMovie.status === "manual") ? (
                   <button onClick={() => findBetterVersion(fixingMovie)}
                     className="ml-auto rounded bg-violet-600 px-3 py-1 text-xs font-medium text-white hover:bg-violet-500">
                     Hledat lepší verzi
@@ -830,7 +833,7 @@ export default function LibraryPage() {
                   <p className="text-red-400 text-xs">Kontrola selhala: {c.error}</p>
                 );
               })()}
-              {fixingMovie.tmdb_id && (fixingMovie.status === "matched" || fixingMovie.status === "manual") ? (() => {
+              {canEdit && fixingMovie.tmdb_id && (fixingMovie.status === "matched" || fixingMovie.status === "manual") ? (() => {
                 const fs = filmSettingsMap[String(fixingMovie.tmdb_id)] ?? { profile_id: null, watch_upgrades: false };
                 const def = profiles.find((p) => p.is_default);
                 return (
@@ -849,7 +852,7 @@ export default function LibraryPage() {
                   </div>
                 );
               })() : null}
-              {(fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
+              {canEdit && (fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <input
                     key={`note-${fixingMovie.id}`}
@@ -880,7 +883,7 @@ export default function LibraryPage() {
                   </button>
                 </div>
               )}
-              {fixingMovie.file_path && (
+              {can("library.delete") && fixingMovie.file_path && (
                 confirmDelete === null ? (
                   <button onClick={() => setConfirmDelete("ask")}
                     className="mt-1 rounded px-2 py-1 text-xs border border-red-900/70 text-red-300/90 hover:text-red-200 hover:border-red-700">
@@ -916,7 +919,7 @@ export default function LibraryPage() {
               )}
             </div>
 
-            {fixingMovie.candidates?.length > 0 && (
+            {canEdit && fixingMovie.candidates?.length > 0 && (
               <div className="space-y-1">
                 <p className="text-xs uppercase tracking-wide text-zinc-500">Kandidáti</p>
                 {fixingMovie.candidates.map((c) => (
@@ -956,7 +959,7 @@ export default function LibraryPage() {
               </div>
             )}
 
-            {(fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
+            {canEdit && (fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
               <div className="space-y-2 rounded-lg border border-zinc-800 p-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs uppercase tracking-wide text-zinc-500">Oprava na disku</p>
@@ -984,6 +987,7 @@ export default function LibraryPage() {
               </div>
             )}
 
+            {canEdit && <>
             <p className="text-xs uppercase tracking-wide text-zinc-500">Hledat na TMDB</p>
 
             <div className="flex gap-2">
@@ -1037,9 +1041,10 @@ export default function LibraryPage() {
                 ))}
               </div>
             )}
+            </>}
 
             <button onClick={() => setFixingMovie(null)} className="text-sm text-zinc-500 hover:text-zinc-300">
-              Zavrit
+              Zavřít
             </button>
           </div>
         </div>

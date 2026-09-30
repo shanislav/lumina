@@ -6,7 +6,7 @@ the ones the profile allows and remembers the best. When the film shows up in th
 so a notification module can pick them up later.
 """
 
-from app.core.module import Module, Subscription
+from app.core.module import Module, Permission, Subscription
 from app.modules.wanted.router import router
 from app.modules.wanted.store import WANTED, on_movie_updated, on_scheduler_run
 
@@ -15,6 +15,7 @@ module = Module(
     title="Chci",
     order=25,
     routers=[router],
+    permissions=[Permission("wanted", "Přidávat a spravovat filmy v Chci", default=True)],
     migrations=[WANTED],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=80),
                    Subscription("scheduler.run", on_scheduler_run)],

@@ -7,6 +7,8 @@ import MovieGrid from "@/components/MovieGrid";
 import FileTable from "@/components/FileTable";
 import DownloadPanel from "@/components/DownloadPanel";
 import WantButton from "@/components/WantButton";
+import { useAuth } from "@/components/AuthGate";
+import Link from "next/link";
 import {
   TMDBMovie,
   ScoredFile,
@@ -21,6 +23,14 @@ import {
 } from "@/lib/api";
 
 export default function Home() {
+  const { can } = useAuth();
+  if (!can("search")) {
+    return (
+      <main className="px-4 py-16 text-center text-zinc-400">
+        Hledání ti správce nepovolil. <Link href="/wanted" className="text-violet-300 hover:text-violet-200">Chci</Link>
+      </main>
+    );
+  }
   return (
     <Suspense fallback={<div className="flex items-center justify-center min-h-[calc(100vh-57px)]"><div className="text-zinc-600 text-sm animate-pulse">Nacitam...</div></div>}>
       <HomeContent />

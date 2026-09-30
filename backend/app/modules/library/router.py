@@ -4,7 +4,7 @@ import json
 import os
 import logging
 
-from fastapi import APIRouter
+from fastapi import Depends, APIRouter
 from pydantic import BaseModel
 
 from app.config import get_effective_settings
@@ -17,13 +17,14 @@ from app.core import naming, quality
 from app.core.quality import prefs_from_settings
 from app.modules.library import importer, organize, upgrades
 from app.modules.library.notify import emit_movie_updated
+from app.core.auth import require
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/library", tags=["library"])
 
 # ─── SCAN ───
 
-@router.post("/scan")
+@router.post("/scan", dependencies=[Depends(require("library.edit"))])
 async def scan_library(force: bool = False):
     """Start a background scan of the movie + TV library. Poll /scan/status for progress.
 
@@ -33,7 +34,7 @@ async def scan_library(force: bool = False):
     return {"started": started, **importer.job_status()}
 
 
-@router.get("/scan/status")
+@router.get("/scan/status", dependencies=[Depends(require("library.view"))])
 async def scan_status():
     return importer.job_status()
 
@@ -74,7 +75,7 @@ def _movie_row(r, prefs: quality.Prefs | None = None) -> dict:
     }
 
 
-@router.get("/movies")
+@router.get("/movies", dependencies=[Depends(require("library.view"))])
 async def get_library_movies(status: str | None = None):
     """List movies in library. status=review|unmatched|matched|manual filters the list."""
     db = await get_db()
@@ -122,7 +123,7 @@ async def owned_versions(tmdb_ids: str):
         await db.close()
 
 
-@router.get("/movies/summary")
+@router.get("/movies/summary", dependencies=[Depends(require("library.view"))])
 async def get_library_summary():
     db = await get_db()
     try:
@@ -132,7 +133,7 @@ async def get_library_summary():
         await db.close()
 
 
-@router.delete("/movies/{movie_id}")
+@router.delete("/movies/{movie_id}", dependencies=[Depends(require("library.delete"))])
 async def delete_library_movie(movie_id: int):
     """Remove movie from library DB (not from disk)."""
     db = await get_db()
@@ -144,7 +145,7 @@ async def delete_library_movie(movie_id: int):
         await db.close()
 
 
-@router.delete("/movies/{movie_id}/file")
+@router.delete("/movies/{movie_id}/file", dependencies=[Depends(require("library.delete"))])
 async def delete_version_file(movie_id: int):
     """Delete this version from DISK and the library — definitive (the UI asks first)."""
     from app.modules.library.imports import delete_version
@@ -172,7 +173,7 @@ class VersionUpdate(BaseModel):
     preferred: bool | None = None
 
 
-@router.patch("/movies/{movie_id}")
+@router.patch("/movies/{movie_id}", dependencies=[Depends(require("library.edit"))])
 async def update_version(movie_id: int, body: VersionUpdate):
     """Note on a version / mark it preferred (one preferred version per movie)."""
     db = await get_db()
@@ -198,7 +199,7 @@ class FixMatchRequest(BaseModel):
     tmdb_id: int
 
 
-@router.put("/movies/{movie_id}/fix")
+@router.put("/movies/{movie_id}/fix", dependencies=[Depends(require("library.edit"))])
 async def fix_movie_match(movie_id: int, body: FixMatchRequest):
     """Set the movie of a file by hand (from review candidates or a TMDB search). Scans never override it."""
     cfg = await get_effective_settings()
@@ -227,7 +228,7 @@ async def fix_movie_match(movie_id: int, body: FixMatchRequest):
         await db.close()
 
 
-@router.get("/movies/{movie_id}/search-tmdb")
+@router.get("/movies/{movie_id}/search-tmdb", dependencies=[Depends(require("library.edit"))])
 async def search_tmdb_for_fix(movie_id: int, query: str):
     """Search TMDB for a movie to fix a wrong match."""
     cfg = await get_effective_settings()
@@ -244,7 +245,7 @@ async def search_tmdb_for_fix(movie_id: int, query: str):
 
 # ─── SHOWS ───
 
-@router.get("/shows")
+@router.get("/shows", dependencies=[Depends(require("library.view"))])
 async def get_library_shows():
     """List all TV shows with episode count progress."""
     db = await get_db()
@@ -272,7 +273,7 @@ async def get_library_shows():
         await db.close()
 
 
-@router.get("/shows/{tmdb_id}")
+@router.get("/shows/{tmdb_id}", dependencies=[Depends(require("library.view"))])
 async def get_show_detail(tmdb_id: int):
     """Get show detail with all seasons and episodes (owned/missing)."""
     db = await get_db()
@@ -323,7 +324,7 @@ async def get_show_detail(tmdb_id: int):
         await db.close()
 
 
-@router.delete("/shows/{tmdb_id}")
+@router.delete("/shows/{tmdb_id}", dependencies=[Depends(require("library.delete"))])
 async def delete_library_show(tmdb_id: int):
     """Remove show and its episodes from library DB."""
     db = await get_db()
@@ -360,7 +361,7 @@ def _plan_view(plan: dict, root: str) -> dict:
     }
 
 
-@router.get("/movies/{movie_id}/organize")
+@router.get("/movies/{movie_id}/organize", dependencies=[Depends(require("library.edit"))])
 async def organize_plan(movie_id: int):
     """What fixing this movie on disk would do (nothing is changed)."""
     client, root = await _organize_context()
@@ -374,7 +375,7 @@ async def organize_plan(movie_id: int):
         await db.close()
 
 
-@router.get("/organize")
+@router.get("/organize", dependencies=[Depends(require("library.edit"))])
 async def organize_plan_all():
     """All matched/manual movies whose folder or file name differs from the naming rules."""
     client, root = await _organize_context()
@@ -386,7 +387,7 @@ async def organize_plan_all():
         await db.close()
 
 
-@router.post("/organize")
+@router.post("/organize", dependencies=[Depends(require("library.edit"))])
 async def organize_apply(body: OrganizeRequest):
     """Fix the given movies on disk (one undoable batch). Plans are recomputed right before applying."""
     client, root = await _organize_context()
@@ -415,7 +416,7 @@ async def organize_apply(body: OrganizeRequest):
         await db.close()
 
 
-@router.get("/operations")
+@router.get("/operations", dependencies=[Depends(require("library.view"))])
 async def list_operations(limit: int = 20):
     """Recent organize batches (newest first)."""
     db = await get_db()
@@ -431,7 +432,7 @@ async def list_operations(limit: int = 20):
         await db.close()
 
 
-@router.post("/operations/{batch_id}/undo")
+@router.post("/operations/{batch_id}/undo", dependencies=[Depends(require("library.edit"))])
 async def undo_operations(batch_id: str):
     cfg = await get_effective_settings()
     root = movies_library_dir(cfg)
@@ -453,7 +454,7 @@ class UpgradeCheckRequest(BaseModel):
     tmdb_ids: list[int]
 
 
-@router.post("/upgrades/check")
+@router.post("/upgrades/check", dependencies=[Depends(require("library.edit"))])
 async def check_upgrades(body: UpgradeCheckRequest):
     """Look for better versions of these movies in the background (one by one, politely)."""
     return upgrades.enqueue(body.tmdb_ids)
@@ -464,7 +465,7 @@ class FilmSettings(BaseModel):
     watch_upgrades: bool = False
 
 
-@router.get("/films")
+@router.get("/films", dependencies=[Depends(require("library.view"))])
 async def film_settings_all():
     """{tmdb_id: {profile_id, watch_upgrades}} for films that have their own settings."""
     db = await get_db()
@@ -475,7 +476,7 @@ async def film_settings_all():
         await db.close()
 
 
-@router.put("/films/{tmdb_id}")
+@router.put("/films/{tmdb_id}", dependencies=[Depends(require("library.edit"))])
 async def set_film_settings(tmdb_id: int, body: FilmSettings):
     db = await get_db()
     try:
@@ -489,12 +490,12 @@ async def set_film_settings(tmdb_id: int, body: FilmSettings):
         await db.close()
 
 
-@router.get("/upgrades/status")
+@router.get("/upgrades/status", dependencies=[Depends(require("library.view"))])
 async def upgrades_status():
     return upgrades.status()
 
 
-@router.get("/upgrades")
+@router.get("/upgrades", dependencies=[Depends(require("library.view"))])
 async def upgrade_results():
     """Last check per movie: {tmdb_id: {status better|none|error, upgrades, best, checked_at, ...}}."""
     return await upgrades.results()

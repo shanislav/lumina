@@ -1,10 +1,11 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from app.config import get_effective_settings
 from app.clients.aria2 import Aria2Client
 from app.clients.qbittorrent import QBittorrentClient
+from app.config import get_effective_settings
+from app.core.auth import User, require
 from app.models.schemas import DownloadRequest
 from app.sources.base import DownloadBackend
 from app.sources.registry import SourceRegistry
@@ -30,7 +31,18 @@ def _resolve_target_dir(cfg: dict, req: DownloadRequest) -> str:
 
 
 @router.post("/download")
+async def download(req: DownloadRequest, user: User = Depends(require("download"))) -> dict:
+    # replacing a version deletes the old file once the new one is imported
+    if (req.library_action or {}).get("mode") == "replace" and not user.can("library.delete"):
+        raise HTTPException(403, "Nahradit verzi (smaže starou) může jen uživatel s oprávněním mazat v knihovně")
+    # an own target folder writes anywhere the backend can — only for who manages the settings
+    if req.target_folder and not user.can("settings"):
+        raise HTTPException(403, "Vlastní cílovou složku může zvolit jen správce nastavení")
+    return await start_download(req)
+
+
 async def start_download(req: DownloadRequest) -> dict:
+    """Starts a download — from the UI (above) or from other modules via event download.request."""
     cfg = await get_effective_settings()
     target_dir = _resolve_target_dir(cfg, req)
 
@@ -168,7 +180,7 @@ async def list_downloads() -> dict:
     return {"downloads": downloads}
 
 
-@router.delete("/download/{identifier}")
+@router.delete("/download/{identifier}", dependencies=[Depends(require("download"))])
 async def remove_download(
     identifier: str, backend: str = "aria2", active: bool = False,
 ) -> dict:

@@ -1,11 +1,12 @@
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.db import get_db
 from app.modules.wanted import store
+from app.core.auth import require
 
 router = APIRouter(prefix="/api/wanted", tags=["wanted"])
 
@@ -63,7 +64,7 @@ async def list_wanted():
         await db.close()
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require("wanted"))])
 async def add_wanted(body: WantedAdd):
     if not body.tmdb_id and not body.wikidata_id:
         raise HTTPException(400, "Film potřebuje TMDB nebo Wikidata id")
@@ -95,7 +96,7 @@ async def add_wanted(body: WantedAdd):
     return await store.get(wanted_id)
 
 
-@router.patch("/{wanted_id}")
+@router.patch("/{wanted_id}", dependencies=[Depends(require("wanted"))])
 async def update_wanted(wanted_id: int, body: WantedUpdate):
     # only what the request sent (profile_id: null = back to the default profile)
     fields = {k: getattr(body, k) for k in body.model_fields_set}
@@ -115,7 +116,7 @@ async def update_wanted(wanted_id: int, body: WantedUpdate):
     return await store.get(wanted_id)
 
 
-@router.delete("/{wanted_id}")
+@router.delete("/{wanted_id}", dependencies=[Depends(require("wanted"))])
 async def remove_wanted(wanted_id: int):
     db = await get_db()
     try:
@@ -130,7 +131,7 @@ class CheckRequest(BaseModel):
     ids: list[int] = []          # empty = every film not done yet
 
 
-@router.post("/check")
+@router.post("/check", dependencies=[Depends(require("wanted"))])
 async def check_wanted(body: CheckRequest):
     ids = body.ids
     if not ids:

@@ -31,6 +31,15 @@ class Subscription:
 
 
 @dataclass
+class Permission:
+    """Something a user may be allowed to do. Admins can do everything; for a normal user
+    the admin picks the permissions (``default`` = on for a newly created user)."""
+    name: str
+    title: str
+    default: bool = False
+
+
+@dataclass
 class Module:
     name: str
     title: str
@@ -45,3 +54,7 @@ class Module:
     subscriptions: list[Subscription] = field(default_factory=list)
     on_startup: list[Hook] = field(default_factory=list)
     on_shutdown: list[Hook] = field(default_factory=list)
+    # Permissions this module's endpoints check with ``app.core.auth.require(name)``.
+    permissions: list[Permission] = field(default_factory=list)
+    # Every route of the module needs a signed-in user; only the auth module itself opts out.
+    requires_login: bool = True

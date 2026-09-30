@@ -29,6 +29,8 @@ import FolderBrowser from "@/components/FolderBrowser";
 import QualityWeightsEditor from "@/components/QualityWeights";
 import ProfilesEditor from "@/components/ProfilesEditor";
 import ModulesPanel from "@/components/ModulesPanel";
+import UsersAdmin from "@/components/UsersAdmin";
+import { useAuth } from "@/components/AuthGate";
 import { getGroqModels, GroqModels } from "@/lib/api";
 
 const SOURCE_TYPES = [
@@ -192,7 +194,7 @@ const SEARCH_SECTIONS = [
   },
 ];
 
-type SettingsTab = "obecne" | "vyhledavani" | "automatizace" | "zdroje";
+type SettingsTab = "obecne" | "vyhledavani" | "automatizace" | "zdroje" | "uzivatele";
 
 const TABS: { key: SettingsTab; label: string }[] = [
   { key: "obecne", label: "Obecné" },
@@ -202,6 +204,10 @@ const TABS: { key: SettingsTab; label: string }[] = [
 ];
 
 export default function SettingsPage() {
+  const { user, can } = useAuth();
+  // the whole page is for who manages the settings; others may have just the quality profiles
+  const full = can("settings");
+  const tabs = user.is_admin ? [...TABS, { key: "uzivatele" as SettingsTab, label: "Uživatelé" }] : TABS;
   const [sources, setSources] = useState<Source[]>([]);
   const [integrations, setIntegrations] = useState<Automation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -222,8 +228,9 @@ export default function SettingsPage() {
   const [groqModels, setGroqModels] = useState<GroqModels | null>(null);
 
   useEffect(() => {
+    if (!full) return;
     getGroqModels().then(setGroqModels).catch(() => setGroqModels({ models: [], default: "", error: "nedostupné" }));
-  }, [settings.groq_api_key]);
+  }, [settings.groq_api_key, full]);
 
   const loadSources = useCallback(async () => {
     try { setSources(await getSources()); } finally { setLoading(false); }
@@ -242,11 +249,12 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
+    if (!full) return;
     loadSources();
     loadIntegrations();
     loadSettings();
     getLanguages().then(setAllLanguages).catch(() => {});
-  }, [loadSources, loadIntegrations, loadSettings]);
+  }, [loadSources, loadIntegrations, loadSettings, full]);
 
   function handleSettingChange(key: string, value: string) {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -343,6 +351,20 @@ export default function SettingsPage() {
     );
   }
 
+  if (!full) {
+    return (
+      <main className="flex flex-col items-center gap-8 px-4 py-12 max-w-4xl mx-auto">
+        <div className="flex items-center gap-4 w-full">
+          <Link href="/" className="text-zinc-500 hover:text-zinc-300 transition-colors text-sm">&larr; Hledat</Link>
+          <h1 className="text-2xl font-bold text-zinc-100">Nastavení</h1>
+        </div>
+        <section className="w-full space-y-4">
+          {can("profiles") ? <ProfilesEditor /> : <p className="text-zinc-500">Nastavení spravuje správce.</p>}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="flex flex-col items-center gap-8 px-4 py-12 max-w-4xl mx-auto">
       <div className="flex items-center gap-4 w-full">
@@ -352,7 +374,7 @@ export default function SettingsPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 bg-zinc-900 rounded-lg p-1 w-full border border-zinc-800">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key)}
@@ -366,6 +388,12 @@ export default function SettingsPage() {
           </button>
         ))}
       </div>
+
+      {activeTab === "uzivatele" && user.is_admin && (
+        <section className="w-full space-y-4">
+          <UsersAdmin />
+        </section>
+      )}
 
       {/* === Tab: Obecné === */}
       {activeTab === "obecne" && (

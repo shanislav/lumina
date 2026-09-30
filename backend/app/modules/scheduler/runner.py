@@ -2,10 +2,11 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter
+from fastapi import Depends, APIRouter
 
 from app.core import events
 from app.db import get_all_settings, get_automation, set_settings
+from app.core.auth import require
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
@@ -105,7 +106,7 @@ async def scheduler_status() -> dict:
     }
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require("settings"))])
 async def run_now() -> dict:
     """Run now (the same as the nightly run)."""
     return await run("ručně")

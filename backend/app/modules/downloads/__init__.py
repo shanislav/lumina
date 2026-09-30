@@ -6,7 +6,7 @@ subscribed to that event.
 """
 
 from app.core.migrations import add_column
-from app.core.module import Module, Subscription
+from app.core.module import Module, Permission, Subscription
 from app.modules.downloads.monitor import ensure_monitor_running
 from app.modules.downloads.router import on_download_request, router
 from app.modules.downloads.store import DOWNLOAD_TRACKER_V1
@@ -26,4 +26,5 @@ module = Module(
     ],
     subscriptions=[Subscription("download.request", on_download_request)],
     on_startup=[ensure_monitor_running],
+    permissions=[Permission("download", "Stahovat (a rušit stahování)", default=True)],
 )

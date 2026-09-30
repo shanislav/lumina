@@ -1,11 +1,12 @@
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.clients.groq_scorer import DEFAULT_GROQ_MODEL, list_models
 from app.db import get_all_settings, set_settings
+from app.core.auth import require
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ async def setup_status() -> dict:
     return {"complete": len(missing) == 0, "missing": missing}
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require("settings"))])
 async def list_settings() -> dict[str, str]:
     """Return all settings (sensitive values masked)."""
     stored = await get_all_settings()
@@ -80,7 +81,7 @@ async def list_settings() -> dict[str, str]:
     return _mask(merged)
 
 
-@router.put("")
+@router.put("", dependencies=[Depends(require("settings"))])
 async def update_settings(body: dict[str, str]) -> dict[str, str]:
     """Update settings. Masked values (********) are skipped to preserve existing."""
     stored = await get_all_settings()
@@ -130,7 +131,7 @@ async def quality_weights() -> dict:
     return {"defaults": DEFAULT_WEIGHTS, "current": weights_from_setting(stored.get("quality_weights", ""))}
 
 
-@router.post("/quality-preview")
+@router.post("/quality-preview", dependencies=[Depends(require("profiles"))])
 async def quality_preview(body: dict) -> list[dict]:
     """Score the sample files with the weights being edited (not saved yet)."""
     from app.config import get_effective_settings
@@ -196,17 +197,17 @@ async def _save_profile(profile_id: int | None, body: ProfileBody) -> dict:
     return _profile_out(p)
 
 
-@router.post("/profiles")
+@router.post("/profiles", dependencies=[Depends(require("profiles"))])
 async def create_profile(body: ProfileBody) -> dict:
     return await _save_profile(None, body)
 
 
-@router.put("/profiles/{profile_id}")
+@router.put("/profiles/{profile_id}", dependencies=[Depends(require("profiles"))])
 async def update_profile(profile_id: int, body: ProfileBody) -> dict:
     return await _save_profile(profile_id, body)
 
 
-@router.delete("/profiles/{profile_id}")
+@router.delete("/profiles/{profile_id}", dependencies=[Depends(require("profiles"))])
 async def delete_profile(profile_id: int) -> dict:
     """Films that used it fall back to the default profile."""
     from app.db import get_db
@@ -225,7 +226,7 @@ async def delete_profile(profile_id: int) -> dict:
         await db.close()
 
 
-@router.get("/browse")
+@router.get("/browse", dependencies=[Depends(require("settings"))])
 async def browse_directories(path: str = "/") -> dict:
     """List subdirectories for the folder picker."""
     target = Path(path).resolve()
@@ -262,7 +263,7 @@ async def available_languages() -> list[dict]:
     ]
 
 
-@router.get("/groq-models")
+@router.get("/groq-models", dependencies=[Depends(require("settings"))])
 async def groq_models() -> dict:
     """Chat models available for the stored Groq key (the list changes as Groq retires models)."""
     stored = await get_all_settings()

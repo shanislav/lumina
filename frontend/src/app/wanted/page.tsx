@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import DownloadPanel from "@/components/DownloadPanel";
+import { useAuth } from "@/components/AuthGate";
 import {
   QualityProfile,
   ScoredFile,
@@ -28,6 +29,8 @@ const STATUS: Record<WantedItem["status"], { label: string; cls: string }> = {
 
 export default function WantedPage() {
   const router = useRouter();
+  const { can } = useAuth();
+  const manage = can("wanted");
   const [items, setItems] = useState<WantedItem[]>([]);
   const [profiles, setProfiles] = useState<QualityProfile[]>([]);
   const [job, setJob] = useState<WantedJob | null>(null);
@@ -95,7 +98,7 @@ export default function WantedPage() {
           <span className="text-sm text-violet-300 animate-pulse">
             Hledám {job.done}/{job.total}{job.current ? ` · ${job.current}` : ""} · nalezeno {job.found}
           </span>
-        ) : (
+        ) : manage && (
           <button disabled={!open.length} onClick={async () => setJob(await checkWanted())}
             className="rounded bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-40">
             Zkontrolovat vše
@@ -129,7 +132,7 @@ export default function WantedPage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
                   Profil:
-                  <select value={item.profile_id ?? ""} className="rounded bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 text-zinc-300"
+                  <select disabled={!manage} value={item.profile_id ?? ""} className="rounded bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 text-zinc-300"
                     onChange={async (e) => {
                       await updateWanted(item.id, { profile_id: e.target.value === "" ? null : Number(e.target.value) });
                       load();
@@ -153,14 +156,14 @@ export default function WantedPage() {
                 ) : null}
               </div>
               <div className="flex flex-col items-end gap-1.5 text-xs">
-                {item.status === "found" && (
+                {item.status === "found" && can("download") && (
                   downloading[item.id] ? <span className="text-green-300">{downloading[item.id]}</span> : (
                     <button onClick={() => download(item)} className="rounded bg-violet-600 px-3 py-1 font-medium text-white hover:bg-violet-500">
                       Stáhnout nejlepší
                     </button>
                   )
                 )}
-                {item.status === "downloading" && (
+                {item.status === "downloading" && manage && (
                   <button title="Stahování se nepovedlo? Vrátit mezi hledané" className="text-zinc-400 hover:text-zinc-200"
                     onClick={async () => { await updateWanted(item.id, { status: "wanted" }); load(); }}>
                     Znovu hledat
@@ -169,11 +172,11 @@ export default function WantedPage() {
                 {item.status !== "done" && (
                   <>
                     <button onClick={() => openOffers(item)} className="text-violet-300 hover:text-violet-200">Všechny nabídky</button>
-                    <button disabled={!!job?.running} onClick={async () => setJob(await checkWanted([item.id]))}
-                      className="text-zinc-400 hover:text-zinc-200 disabled:opacity-40">Hledat teď</button>
+                    {manage && <button disabled={!!job?.running} onClick={async () => setJob(await checkWanted([item.id]))}
+                      className="text-zinc-400 hover:text-zinc-200 disabled:opacity-40">Hledat teď</button>}
                   </>
                 )}
-                <button onClick={async () => { await removeWanted(item.id); load(); }} className="text-zinc-600 hover:text-red-400">Odebrat</button>
+                {manage && <button onClick={async () => { await removeWanted(item.id); load(); }} className="text-zinc-600 hover:text-red-400">Odebrat</button>}
               </div>
             </div>
           ))}

@@ -1,9 +1,10 @@
-from fastapi import APIRouter
+from fastapi import Depends, APIRouter
 from pydantic import BaseModel
 
 from app.clients.plex import PlexClient
 from app.config import get_effective_settings, movies_library_dir
 from app.modules.plex.paths import section_for, to_plex
+from app.core.auth import require
 
 router = APIRouter(prefix="/api/plex", tags=["plex"])
 
@@ -14,7 +15,7 @@ class PlexTest(BaseModel):
     path_map: str = ""
 
 
-@router.post("/test")
+@router.post("/test", dependencies=[Depends(require("settings"))])
 async def test_connection(body: PlexTest):
     """Connect with the settings being edited (not saved yet) and show where the library maps."""
     client = PlexClient(body.url, body.token)

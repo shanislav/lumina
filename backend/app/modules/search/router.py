@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter
+from fastapi import Depends, APIRouter
 
 from app.config import get_effective_settings
 from app.clients.tmdb import TMDBClient
@@ -12,6 +12,7 @@ from app.core.offers.search import find_offers
 from app.core.quality import prefs_from_settings
 from app.models.schemas import TMDBMovie, ScoredFile
 from pydantic import BaseModel
+from app.core.auth import require
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ def _locale(cfg: dict, language: str | None) -> tuple[str, str]:
     return code, TMDB_LOCALES.get(code, code)
 
 
-@router.get("/search/movies", response_model=list[TMDBMovie])
+@router.get("/search/movies", dependencies=[Depends(require("search"))], response_model=list[TMDBMovie])
 async def search_movies(query: str, language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
     lang_code, tmdb_locale = _locale(cfg, language)
@@ -74,7 +75,7 @@ async def _wikidata_films(query: str, lang_code: str) -> list[TMDBMovie]:
                       wikidata_id=f["wikidata_id"]) for f in films]
 
 
-@router.get("/discover/trending", response_model=list[TMDBMovie])
+@router.get("/discover/trending", dependencies=[Depends(require("search"))], response_model=list[TMDBMovie])
 async def discover_trending(language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
     lang_code, tmdb_locale = _locale(cfg, language)
@@ -85,7 +86,7 @@ async def discover_trending(language: str | None = None) -> list[TMDBMovie]:
         await client.close()
 
 
-@router.get("/discover/now-playing", response_model=list[TMDBMovie])
+@router.get("/discover/now-playing", dependencies=[Depends(require("search"))], response_model=list[TMDBMovie])
 async def discover_now_playing(language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
     lang_code, tmdb_locale = _locale(cfg, language)
@@ -96,7 +97,7 @@ async def discover_now_playing(language: str | None = None) -> list[TMDBMovie]:
         await client.close()
 
 
-@router.get("/discover/recently-digital", response_model=list[TMDBMovie])
+@router.get("/discover/recently-digital", dependencies=[Depends(require("search"))], response_model=list[TMDBMovie])
 async def discover_recently_digital(language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
     lang_code, tmdb_locale = _locale(cfg, language)
@@ -107,7 +108,7 @@ async def discover_recently_digital(language: str | None = None) -> list[TMDBMov
         await client.close()
 
 
-@router.get("/discover/recently-digital-tv", response_model=list[TMDBMovie])
+@router.get("/discover/recently-digital-tv", dependencies=[Depends(require("search"))], response_model=list[TMDBMovie])
 async def discover_recently_digital_tv(language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
     lang_code, tmdb_locale = _locale(cfg, language)
@@ -118,7 +119,7 @@ async def discover_recently_digital_tv(language: str | None = None) -> list[TMDB
         await client.close()
 
 
-@router.get("/discover/popular", response_model=list[TMDBMovie])
+@router.get("/discover/popular", dependencies=[Depends(require("search"))], response_model=list[TMDBMovie])
 async def discover_popular(language: str | None = None) -> list[TMDBMovie]:
     cfg = await get_effective_settings()
     lang_code, tmdb_locale = _locale(cfg, language)
@@ -135,7 +136,7 @@ class SearchFilesResponse(BaseModel):
     files: list[ScoredFile]
 
 
-@router.get("/search/files", response_model=SearchFilesResponse)
+@router.get("/search/files", dependencies=[Depends(require("search"))], response_model=SearchFilesResponse)
 async def search_files(
     query: str,
     language: str | None = None,
@@ -164,7 +165,7 @@ class DetailsRequest(BaseModel):
     movie: dict | None = None     # {"titles", "year", "runtime"} from the search response
 
 
-@router.post("/search/details")
+@router.post("/search/details", dependencies=[Depends(require("search"))])
 async def search_details(body: DetailsRequest) -> dict:
     """Verified details from the sources + the file re-evaluated with them (quality, languages,
     length check). {"<source_id>:<ident>": {"details": …, **evaluation} | null}"""

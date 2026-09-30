@@ -3,9 +3,15 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { QualityProfile, TMDBMovie, addWanted, getProfiles } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
 
 /** "+ Chci": put a film on the wanted list with a quality profile (checked right away). */
 export default function WantButton({ movie }: { movie: TMDBMovie }) {
+  const { can } = useAuth();
+  return can("wanted") ? <WantButtonInner movie={movie} /> : null;
+}
+
+function WantButtonInner({ movie }: { movie: TMDBMovie }) {
   const [profiles, setProfiles] = useState<QualityProfile[]>([]);
   const [profileId, setProfileId] = useState<number | "">("");
   const [state, setState] = useState<"idle" | "busy" | "added" | string>("idle");
