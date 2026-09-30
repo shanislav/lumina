@@ -8,6 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "hls.js": "^1.7.3",
     "next": "14.2.21",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

@@ -42,6 +42,7 @@ import {
 import DownloadPanel from "@/components/DownloadPanel";
 import { useAuth } from "@/components/AuthGate";
 import AudioSyncPanel from "@/components/AudioSyncPanel";
+import AudioTracksPanel from "@/components/AudioTracksPanel";
 
 type Tab = "filmy" | "serialy";
 type MovieFilter = "all" | "versions" | "review" | "unmatched";
@@ -883,6 +884,14 @@ export default function LibraryPage() {
                     {fixingMovie.preferred ? "★ Preferovaná verze" : "☆ Nastavit jako preferovanou"}
                   </button>
                 </div>
+              )}
+              {fixingMovie.file_path && (fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
+                can("audiosync") ? <AudioTracksPanel key={fixingMovie.id} movie={fixingMovie} onChanged={loadData} />
+                  : can("player") ? (
+                    <Link href={`/play?id=${fixingMovie.id}`} className="inline-block rounded bg-violet-600 px-3 py-1 text-xs font-medium text-white hover:bg-violet-500">
+                      ▶ Přehrát film v prohlížeči
+                    </Link>
+                  ) : null
               )}
               {can("library.delete") && fixingMovie.file_path && (
                 confirmDelete === null ? (

@@ -1051,7 +1051,7 @@ export interface AudioSyncResult {
 
 export interface AudioSyncJob {
   running: boolean;
-  kind?: "analyze" | "transfer";
+  kind?: "analyze" | "transfer" | "check" | "strip" | "upgrade";
   result_id?: number;
   imported?: boolean | null;
   path?: string;
@@ -1083,21 +1083,91 @@ export const startAudioSync = (body: { reference_id: number; other_id: number; r
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
 export const getAudioSyncJob = () => audioSyncCall<AudioSyncJob>("/job");
-export const makeAudioPreview = (resultId: number, at: number, adjustMs: number) =>
+export const makeAudioPreview = (resultId: number, at: number, adjustMs: number, otherTrack?: number) =>
   audioSyncCall<{ name: string; at: number; adjust_ms: number }>("/preview", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ result_id: resultId, at, adjust_ms: adjustMs }),
+    body: JSON.stringify({ result_id: resultId, at, adjust_ms: adjustMs, other_track: otherTrack ?? null }),
   });
 export const audioPreviewUrl = (name: string) => `${API_BASE}/api/audiosync/preview/${name}`;
 export const setAudioAdjust = (resultId: number, adjustMs: number) =>
   audioSyncCall<{ id: number; adjust_ms: number }>(`/results/${resultId}`, {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ adjust_ms: adjustMs }),
   });
-export const startAudioTransfer = (resultId: number, mode: "version" | "replace", otherTracks?: number[]) =>
+export const startAudioTransfer = (resultId: number, mode: "version" | "replace", otherTracks?: number[],
+                                   dropTracks: number[] = []) =>
   audioSyncCall<AudioSyncJob>("/transfer", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ result_id: resultId, mode, other_tracks: otherTracks }),
+    body: JSON.stringify({ result_id: resultId, mode, other_tracks: otherTracks, drop_tracks: dropTracks }),
   });
 export const getAudioSyncResults = (referenceId: number, otherId: number) =>
   audioSyncCall<{ id: number; reference_track: number; other_track: number; created_at: string; result: AudioSyncResult }[]>(
     `/results?reference_id=${referenceId}&other_id=${otherId}`);
+
+// ── tracks of one file: check, remove, listen ──
+
+export interface TrackCheck {
+  result_id: number;
+  track: number;
+  reference_track: number | null;
+  verdict: "constant" | "speed" | "cuts" | "no_match";
+  fits: boolean;
+  offset: number;
+  speed: number;
+  confidence: number;
+  pieces: { start: number; end: number; offset: number | null }[];
+  checked_at?: string;
+}
+
+export const startTrackCheck = (movieId: number, referenceTrack: number) =>
+  audioSyncCall<AudioSyncJob>("/check", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ movie_id: movieId, reference_track: referenceTrack }),
+  });
+export const getTrackChecks = (movieId: number) => audioSyncCall<TrackCheck[]>(`/checks/${movieId}`);
+export const startStripTracks = (movieId: number, dropTracks: number[], mode: "replace" | "version" = "replace") =>
+  audioSyncCall<AudioSyncJob>("/strip", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ movie_id: movieId, drop_tracks: dropTracks, mode }),
+  });
+export const fixTrack = (resultId: number, track: number) =>
+  audioSyncCall<AudioSyncJob>("/transfer", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ result_id: resultId, mode: "replace", other_tracks: [track], drop_tracks: [track] }),
+  });
+export const makeTrackPreview = (movieId: number, track: number, at: number, resultId?: number) =>
+  audioSyncCall<{ name: string; at: number }>("/preview-track", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ movie_id: movieId, track, at, result_id: resultId ?? null }),
+  });
+
+// ── browser player ──
+
+export interface PlayerInfo {
+  id: number;
+  title: string;
+  year: string;
+  duration: number;
+  audio: AudioTrackInfo[];
+  video: { codec: string; height: number; hdr: boolean; copy: boolean };
+}
+
+async function playerCall<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await apiFetch(`${API_BASE}/api/player${path}`, init);
+  if (!res.ok) {
+    let detail = `Chyba ${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+export const getPlayerInfo = (movieId: number) => playerCall<PlayerInfo>(`/${movieId}/info`);
+export const startPlayer = (movieId: number, at: number, audio: number) =>
+  playerCall<{ session: string; start: number; audio: number }>(`/${movieId}/start`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ at, audio }),
+  });
+export const playerUrl = (session: string) => `${API_BASE}/api/player/s/${session}/index.m3u8`;
+export const stopPlayer = (session: string) =>
+  playerCall<{ ok: boolean }>(`/s/${session}`, { method: "DELETE" }).catch(() => ({ ok: false }));

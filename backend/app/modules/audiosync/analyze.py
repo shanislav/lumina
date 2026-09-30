@@ -260,17 +260,20 @@ def analyze(ref_path: str, ref_track: int, other_path: str, other_track: int, pr
     if not ref["audio"] or not other["audio"]:
         return Result("no_match", 1.0, 0.0, 0.0, note="Soubor nemá zvukovou stopu", reference=ref, other=other)
 
-    # 1) speed: a few windows with every candidate speed
+    # 1) speed: the nominal one first — most pairs have it, then the others need not be tried
     probes = _positions(ref["duration"], 5)
-    best_speed, best_score = 1.0, -1.0
-    for speed in SPEEDS:
-        scores = [_measure(ref_path, ref_track, other_path, other_track, at, speed).score for at in probes]
-        med = float(np.median(scores))
-        logger.info("audiosync speed %.5f → median score %.3f", speed, med)
-        if med > best_score:
-            best_speed, best_score = speed, med
-        if progress:
-            progress("speed", SPEEDS.index(speed) + 1, len(SPEEDS))
+    first = [_measure(ref_path, ref_track, other_path, other_track, at, 1.0) for at in probes]
+    best_speed, best_score = 1.0, float(np.median([w.score for w in first]))
+    if sum(w.good for w in first) < 4:
+        others = [s for s in SPEEDS if abs(s - 1) > 1e-9]
+        for k, speed in enumerate(others):
+            scores = [_measure(ref_path, ref_track, other_path, other_track, at, speed).score for at in probes]
+            med = float(np.median(scores))
+            logger.info("audiosync speed %.5f → median score %.3f", speed, med)
+            if med > best_score:
+                best_speed, best_score = speed, med
+            if progress:
+                progress("speed", k + 1, len(others))
 
     # 2) the whole film with that speed
     windows = []

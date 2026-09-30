@@ -102,7 +102,7 @@ def test_user_permissions_are_checked_on_the_backend(client):
     _setup_admin(client)
     r = client.post("/api/auth/users", json={"username": "bracho", "password": "user-pass-1"})
     assert r.status_code == 200, r.text
-    assert set(r.json()["permissions"]) == {"search", "download", "wanted", "library.view"}   # defaults
+    assert set(r.json()["permissions"]) == {"search", "download", "wanted", "library.view", "player"}   # defaults
 
     bro = TestClient(_app())
     assert bro.post("/api/auth/login", json={"username": "bracho", "password": "nope-nope"}).status_code == 401

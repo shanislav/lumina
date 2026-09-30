@@ -49,6 +49,8 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
   const [confirmReplace, setConfirmReplace] = useState(false);
   // tracks of the other version to move over — several dubs of one language are fine (TV stations …)
   const [chosen, setChosen] = useState<number[]>([]);
+  const [dropRef, setDropRef] = useState<number[]>([]);
+  useEffect(() => setDropRef([]), [refId]);
   useEffect(() => {
     const all = tracks[otherId] ?? [];
     const local = all.filter((a) => LOCAL.includes(a.language)).map((a) => a.index);
@@ -128,7 +130,7 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
     setDone("");
     setConfirmReplace(false);
     try {
-      setJob(await startAudioTransfer(resultId, mode, chosen));
+      setJob(await startAudioTransfer(resultId, mode, chosen, dropRef));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Nepodařilo se spustit");
     }
@@ -148,8 +150,11 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
   const label = (v: LibraryMovie) => `${v.quality_summary || v.quality} · ${v.language?.replaceAll(",", "+") || "?"}`;
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 space-y-3">
-      <p className="text-xs uppercase tracking-wide text-zinc-500">Přenos zvuku — porovnání verzí</p>
+    <details className="rounded-lg border border-zinc-800 bg-zinc-950/40" open={!!job?.running || undefined}>
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs uppercase tracking-wide text-zinc-400 hover:text-zinc-200">
+        Přenos zvuku mezi verzemi{result ? ` — ${result.verdict === "no_match" ? "nesedí" : result.verdict === "cuts" ? "jiný střih" : "sedí"}` : ""}
+      </summary>
+      <div className="space-y-3 px-3 pb-3">
       <div className="grid gap-2 sm:grid-cols-2 text-xs">
         <label className="space-y-1">
           <span className="block text-zinc-400">Obraz z verze</span>
@@ -193,7 +198,7 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
 
       {result && <ResultView result={result} />}
       {result && resultId && result.verdict !== "no_match" && !job?.running && (
-        <PreviewBox key={resultId} resultId={resultId} result={result}
+        <PreviewBox key={resultId} resultId={resultId} result={result} tracks={tracks[otherId] ?? []} analysedTrack={otherTrack}
           onSaved={(ms) => setResult({ ...result, adjust_ms: ms })} />
       )}
       {done && <p className="text-sm text-green-300">{done}</p>}
@@ -218,6 +223,19 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
             ))}
           </div>
           <p className="text-[10px] text-zinc-500">Dabing, který cílový soubor už má (i jako 2.0 vedle 5.1), se nepřidá — pozná se podle obsahu.</p>
+          {can("library.delete") && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              <span className="text-zinc-400">Odebrat z cíle:</span>
+              {(tracks[refId] ?? []).map((t) => (
+                <label key={t.index} className={`flex items-center gap-1.5 ${t.index === refTrack ? "text-zinc-600" : "text-zinc-300"}`}
+                  title={t.index === refTrack ? "Stopa, se kterou se porovnává, musí zůstat" : ""}>
+                  <input type="checkbox" disabled={t.index === refTrack} checked={dropRef.includes(t.index)}
+                    onChange={(e) => setDropRef(e.target.checked ? [...dropRef, t.index] : dropRef.filter((x) => x !== t.index))} />
+                  {trackLabel(t)}
+                </label>
+              ))}
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
             {can("library.edit") && (
               <button onClick={() => transfer("version")} disabled={!chosen.length}
@@ -243,14 +261,17 @@ export default function AudioSyncPanel({ versions, onChanged }: { versions: Libr
           )}
         </div>
       )}
-    </div>
+      </div>
+    </details>
   );
 }
 
 /** Short clips of the picture with the other audio — to check the lips, and correct by hand. */
-function PreviewBox({ resultId, result, onSaved }: {
-  resultId: number; result: AudioSyncResult; onSaved: (ms: number) => void;
+function PreviewBox({ resultId, result, tracks, analysedTrack, onSaved }: {
+  resultId: number; result: AudioSyncResult; tracks: AudioTrackInfo[]; analysedTrack: number; onSaved: (ms: number) => void;
 }) {
+  // every track of the other version has the same timing — listen to any of them
+  const [track, setTrack] = useState(analysedTrack);
   const dur = result.reference.duration || 0;
   const points: { at: number; label: string }[] = [0.25, 0.5, 0.75].map((f) => ({ at: dur * f, label: clock(dur * f) }));
   for (const p of result.pieces ?? []) {
@@ -264,11 +285,11 @@ function PreviewBox({ resultId, result, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  async function show(nextAt = at, nextAdjust = adjust) {
+  async function show(nextAt = at, nextAdjust = adjust, nextTrack = track) {
     setBusy(true);
     setErr("");
     try {
-      const r = await makeAudioPreview(resultId, nextAt, nextAdjust);
+      const r = await makeAudioPreview(resultId, nextAt, nextAdjust, nextTrack);
       setClip(r.name);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ukázka selhala");
@@ -295,6 +316,17 @@ function PreviewBox({ resultId, result, onSaved }: {
         ))}
         {busy && <span className="text-violet-300 animate-pulse">připravuji…</span>}
       </div>
+      {tracks.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-zinc-400">Stopa:</span>
+          {tracks.map((t) => (
+            <button key={t.index} onClick={() => { setTrack(t.index); if (clip) show(at, adjust, t.index); }} disabled={busy}
+              className={`rounded px-2 py-0.5 border ${t.index === track ? "border-violet-500 text-violet-200" : "border-zinc-700 text-zinc-300"} disabled:opacity-40`}>
+              {trackLabel(t)}
+            </button>
+          ))}
+        </div>
+      )}
       {err && <p className="text-xs text-red-400">{err}</p>}
       {clip && (
         // eslint-disable-next-line jsx-a11y/media-has-caption
