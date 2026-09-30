@@ -6,7 +6,7 @@ from app.core.module import Module, Subscription
 from app.modules.library.imports import on_download_completed
 from app.modules.library.organize import FILE_OPERATIONS
 from app.modules.library.router import router
-from app.modules.library.upgrades import UPGRADE_CHECKS
+from app.modules.library.upgrades import LIBRARY_FILMS, UPGRADE_CHECKS
 
 LIBRARY_V1 = """
 CREATE TABLE IF NOT EXISTS library_movies (
@@ -90,5 +90,7 @@ module = Module(
         add_column("library_movies", "note", "TEXT DEFAULT ''"),
         add_column("library_movies", "preferred", "INTEGER DEFAULT 0"),
         UPGRADE_CHECKS,
+        LIBRARY_FILMS,
+        add_column("upgrade_checks", "note", "TEXT DEFAULT ''"),
     ],
 )

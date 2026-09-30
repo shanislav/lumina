@@ -19,6 +19,7 @@ from datetime import datetime
 from app.config import get_effective_settings
 from app.core import quality
 from app.core.offers.search import find_offers, upgrade_block, verify_offers
+from app.core.profiles import block, get_profile, reached_cutoff, row_from_media
 from app.db import get_db
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,16 @@ CREATE TABLE IF NOT EXISTS upgrade_checks (
     best TEXT DEFAULT '{}',          -- the best upgrade offer
     error TEXT DEFAULT '',
     checked_at TEXT
+);
+"""
+
+# Film-level settings (decisions/0004, 0005): the quality profile of a film and whether Lumina
+# watches for a better version of it (the scheduler checks those).
+LIBRARY_FILMS = """
+CREATE TABLE IF NOT EXISTS library_films (
+    tmdb_id INTEGER PRIMARY KEY,
+    profile_id INTEGER,              -- NULL = the default profile
+    watch_upgrades INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -95,32 +106,47 @@ async def _owned_version(db, tmdb_id: int, prefs: quality.Prefs) -> dict | None:
     return max(versions, key=lambda v: (v["preferred"] or 0, v["quality_score"]))
 
 
+async def film_settings(db, tmdb_id: int) -> dict:
+    cursor = await db.execute("SELECT profile_id, watch_upgrades FROM library_films WHERE tmdb_id = ?", (tmdb_id,))
+    row = await cursor.fetchone()
+    return {"profile_id": row[0], "watch_upgrades": bool(row[1])} if row else {"profile_id": None, "watch_upgrades": False}
+
+
 async def check_movie(tmdb_id: int) -> dict | None:
+    """Better versions of an owned film: higher score (the agreed upgrade rule) AND the film's
+    profile allows it. An owned version that already reached the profile's cutoff is done."""
     cfg = await get_effective_settings()
     prefs = quality.prefs_from_settings(cfg)
     db = await get_db()
     try:
         owned = await _owned_version(db, tmdb_id, prefs)
+        settings = await film_settings(db, tmdb_id)
     finally:
         await db.close()
     if not owned:
         return None
+    profile = await get_profile(settings["profile_id"])
+    owned_row = row_from_media(json.loads(owned["media"] or "{}"), owned["filename"] or "", owned["file_size"] or 0, prefs)
+    if reached_cutoff(owned_row, profile):
+        await _save(tmdb_id, owned, owned["quality_score"], "done", [], note=f"cíl profilu {profile.name} splněn")
+        return {"status": "done", "upgrades": 0}
     _state["current"] = owned["title"]
     offers = await find_offers(cfg, owned["title"], original_title=owned["original_title"] or "",
                                tmdb_id=tmdb_id, media_type="movie")
     await verify_offers(offers, limit=VERIFY_PER_MOVIE)
     owned_cmp = {"quality_score": owned["quality_score"], "language": owned["language"] or "",
                  "file_size": owned["file_size"]}
-    better = [r for r in offers.rows if upgrade_block(r, owned_cmp, offers.prefs) is None]
+    better = [r for r in offers.rows
+              if upgrade_block(r, owned_cmp, offers.prefs) is None and block(r, profile) is None]
     # prefer verified offers, then the score — an unverified name can promise too much
     better.sort(key=lambda r: (not r.get("verified"), -r["quality_score"]))
     status_ = "better" if better else "none"
-    await _save(tmdb_id, owned, owned["quality_score"], status_, better)
+    await _save(tmdb_id, owned, owned["quality_score"], status_, better, note=f"profil {profile.name}")
     return {"status": status_, "upgrades": len(better)}
 
 
 async def _save(tmdb_id: int, owned: dict | None, owned_score: int, status_: str, better: list[dict],
-                error: str = "") -> None:
+                error: str = "", note: str = "") -> None:
     best = {}
     if better:
         b = better[0]
@@ -129,10 +155,10 @@ async def _save(tmdb_id: int, owned: dict | None, owned_score: int, status_: str
     db = await get_db()
     try:
         await db.execute(
-            "INSERT OR REPLACE INTO upgrade_checks (tmdb_id, owned_id, owned_score, status, upgrades, best, error, checked_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO upgrade_checks (tmdb_id, owned_id, owned_score, status, upgrades, best, error, "
+            "checked_at, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (tmdb_id, owned["id"] if owned else None, owned_score, status_, len(better), json.dumps(best), error,
-             datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), note),
         )
         await db.commit()
     finally:
@@ -147,7 +173,7 @@ async def results() -> dict[str, dict]:
             str(r["tmdb_id"]): {
                 "owned_id": r["owned_id"], "owned_score": r["owned_score"], "status": r["status"],
                 "upgrades": r["upgrades"], "best": json.loads(r["best"] or "{}"), "error": r["error"],
-                "checked_at": r["checked_at"],
+                "checked_at": r["checked_at"], "note": r["note"] or "",
             }
             for r in await cursor.fetchall()
         }

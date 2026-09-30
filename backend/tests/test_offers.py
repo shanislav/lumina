@@ -85,3 +85,30 @@ async def test_check_movie_stores_the_best_upgrade(library_movie, monkeypatch):
     assert result == {"status": "better", "upgrades": 1}
     stored = (await upgrades.results())["603"]
     assert stored["status"] == "better" and stored["best"]["ident"] == "4k"
+
+
+async def test_film_profile_limits_upgrades_and_cutoff_stops_them(library_movie, monkeypatch):
+    import importlib
+    lib = importlib.import_module("app.modules.library.router")
+
+    async def fake_find(cfg, query, **kw):
+        return Offers(CTX, PREFS, [row("The.Matrix.1999.2160p.HDR.CZ.mkv", 30_000_000_000, "webshare", "4k"),
+                                   row("The.Matrix.1999.1080p.x265.CZ.mkv", 4_000_000_000, "webshare", "fhd")])
+
+    async def no_verify(offers, limit=10):
+        return None
+    monkeypatch.setattr(upgrades, "find_offers", fake_find)
+    monkeypatch.setattr(upgrades, "verify_offers", no_verify)
+
+    await lib.set_film_settings(603, lib.FilmSettings(profile_id=2, watch_upgrades=True))      # Full HD
+    assert await upgrades.check_movie(603) == {"status": "better", "upgrades": 1}
+    stored = (await upgrades.results())["603"]
+    assert stored["best"]["ident"] == "fhd" and stored["note"] == "profil Full HD"
+
+    # a profile the owned 720p version already fulfils → nothing is searched
+    settings = importlib.import_module("app.modules.settings.router")
+    easy = await settings.create_profile(settings.ProfileBody(name="Stačí 720p", config={"min_resolution": "720p", "cutoff": 5}))
+    await lib.set_film_settings(603, lib.FilmSettings(profile_id=easy["id"], watch_upgrades=True))
+    monkeypatch.setattr(upgrades, "find_offers", None)          # must not be called
+    assert await upgrades.check_movie(603) == {"status": "done", "upgrades": 0}
+    assert (await lib.film_settings_all())["603"] == {"profile_id": easy["id"], "watch_upgrades": True}

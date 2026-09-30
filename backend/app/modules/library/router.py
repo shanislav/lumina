@@ -459,6 +459,36 @@ async def check_upgrades(body: UpgradeCheckRequest):
     return upgrades.enqueue(body.tmdb_ids)
 
 
+class FilmSettings(BaseModel):
+    profile_id: int | None = None
+    watch_upgrades: bool = False
+
+
+@router.get("/films")
+async def film_settings_all():
+    """{tmdb_id: {profile_id, watch_upgrades}} for films that have their own settings."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT tmdb_id, profile_id, watch_upgrades FROM library_films")
+        return {str(r[0]): {"profile_id": r[1], "watch_upgrades": bool(r[2])} for r in await cursor.fetchall()}
+    finally:
+        await db.close()
+
+
+@router.put("/films/{tmdb_id}")
+async def set_film_settings(tmdb_id: int, body: FilmSettings):
+    db = await get_db()
+    try:
+        await db.execute("INSERT INTO library_films (tmdb_id, profile_id, watch_upgrades) VALUES (?, ?, ?) "
+                         "ON CONFLICT(tmdb_id) DO UPDATE SET profile_id = excluded.profile_id, "
+                         "watch_upgrades = excluded.watch_upgrades",
+                         (tmdb_id, body.profile_id, int(body.watch_upgrades)))
+        await db.commit()
+        return {"tmdb_id": tmdb_id, **body.model_dump()}
+    finally:
+        await db.close()
+
+
 @router.get("/upgrades/status")
 async def upgrades_status():
     return upgrades.status()

@@ -728,11 +728,28 @@ export async function searchTMDBForFix(movieId: number, query: string): Promise<
 export interface UpgradeCheck {
   owned_id: number | null;
   owned_score: number;
-  status: "better" | "none" | "error";
+  status: "better" | "none" | "error" | "done";   // done = the film's profile cutoff is reached
   upgrades: number;
   best: { name?: string; source?: string; quality_score?: number; quality_summary?: string; verified?: boolean; size?: number };
   error: string;
   checked_at: string;
+  note?: string;
+}
+
+/** Film-level settings in the library: quality profile and "watch for a better version". */
+export interface FilmSettings { profile_id: number | null; watch_upgrades: boolean }
+
+export async function getFilmSettings(): Promise<Record<string, FilmSettings>> {
+  const res = await fetch(`${API_BASE}/api/library/films`);
+  if (!res.ok) return {};
+  return res.json();
+}
+
+export async function setFilmSettings(tmdbId: number, s: FilmSettings): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/library/films/${tmdbId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s),
+  });
+  if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
 }
 
 export interface UpgradeJob {

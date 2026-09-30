@@ -28,6 +28,11 @@ import {
   updateVersion,
   deleteVersionFile,
   checkUpgrades,
+  getFilmSettings,
+  setFilmSettings,
+  getProfiles,
+  FilmSettings,
+  QualityProfile,
   getUpgradeJob,
   getUpgrades,
   UpgradeCheck,
@@ -131,8 +136,19 @@ export default function LibraryPage() {
   // background check for better versions (library/upgrades.py)
   const [upgradeChecks, setUpgradeChecks] = useState<Record<string, UpgradeCheck>>({});
   const [upgradeJob, setUpgradeJob] = useState<UpgradeJob | null>(null);
+  // film-level settings: quality profile + watch for a better version (the scheduler checks those)
+  const [filmSettingsMap, setFilmSettingsMap] = useState<Record<string, FilmSettings>>({});
+  const [profiles, setProfiles] = useState<QualityProfile[]>([]);
+  async function saveFilmSettings(tmdbId: number, patch: Partial<FilmSettings>) {
+    const current: FilmSettings = filmSettingsMap[String(tmdbId)] ?? { profile_id: null, watch_upgrades: false };
+    const next: FilmSettings = { ...current, ...patch };
+    setFilmSettingsMap((prev) => ({ ...prev, [String(tmdbId)]: next }));
+    await setFilmSettings(tmdbId, next);
+  }
   useEffect(() => {
     getUpgrades().then(setUpgradeChecks).catch(() => {});
+    getFilmSettings().then(setFilmSettingsMap).catch(() => {});
+    getProfiles().then(setProfiles).catch(() => {});
     getUpgradeJob().then(setUpgradeJob).catch(() => {});
   }, []);
   useEffect(() => {
@@ -806,12 +822,33 @@ export default function LibraryPage() {
                     ⬆ Nalezena lepší verze: {c.best.quality_summary} · kvalita {c.owned_score} → {c.best.quality_score}
                     {c.upgrades > 1 ? ` (a ${c.upgrades - 1} další)` : ""} · kontrola {c.checked_at}
                   </p>
+                ) : c.status === "done" ? (
+                  <p className="text-emerald-400 text-xs">✓ {c.note || "Cíl profilu splněn"} — lepší verze se nehledá (kontrola {c.checked_at})</p>
                 ) : c.status === "none" ? (
-                  <p className="text-zinc-500 text-xs">Lepší verze nenalezena (kontrola {c.checked_at})</p>
+                  <p className="text-zinc-500 text-xs">Lepší verze nenalezena{c.note ? ` (${c.note})` : ""} · kontrola {c.checked_at}</p>
                 ) : (
                   <p className="text-red-400 text-xs">Kontrola selhala: {c.error}</p>
                 );
               })()}
+              {fixingMovie.tmdb_id && (fixingMovie.status === "matched" || fixingMovie.status === "manual") ? (() => {
+                const fs = filmSettingsMap[String(fixingMovie.tmdb_id)] ?? { profile_id: null, watch_upgrades: false };
+                const def = profiles.find((p) => p.is_default);
+                return (
+                  <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-zinc-400">
+                    <span>Profil filmu:</span>
+                    <select value={fs.profile_id ?? ""} className="rounded bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 text-zinc-300"
+                      onChange={(e) => saveFilmSettings(fixingMovie.tmdb_id, { profile_id: e.target.value === "" ? null : Number(e.target.value) })}>
+                      <option value="">výchozí ({def?.name ?? "—"})</option>
+                      {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    <label className="flex items-center gap-1.5" title="Plánovač bude hledat lepší verzi, dokud nesplní cíl profilu">
+                      <input type="checkbox" checked={fs.watch_upgrades}
+                        onChange={(e) => saveFilmSettings(fixingMovie.tmdb_id, { watch_upgrades: e.target.checked })} />
+                      Hlídat lepší verzi
+                    </label>
+                  </div>
+                );
+              })() : null}
               {(fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <input
