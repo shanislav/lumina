@@ -59,13 +59,13 @@ export default function SearchBar({ onSearch, loading, initialQuery }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex gap-3 w-full max-w-2xl items-center">
+    <form onSubmit={handleSubmit} className="flex gap-2 sm:gap-3 w-full max-w-2xl items-center">
       <input
         type="text"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search movie or TV show..."
-        className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+        className="flex-1 min-w-0 rounded-lg bg-zinc-800 border border-zinc-700 px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
       />
       {enabledLangs.length > 1 && (
         <LanguageSelect
@@ -80,7 +80,7 @@ export default function SearchBar({ onSearch, loading, initialQuery }: Props) {
       <button
         type="submit"
         disabled={loading || !query.trim()}
-        className="rounded-lg bg-violet-600 px-6 py-3 font-medium text-white hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="flex-shrink-0 rounded-lg bg-violet-600 px-4 sm:px-6 py-3 font-medium text-white hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         {loading ? "..." : "Search"}
       </button>

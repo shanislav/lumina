@@ -228,7 +228,7 @@ function HomeContent() {
 
       {selectedMovie && (
         <div className="w-full space-y-4">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <button
               onClick={() => {
                 // opened from Objevit / Knihovna / Chci (no search results here) → back there
@@ -240,7 +240,7 @@ function HomeContent() {
                 setFiles([]);
                 setResultsCollapsed(false);
               }}
-              className="text-zinc-500 hover:text-zinc-300 transition-colors text-sm"
+              className="text-zinc-500 hover:text-zinc-300 transition-colors text-sm whitespace-nowrap"
             >
               &larr; Zpět
             </button>

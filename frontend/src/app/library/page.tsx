@@ -377,14 +377,14 @@ export default function LibraryPage() {
 
   return (
     <main className="flex flex-col gap-8 px-4 py-8 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-4">
-          <Link href="/" className="text-zinc-500 hover:text-zinc-300 transition-colors text-sm">
+          <Link href="/" className="text-zinc-500 hover:text-zinc-300 transition-colors text-sm whitespace-nowrap">
             &larr; Hledat
           </Link>
           <h1 className="text-2xl font-bold text-zinc-100">Knihovna</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={openBulk}
             disabled={scanning}
@@ -607,7 +607,7 @@ export default function LibraryPage() {
                 </div>
                 <div className="p-2">
                   <p className="text-sm font-medium text-zinc-100 truncate">{movie.title}</p>
-                  <div className="flex items-center gap-2 text-xs text-zinc-500">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500 whitespace-nowrap">
                     {movie.year && <span>{movie.year}</span>}
                     <span>{formatSize(movie.file_size)}</span>
                     {(movie.status === "matched" || movie.status === "manual") && movie.quality_score != null && (

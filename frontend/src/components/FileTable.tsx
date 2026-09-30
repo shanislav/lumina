@@ -314,13 +314,12 @@ export default function FileTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-zinc-800 text-zinc-400 text-left">
-            <th className="py-2 px-3 font-medium">Název</th>
-            <th className="py-2 px-3 font-medium w-20">Zdroj</th>
-            <th className="py-2 px-3 font-medium w-64">Kvalita</th>
-            <th className="py-2 px-3 font-medium w-40">Zvuk / titulky</th>
-            <th className="py-2 px-3 font-medium w-20">Velikost</th>
-            <th className="py-2 px-3 font-medium w-12" title="Je to hledaný film?">Film</th>
-            <th className="py-2 px-3 font-medium w-28"></th>
+            <th className="py-2 px-3 font-medium">Název / zdroj</th>
+            <th className="py-2 px-3 font-medium">Kvalita</th>
+            <th className="py-2 px-3 font-medium">Zvuk / tit.</th>
+            <th className="py-2 px-3 font-medium">Velikost</th>
+            <th className="py-2 px-3 font-medium" title="Je to hledaný film?">Film</th>
+            <th className="py-2 px-3 font-medium"></th>
           </tr>
         </thead>
         <tbody>
@@ -330,19 +329,22 @@ export default function FileTable({
             const dim = file.film === "no" || file.film === "length";
             return (
               <tr key={row.key} className={`border-b border-zinc-800/50 hover:bg-zinc-900/50 ${dim ? "opacity-50" : ""}`}>
-                <td className="py-2 px-3 text-zinc-200 max-w-md truncate" title={file.name}>
-                  {row === best && <span title="Doporučená volba" className="mr-1 text-yellow-400">★</span>}
-                  {ownedSizes.has(file.size) && (
-                    <span title="Soubor se stejnou velikostí už je v knihovně" className="mr-2 rounded bg-emerald-900/70 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
-                      ✓ tento soubor už máš
-                    </span>
-                  )}
-                  {file.name}
+                {/* max-w-0 + w-full: the name takes whatever width is left and is cut, the other columns never squeeze */}
+                <td className="py-2 px-3 text-zinc-200 max-w-0 min-w-[12rem] w-full" title={file.name}>
+                  <div className="truncate">
+                    {row === best && <span title="Doporučená volba" className="mr-1 text-yellow-400">★</span>}
+                    {file.name}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                    {row.copies.map((c) => <SourceBadge key={keyOf(c)} file={c} />)}
+                    {ownedSizes.has(file.size) && (
+                      <span title="Soubor se stejnou velikostí už je v knihovně" className="rounded bg-emerald-900/70 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                        ✓ tento soubor už máš
+                      </span>
+                    )}
+                  </div>
                 </td>
-                <td className="py-2 px-3 whitespace-nowrap space-x-1">
-                  {row.copies.map((c) => <SourceBadge key={keyOf(c)} file={c} />)}
-                </td>
-                <td className="py-2 px-3">
+                <td className="py-2 px-3 whitespace-nowrap">
                   <div className="flex items-center gap-2" title={qualityTooltip(file)}>
                     <QualityBadge file={file} />
                     {upgrade && upgrade.quality_score != null && (
@@ -357,7 +359,7 @@ export default function FileTable({
                   </div>
                 </td>
                 <td className="py-2 px-3"><LanguageCell file={file} /></td>
-                <td className="py-2 px-3 text-zinc-400 font-mono text-xs">{formatSize(file.size)}</td>
+                <td className="py-2 px-3 text-zinc-400 font-mono text-xs whitespace-nowrap">{formatSize(file.size)}</td>
                 <td className="py-2 px-3"><FilmCell file={file} /></td>
                 <td className="py-2 px-3">
                   {!dlState ? (
@@ -447,13 +449,15 @@ function LanguageCell({ file }: { file: ScoredFile }) {
     ? (file.audio ?? []).map((a) => [(a.lang || "?").toUpperCase(), a.codec, a.channels ? `${a.channels}ch` : ""].filter(Boolean).join(" ")).join(", ")
     : "Podle názvu souboru (neověřeno)";
   return (
-    <div title={tip} className="leading-tight">
-      {verified ? <span className="text-green-500 text-[10px] mr-1">✓</span> : <span className="text-zinc-600 text-[10px] mr-1">?</span>}
-      {audio.map((l) => <Lang key={`a${l}`} code={l} verified={verified} />)}
+    <div title={tip} className="leading-tight whitespace-nowrap">
+      <div>
+        {verified ? <span className="text-green-500 text-[10px] mr-1">✓</span> : <span className="text-zinc-600 text-[10px] mr-1">?</span>}
+        {audio.map((l) => <Lang key={`a${l}`} code={l} verified={verified} />)}
+      </div>
       {subs.length > 0 && (
-        <span className="text-[10px] text-zinc-500 ml-0.5">
+        <div className="text-[10px] text-zinc-500 mt-0.5">
           tit: {subs.map((l) => <Lang key={`s${l}`} code={l} verified={verified} sub />)}
-        </span>
+        </div>
       )}
     </div>
   );

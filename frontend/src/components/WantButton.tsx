@@ -41,7 +41,7 @@ export default function WantButton({ movie }: { movie: TMDBMovie }) {
       </select>
       <button onClick={add} disabled={state === "busy"}
         title="Přidat do seznamu Chci — Lumina ho bude hledat podle profilu"
-        className="rounded border border-violet-700 px-2 py-1 text-violet-200 hover:bg-violet-900/40 disabled:opacity-50">
+        className="whitespace-nowrap rounded border border-violet-700 px-2 py-1 text-violet-200 hover:bg-violet-900/40 disabled:opacity-50">
         {state === "busy" ? "…" : "+ Chci"}
       </button>
       {state !== "idle" && state !== "busy" && <span className="text-red-400">{state}</span>}
