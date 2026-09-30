@@ -185,11 +185,11 @@ class Result:
 
 
 def _measure(ref_path: str, ref_track: int, other_path: str, other_track: int, at: float, speed: float,
-             offset_guess: float = 0.0) -> Window:
+             offset_guess: float = 0.0, margin: float = MARGIN_S) -> Window:
     needle = onsets(extract(ref_path, ref_track, at, WINDOW_S))
     center = speed * at + offset_guess
-    start = max(0.0, center - MARGIN_S)
-    hay = stretch(onsets(extract(other_path, other_track, start, speed * WINDOW_S + 2 * MARGIN_S)), speed)
+    start = max(0.0, center - margin)
+    hay = stretch(onsets(extract(other_path, other_track, start, speed * WINDOW_S + 2 * margin)), speed)
     lag, score, sharp = locate(needle, hay)
     found_other = start + lag / FPS * speed
     return Window(at=at, offset=found_other - speed * at, score=score, sharpness=sharp)
@@ -296,6 +296,7 @@ def analyze(ref_path: str, ref_track: int, other_path: str, other_track: int, pr
 
 SMOOTH_S = 1.0          # agreement is averaged over this much time
 MIN_GAP_S = 0.3         # shorter "missing" stretches are noise at the cut point
+SCAN_STEP_S = 20.0      # coarse search for a cut: one window every this many seconds
 
 
 def _aligned_other(other_path: str, other_track: int, speed: float, offset: float, lo: float,
@@ -319,37 +320,57 @@ def _agreement(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.convolve(v, np.ones(k) / k, mode="same")
 
 
-def split_point(c1: np.ndarray, c2: np.ndarray) -> tuple[int, int]:
-    """Frames (i, j), i ≤ j: the first mapping fits before i, the second from j on (between them
-    neither — the other version lacks that stretch). Maximizes the agreement of both sides, each
-    measured against half of its own typical agreement."""
-    n = min(len(c1), len(c2))
-    c1, c2 = c1[:n], c2[:n]
-    edge = max(1, n // 10)
-    a = c1 - max(float(np.mean(c1[:edge])), 1e-3) / 2
-    b = c2 - max(float(np.mean(c2[-edge:])), 1e-3) / 2
-    pre = np.concatenate([[0.0], np.cumsum(a)])                 # pre[i] = a[:i]
-    suf = np.concatenate([np.cumsum(b[::-1])[::-1], [0.0]])     # suf[j] = b[j:]
-    best_i = np.zeros(n + 1, dtype=int)
-    cur = 0
-    for j in range(n + 1):
-        if pre[j] > pre[cur]:
-            cur = j
-        best_i[j] = cur
-    total = pre[best_i] + suf
-    j = int(np.argmax(total))
-    return int(best_i[j]), j
+def _fine_end(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
+              s1: float, o1: float) -> float:
+    """The window at ``s1`` fits o1 → where exactly in [s1 + W/2, s1 + W + step] o1 stops fitting.
+    Per-frame agreement is weak, so it is only read next to a stretch known to fit."""
+    length = WINDOW_S + SCAN_STEP_S
+    ref = onsets(extract(ref_path, ref_track, s1, length))
+    c = _agreement(ref, _aligned_other(other_path, other_track, speed, o1, s1, length))
+    half = int(WINDOW_S / 2 * FPS)
+    level = max(float(np.mean(c[:half])), 1e-3)
+    pre = np.cumsum(c - level / 2)
+    i = half + int(np.argmax(pre[half:])) if len(pre) > half else len(pre)
+    return s1 + i / FPS
+
+
+def _fine_start(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
+                s2: float, o2: float) -> float:
+    """The window at ``s2`` fits o2 → where exactly in [s2 − step, s2 + W/2] o2 starts fitting."""
+    lo = max(0.0, s2 - SCAN_STEP_S)
+    length = s2 + WINDOW_S - lo
+    ref = onsets(extract(ref_path, ref_track, lo, length))
+    c = _agreement(ref, _aligned_other(other_path, other_track, speed, o2, lo, length))
+    half = int(WINDOW_S / 2 * FPS)
+    level = max(float(np.mean(c[-half:])), 1e-3)
+    suf = np.cumsum((c - level / 2)[::-1])[::-1]
+    limit = max(1, len(suf) - half)
+    j = int(np.argmax(suf[:limit]))
+    return lo + j / FPS
 
 
 def find_cut(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
              lo: float, hi: float, o1: float, o2: float) -> tuple[float, float]:
-    """Between ``lo`` (offset o1 fits) and ``hi`` (o2 fits) → (t1, t2) in reference seconds."""
-    length = hi - lo
-    ref = onsets(extract(ref_path, ref_track, lo, length))
-    c1 = _agreement(ref, _aligned_other(other_path, other_track, speed, o1, lo, length))
-    c2 = _agreement(ref, _aligned_other(other_path, other_track, speed, o2, lo, length))
-    i, j = split_point(c1, c2)
-    return lo + i / FPS, lo + j / FPS
+    """Between the window at ``lo`` (offset o1 fits) and the one at ``hi`` (o2 fits) → (t1, t2):
+    o1 fits until t1, o2 from t2 (between them the other version has nothing for the picture).
+
+    1) windows every 20 s say which offset they fit — the last o1 and the first o2 one bound the cut;
+    2) the exact points come from the per-frame agreement right next to those windows."""
+    margin = abs(o1 - o2) / 2 + 20
+    s1, s2 = lo, hi
+    for at in np.arange(lo + SCAN_STEP_S, hi, SCAN_STEP_S):
+        w = _measure(ref_path, ref_track, other_path, other_track, float(at), speed, (o1 + o2) / 2, margin)
+        if not w.good:
+            continue
+        if abs(w.offset - o1) <= SAME_OFFSET_S:
+            s1 = max(s1, float(at))
+        elif abs(w.offset - o2) <= SAME_OFFSET_S:
+            s2 = min(s2, float(at))
+    t1 = _fine_end(ref_path, ref_track, other_path, other_track, speed, s1, o1)
+    t2 = _fine_start(ref_path, ref_track, other_path, other_track, speed, s2, o2)
+    if t1 > t2:            # the other version has extra material: one cut point
+        t1 = t2 = (t1 + t2) / 2
+    return t1, t2
 
 
 def cut_pieces(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
@@ -357,7 +378,7 @@ def cut_pieces(ref_path: str, ref_track: int, other_path: str, other_track: int,
     pieces: list[dict] = []
     start = 0.0
     for k, (s1, s2) in enumerate(zip(segments, segments[1:])):
-        lo, hi = s1.end - WINDOW_S, s2.start + WINDOW_S
+        lo, hi = s1.end - WINDOW_S, s2.start
         t1, t2 = find_cut(ref_path, ref_track, other_path, other_track, speed, lo, hi, s1.offset, s2.offset)
         pieces.append({"start": start, "end": t1, "offset": s1.offset})
         if t2 - t1 >= MIN_GAP_S:

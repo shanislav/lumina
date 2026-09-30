@@ -3,7 +3,7 @@
 
 import numpy as np
 
-from app.modules.audiosync.analyze import FPS, RATE, Window, judge, locate, onsets, split_point, stretch
+from app.modules.audiosync.analyze import FPS, RATE, Window, judge, locate, onsets, stretch
 
 
 def _events(seconds: float, seed: int) -> np.ndarray:
@@ -109,18 +109,3 @@ async def test_keep_audio_download_is_held_back_from_the_library(monkeypatch):
     await events.emit("download.completed", {**base, "library_action": {"mode": "replace", "file_id": 3}})
     assert len(imported) == 1 and len(started) == 1
 
-
-def test_split_point_finds_the_cut_and_a_missing_stretch():
-    rng = np.random.default_rng(5)
-    n = 30000                                   # 300 s of 10 ms frames
-    noise = lambda: rng.normal(0, 0.05, n)      # noqa: E731
-    # the other version has an extra scene: mapping 1 fits until 120 s, mapping 2 from there
-    c1 = noise() + np.where(np.arange(n) < 12000, 0.3, 0.0)
-    c2 = noise() + np.where(np.arange(n) >= 12000, 0.3, 0.0)
-    i, j = split_point(c1, c2)
-    assert abs(i - 12000) < 150 and abs(j - 12000) < 150
-    # the other version lacks 40 s: mapping 1 fits until 100 s, mapping 2 only from 140 s
-    c1 = noise() + np.where(np.arange(n) < 10000, 0.3, 0.0)
-    c2 = noise() + np.where(np.arange(n) >= 14000, 0.3, 0.0)
-    i, j = split_point(c1, c2)
-    assert abs(i - 10000) < 150 and abs(j - 14000) < 150

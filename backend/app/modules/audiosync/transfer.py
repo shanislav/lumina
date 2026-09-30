@@ -176,6 +176,22 @@ def verify(out_path: str, ref_track: int, new_track: int, duration: float,
     if len(good) < VERIFY_WINDOWS - 1 or typical > VERIFY_TYPICAL or any(abs(w.offset) > VERIFY_MAX for w in good):
         offs = ", ".join(f"{w.offset:+.2f}" for w in good) or "žádná shoda"
         raise TransferError(f"Kontrola výsledku neprošla (posuny {offs} s) — soubor nepoužit")
+    # a different cut: right before and right after every cut the audio must fit too
+    for p in (pieces or []) if pieces and len(pieces) > 1 else []:
+        if p.get("offset") is None:
+            continue
+        spots = []
+        if p["start"] > 0 and p["start"] + 3 + engine.WINDOW_S <= p["end"]:
+            spots.append(p["start"] + 3)
+        if p["end"] < duration - 1 and p["end"] - 3 - engine.WINDOW_S >= p["start"]:
+            spots.append(p["end"] - 3 - engine.WINDOW_S)
+        for at in spots:
+            w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0)
+            windows.append(w)
+            if not w.good or abs(w.offset) > VERIFY_MAX:
+                mm, ss = divmod(int(at), 60)
+                raise TransferError(f"U střihu kolem {mm // 60}:{mm % 60:02d}:{ss:02d} zvuk nesedí nebo nejde ověřit "
+                                    f"— soubor nepoužit")
     return windows
 
 
