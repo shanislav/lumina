@@ -90,6 +90,18 @@ async def start_download(req: DownloadRequest) -> dict:
     raise HTTPException(400, f"Source not found (source_id={req.source_id})")
 
 
+async def on_download_request(payload: dict) -> None:
+    """Event download.request — another module (wanted / library upgrades via the scheduler) asks for
+    a download; started exactly like the UI does it. payload: DownloadRequest fields."""
+    fields = {k: payload[k] for k in DownloadRequest.model_fields if k in payload}
+    try:
+        payload["started"] = await start_download(DownloadRequest(**fields))
+        logger.info("Download requested by %s: %s", payload.get("requested_by", "?"), fields.get("title"))
+    except Exception as e:
+        payload["error"] = str(e)
+        logger.warning("Requested download of %s failed: %s", fields.get("title"), e)
+
+
 @router.get("/downloads")
 async def list_downloads() -> dict:
     """List all active + recent downloads from Aria2 and qBittorrent."""

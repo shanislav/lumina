@@ -16,6 +16,9 @@ import {
   getIntegrations,
   updateIntegration,
   testPlex,
+  getScheduler,
+  runSchedulerNow,
+  type SchedulerStatus,
   type PlexTestResult,
   getAppSettings,
   updateAppSettings,
@@ -83,6 +86,23 @@ const INTEGRATION_TYPES = [
     icon: "📄",
     description: "Když je zapnuto, Lumina u každého spárovaného filmu hned zapíše aktuální movie.nfo (TMDB/IMDB ID, technické údaje, stav) a staré NFO ve složce smaže. Slouží i jako záloha databáze Luminy.",
     fields: [],
+  },
+  {
+    type: "scheduler",
+    label: "Plánovač (noční hledání)",
+    icon: "🌙",
+    description: "Jednou denně v nastavený čas zkontroluje seznam „Chci“ a filmy v knihovně se zapnutým „Hlídat lepší verzi“ (hledá postupně, šetrně k WS/FS). Automatické stahování je vypnuté, dokud ho nezapneš.",
+    fields: [
+      { key: "time", label: "Čas spuštění", type: "text", default: "03:00", hint: "HH:MM, čas serveru. Když server v tu dobu neběží, doběhne do 12 hodin." },
+      { key: "wanted", label: "Kontrolovat seznam Chci", type: "checkbox", default: "true" },
+      { key: "upgrades", label: "Kontrolovat hlídané filmy v knihovně", type: "checkbox", default: "true" },
+      { key: "auto_download_wanted", label: "Rovnou stáhnout nalezené z Chci", type: "checkbox", default: "false", hint: "Nejlepší soubor, který splní profil filmu" },
+      { key: "auto_download_upgrades", label: "Lepší verze filmů v knihovně", type: "select", default: "off", options: [
+        { value: "off", label: "jen ukázat" },
+        { value: "version", label: "stáhnout jako další verzi" },
+        { value: "replace", label: "stáhnout a nahradit starou (smaže ji, když sedí délka)" },
+      ] },
+    ],
   },
   {
     type: "plex",
@@ -534,6 +554,27 @@ function AddSourceModal({ onClose, onSave }: { onClose: () => void, onSave: (dat
   );
 }
 
+function SchedulerInfo() {
+  const [status, setStatus] = useState<SchedulerStatus | null>(null);
+  const [ran, setRan] = useState(false);
+  useEffect(() => { getScheduler().then(setStatus).catch(() => {}); }, [ran]);
+  if (!status) return null;
+  return (
+    <div className="rounded-lg bg-zinc-950 p-3 border border-zinc-800/50 text-xs space-y-1.5">
+      <p className="text-zinc-400">
+        {status.enabled ? <>Další běh: <b className="text-zinc-200">{status.next_run}</b></> : "Plánovač je vypnutý (přepínač v seznamu)."}
+        {status.last_run && <> · poslední: {status.last_run}</>} · čas serveru {status.server_time}
+      </p>
+      <button type="button" disabled={ran}
+        onClick={async () => { await runSchedulerNow(); setRan(true); }}
+        className="rounded bg-zinc-700 px-3 py-1.5 text-zinc-200 hover:bg-zinc-600 disabled:opacity-50">
+        {ran ? "Spuštěno — průběh v Chci / Knihovně" : "Spustit teď"}
+      </button>
+      <p className="text-zinc-600">„Spustit teď“ použije uložené nastavení (včetně automatického stahování).</p>
+    </div>
+  );
+}
+
 function EditIntegrationModal({ type, integration, onClose, onSave }: { type: string, integration: Automation, onClose: () => void, onSave: (config: Record<string, string>) => void }) {
   const typeDef = INTEGRATION_TYPES.find((t) => t.type === type);
   const [config, setConfig] = useState(integration.config);
@@ -592,6 +633,7 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
                 {f.hint && <p className="text-[10px] text-zinc-600 mt-1">{f.hint}</p>}
               </div>
             ))}
+            {type === "scheduler" && <SchedulerInfo />}
             {type === "plex" && (
               <div className="rounded-lg bg-zinc-950 p-3 border border-zinc-800/50 space-y-2">
                 <button type="button" disabled={!config.url || !config.token || plexTest === "loading"}

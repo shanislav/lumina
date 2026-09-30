@@ -52,6 +52,7 @@ VERIFY_PER_MOVIE = 10
 MAX_PER_JOB = 200
 
 _queue: list[int] = []
+_auto_download: dict[int, str] = {}     # tmdb_id → "version" | "replace" (scheduler with auto downloads)
 _state = {"running": False, "total": 0, "done": 0, "current": "", "found": 0}
 _task: asyncio.Task | None = None
 
@@ -81,6 +82,9 @@ async def _run() -> None:
                 result = await check_movie(tmdb_id)
                 if result and result["status"] == "better":
                     _state["found"] += 1
+                    if tmdb_id in _auto_download:
+                        await request_download(tmdb_id, _auto_download[tmdb_id])
+                _auto_download.pop(tmdb_id, None)
             except Exception as e:  # one movie must not stop the job
                 logger.warning("Upgrade check of tmdb %s failed: %s", tmdb_id, e)
                 await _save(tmdb_id, None, 0, "error", [], str(e))
@@ -150,7 +154,7 @@ async def _save(tmdb_id: int, owned: dict | None, owned_score: int, status_: str
     best = {}
     if better:
         b = better[0]
-        best = {k: b.get(k) for k in ("name", "source", "source_id", "ident", "size", "quality_score",
+        best = {k: b.get(k) for k in ("name", "source", "source_id", "ident", "size", "magnet_url", "quality_score",
                                       "quality_summary", "lang_tier", "audio_langs", "verified")}
     db = await get_db()
     try:
@@ -163,6 +167,59 @@ async def _save(tmdb_id: int, owned: dict | None, owned_score: int, status_: str
         await db.commit()
     finally:
         await db.close()
+
+
+async def request_download(tmdb_id: int, mode: str) -> None:
+    """Scheduler with automatic upgrades: download the best better version as a new version or as a
+    replacement of the compared one (the import deletes the old one only when the lengths agree)."""
+    from app.core import events
+
+    check = (await results()).get(str(tmdb_id)) or {}
+    best = check.get("best") or {}
+    if check.get("status") != "better" or not best.get("ident") or not check.get("owned_id"):
+        return
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT title, year FROM library_movies WHERE id = ?", (check["owned_id"],))
+        owned = await cursor.fetchone()
+    finally:
+        await db.close()
+    if not owned:
+        return
+    action = {"mode": "replace", "file_id": check["owned_id"]} if mode == "replace" else {"mode": "version"}
+    payload = await events.emit("download.request", {
+        "file_ident": best["ident"], "source": best.get("source"), "source_id": best.get("source_id") or 0,
+        "magnet_url": best.get("magnet_url"), "tmdb_id": tmdb_id, "title": owned["title"],
+        "year": int((owned["year"] or "0")[:4] or 0), "content_type": "movie", "library_action": action,
+        "requested_by": "upgrade (plánovač)",
+    })
+    if payload.get("started"):
+        db = await get_db()
+        try:
+            await db.execute("UPDATE upgrade_checks SET status = 'downloading' WHERE tmdb_id = ?", (tmdb_id,))
+            await db.commit()
+        finally:
+            await db.close()
+
+
+async def on_scheduler_run(payload: dict) -> None:
+    """Nightly run: films with "watch for a better version" (not already downloading one)."""
+    if not payload.get("upgrades"):
+        return
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT f.tmdb_id FROM library_films f LEFT JOIN upgrade_checks u ON u.tmdb_id = f.tmdb_id "
+            "WHERE f.watch_upgrades = 1 AND (u.status IS NULL OR u.status != 'downloading' "
+            "OR u.checked_at < datetime('now', '-3 days'))")
+        ids = [r[0] for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+    mode = payload.get("auto_download_upgrades") or "off"
+    if mode in ("version", "replace"):
+        _auto_download.update({i: mode for i in ids})
+    if ids:
+        enqueue(ids)
 
 
 async def results() -> dict[str, dict]:

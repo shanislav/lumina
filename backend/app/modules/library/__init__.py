@@ -7,6 +7,7 @@ from app.modules.library.imports import on_download_completed
 from app.modules.library.organize import FILE_OPERATIONS
 from app.modules.library.router import router
 from app.modules.library.upgrades import LIBRARY_FILMS, UPGRADE_CHECKS
+from app.modules.library.upgrades import on_scheduler_run as on_scheduler_run_upgrades
 
 LIBRARY_V1 = """
 CREATE TABLE IF NOT EXISTS library_movies (
@@ -69,7 +70,8 @@ module = Module(
     order=20,
     routers=[router],
     # after the renamer (p10): every finished download goes into the library
-    subscriptions=[Subscription("download.completed", on_download_completed, priority=30)],
+    subscriptions=[Subscription("download.completed", on_download_completed, priority=30),
+                   Subscription("scheduler.run", on_scheduler_run_upgrades)],
     migrations=[
         LIBRARY_V1,
         add_column("library_movies", "matched_by", "TEXT DEFAULT 'filename'"),

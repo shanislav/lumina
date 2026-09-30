@@ -22,6 +22,7 @@ import {
 const STATUS: Record<WantedItem["status"], { label: string; cls: string }> = {
   wanted: { label: "Hledám", cls: "bg-zinc-800 text-zinc-300" },
   found: { label: "Nalezeno", cls: "bg-green-900/70 text-green-200" },
+  downloading: { label: "Stahuje se", cls: "bg-violet-900/70 text-violet-200" },
   done: { label: "V knihovně", cls: "bg-emerald-950 text-emerald-400" },
 };
 
@@ -158,6 +159,12 @@ export default function WantedPage() {
                       Stáhnout nejlepší
                     </button>
                   )
+                )}
+                {item.status === "downloading" && (
+                  <button title="Stahování se nepovedlo? Vrátit mezi hledané" className="text-zinc-400 hover:text-zinc-200"
+                    onClick={async () => { await updateWanted(item.id, { status: "wanted" }); load(); }}>
+                    Znovu hledat
+                  </button>
                 )}
                 {item.status !== "done" && (
                   <>

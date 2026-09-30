@@ -15,6 +15,11 @@ Known events:
                            a library file changed (import, scan, rename, undo) — NFO, Plex, wanted react
     offers.found           {kind: "wanted", wanted_id, tmdb_id, title, year, profile, matches, best}
                            a check found offers the profile allows (for a future notification module)
+    download.request       {file_ident, source, source_id, magnet_url, tmdb_id, title, year, content_type,
+                            library_action, requested_by} — start a download (the downloads module does it,
+                           sets "started" or "error")
+    scheduler.run          {wanted, upgrades, auto_download_wanted, auto_download_upgrades} — the nightly
+                           run; wanted / library enqueue their checks
 """
 
 import logging

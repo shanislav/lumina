@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS wanted (
     year TEXT DEFAULT '',
     poster_url TEXT,
     profile_id INTEGER,              -- NULL = the default profile
-    status TEXT DEFAULT 'wanted',    -- wanted | found | done
+    status TEXT DEFAULT 'wanted',    -- wanted | found | downloading | done
     matches INTEGER DEFAULT 0,       -- offers the profile allows
     best TEXT DEFAULT '{}',          -- the best of them
     note TEXT DEFAULT '',
@@ -39,6 +39,7 @@ BEST_FIELDS = ("name", "source", "source_id", "ident", "size", "magnet_url", "qu
                "resolution", "codec", "hdr", "lang_tier", "audio_langs", "verified", "video_bitrate")
 
 _queue: list[int] = []
+_auto_download: set[int] = set()      # films the scheduler may download automatically when found
 _state = {"running": False, "total": 0, "done": 0, "current": "", "found": 0}
 
 
@@ -46,7 +47,9 @@ def job_status() -> dict:
     return {**_state, "queued": len(_queue)}
 
 
-def enqueue(ids: list[int]) -> dict:
+def enqueue(ids: list[int], auto_download: bool = False) -> dict:
+    if auto_download:
+        _auto_download.update(ids)
     new = [i for i in dict.fromkeys(ids) if i not in _queue]
     _queue.extend(new)
     if not _state["running"]:
@@ -64,6 +67,9 @@ async def _run() -> None:
             try:
                 if (await check(wanted_id) or {}).get("status") == "found":
                     _state["found"] += 1
+                    if wanted_id in _auto_download:
+                        await request_download(wanted_id)
+                _auto_download.discard(wanted_id)
             except Exception as e:   # one film must not stop the job
                 logger.warning("Wanted check %s failed: %s", wanted_id, e)
             _state["done"] += 1
@@ -115,6 +121,41 @@ async def check(wanted_id: int) -> dict | None:
                                            "title": item["title"], "year": item["year"], "profile": profile.name,
                                            "matches": len(suitable), "best": best})
     return {"status": status, "matches": len(suitable)}
+
+
+async def request_download(wanted_id: int) -> None:
+    """Scheduler with automatic downloads on: ask the downloads module for the best offer."""
+    item = await get(wanted_id)
+    best = json.loads((item or {}).get("best") or "{}")
+    if not item or not best.get("ident"):
+        return
+    payload = await events.emit("download.request", {
+        "file_ident": best["ident"], "source": best.get("source"), "source_id": best.get("source_id") or 0,
+        "magnet_url": best.get("magnet_url"), "tmdb_id": item["tmdb_id"], "title": item["title"],
+        "year": int(item["year"] or 0), "content_type": "movie", "requested_by": "wanted (plánovač)",
+    })
+    if payload.get("started"):
+        db = await get_db()
+        try:
+            await db.execute("UPDATE wanted SET status = 'downloading' WHERE id = ?", (wanted_id,))
+            await db.commit()
+        finally:
+            await db.close()
+
+
+async def on_scheduler_run(payload: dict) -> None:
+    """Nightly run: check every film that is not found-and-downloading or done yet."""
+    if not payload.get("wanted"):
+        return
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT id FROM wanted WHERE status IN ('wanted', 'found') "
+                                  "ORDER BY checked_at IS NOT NULL, checked_at")
+        ids = [r[0] for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+    if ids:
+        enqueue(ids, auto_download=bool(payload.get("auto_download_wanted")))
 
 
 async def on_movie_updated(payload: dict) -> None:

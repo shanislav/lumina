@@ -80,7 +80,7 @@ async def update_wanted(wanted_id: int, body: WantedUpdate):
     fields = {k: getattr(body, k) for k in body.model_fields_set}
     if not fields:
         return await store.get(wanted_id)
-    if body.status is not None and body.status not in ("wanted", "found", "done"):
+    if body.status is not None and body.status not in ("wanted", "found", "downloading", "done"):
         raise HTTPException(400, "Neznámý stav")
     db = await get_db()
     try:

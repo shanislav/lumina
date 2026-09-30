@@ -6,9 +6,9 @@ subscribed to that event.
 """
 
 from app.core.migrations import add_column
-from app.core.module import Module
+from app.core.module import Module, Subscription
 from app.modules.downloads.monitor import ensure_monitor_running
-from app.modules.downloads.router import router
+from app.modules.downloads.router import on_download_request, router
 from app.modules.downloads.store import DOWNLOAD_TRACKER_V1
 
 module = Module(
@@ -24,5 +24,6 @@ module = Module(
         # source label (WebShare / FastShare / Torrent) survives a restart
         add_column("download_tracker", "source_label", "TEXT DEFAULT ''"),
     ],
+    subscriptions=[Subscription("download.request", on_download_request)],
     on_startup=[ensure_monitor_running],
 )

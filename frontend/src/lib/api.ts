@@ -379,13 +379,32 @@ export interface WantedItem {
   year: string;
   poster_url: string | null;
   profile_id: number | null;
-  status: "wanted" | "found" | "done";
+  status: "wanted" | "found" | "downloading" | "done";
   matches: number;
   best: WantedBest;
   note: string;
   added_at: string;
   checked_at: string | null;
   done_at: string | null;
+}
+
+export interface SchedulerStatus {
+  enabled: boolean;
+  config: Record<string, string>;
+  last_run: string;
+  next_run: string | null;
+  server_time: string;
+}
+
+export async function getScheduler(): Promise<SchedulerStatus> {
+  const res = await fetch(`${API_BASE}/api/scheduler`);
+  if (!res.ok) throw new Error(`Scheduler status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function runSchedulerNow(): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/scheduler/run`, { method: "POST" });
+  if (!res.ok) throw new Error(`Spuštění selhalo: ${res.status}`);
 }
 
 export interface WantedJob { running: boolean; total: number; done: number; current: string; found: number; queued: number }

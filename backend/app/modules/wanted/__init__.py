@@ -8,7 +8,7 @@ so a notification module can pick them up later.
 
 from app.core.module import Module, Subscription
 from app.modules.wanted.router import router
-from app.modules.wanted.store import WANTED, on_movie_updated
+from app.modules.wanted.store import WANTED, on_movie_updated, on_scheduler_run
 
 module = Module(
     name="wanted",
@@ -16,5 +16,6 @@ module = Module(
     order=25,
     routers=[router],
     migrations=[WANTED],
-    subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=80)],
+    subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=80),
+                   Subscription("scheduler.run", on_scheduler_run)],
 )
