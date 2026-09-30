@@ -7,6 +7,7 @@ import { getModules } from "@/lib/api";
 /** Top navigation — a page is shown only when the backend module behind it runs. */
 const LINKS: { href: string; label: string; module?: string }[] = [
   { href: "/discover", label: "Objevit", module: "search" },
+  { href: "/wanted", label: "Chci", module: "wanted" },
   { href: "/library", label: "Knihovna", module: "library" },
   { href: "/settings", label: "Nastavení" },
 ];

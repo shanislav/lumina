@@ -3,6 +3,7 @@
 import { TMDBMovie } from "@/lib/api";
 import Image from "next/image";
 import { useEffect } from "react";
+import WantButton from "@/components/WantButton";
 
 interface Props {
   movie: TMDBMovie;
@@ -88,6 +89,9 @@ export default function MovieDetailModal({ movie, onClose, onSearch }: Props) {
             </svg>
             Vyhledat soubory
           </button>
+          <div className="mt-3 flex items-center justify-center gap-2 text-xs text-zinc-500">
+            Ještě není ke stažení? <WantButton movie={movie} />
+          </div>
         </div>
       </div>
     </div>

@@ -11,6 +11,10 @@ Known events:
                            (later handlers then leave it alone)
     library.collect_hints  {path, hints: [(tmdb_id, source), ...]}
                            emitted per movie file during a library scan; handlers append hints
+    library.movie_updated  {movie_id, status, tmdb_id, file_path, folder, media, tmdb, versions, ...}
+                           a library file changed (import, scan, rename, undo) — NFO, Plex, wanted react
+    offers.found           {kind: "wanted", wanted_id, tmdb_id, title, year, profile, matches, best}
+                           a check found offers the profile allows (for a future notification module)
 """
 
 import logging

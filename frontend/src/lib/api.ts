@@ -362,6 +362,80 @@ export async function getModules(): Promise<ModuleInfo[]> {
   return res.json();
 }
 
+// --- Wanted films (module wanted) ---
+
+export interface WantedBest {
+  name?: string; source?: string; source_id?: number; ident?: string; size?: number; magnet_url?: string | null;
+  quality_score?: number; quality_summary?: string; resolution?: string; codec?: string; hdr?: string;
+  lang_tier?: number; audio_langs?: string[]; verified?: boolean; video_bitrate?: number;
+}
+
+export interface WantedItem {
+  id: number;
+  tmdb_id: number | null;
+  wikidata_id: string;
+  title: string;
+  original_title: string;
+  year: string;
+  poster_url: string | null;
+  profile_id: number | null;
+  status: "wanted" | "found" | "done";
+  matches: number;
+  best: WantedBest;
+  note: string;
+  added_at: string;
+  checked_at: string | null;
+  done_at: string | null;
+}
+
+export interface WantedJob { running: boolean; total: number; done: number; current: string; found: number; queued: number }
+
+export async function getWanted(): Promise<WantedItem[]> {
+  const res = await fetch(`${API_BASE}/api/wanted`);
+  if (!res.ok) throw new Error(`Failed to load wanted: ${res.status}`);
+  return res.json();
+}
+
+export async function addWanted(item: {
+  tmdb_id: number | null; wikidata_id: string | null; title: string; original_title: string; year: string;
+  poster_url: string | null; profile_id: number | null;
+}): Promise<WantedItem> {
+  const res = await fetch(`${API_BASE}/api/wanted`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(item),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Přidání selhalo: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateWanted(id: number, data: { profile_id?: number | null; note?: string; status?: string }): Promise<WantedItem> {
+  const res = await fetch(`${API_BASE}/api/wanted/${id}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
+  return res.json();
+}
+
+export async function removeWanted(id: number): Promise<void> {
+  await fetch(`${API_BASE}/api/wanted/${id}`, { method: "DELETE" });
+}
+
+export async function checkWanted(ids: number[] = []): Promise<WantedJob> {
+  const res = await fetch(`${API_BASE}/api/wanted/check`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error(`Kontrola selhala: ${res.status}`);
+  return res.json();
+}
+
+export async function getWantedJob(): Promise<WantedJob> {
+  const res = await fetch(`${API_BASE}/api/wanted/check/status`);
+  if (!res.ok) throw new Error(`Status failed: ${res.status}`);
+  return res.json();
+}
+
 /** Quality profile (backend core/profiles.py). */
 export interface QualityProfile {
   id: number;

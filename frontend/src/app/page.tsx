@@ -6,6 +6,7 @@ import SearchBar from "@/components/SearchBar";
 import MovieGrid from "@/components/MovieGrid";
 import FileTable from "@/components/FileTable";
 import DownloadPanel from "@/components/DownloadPanel";
+import WantButton from "@/components/WantButton";
 import {
   TMDBMovie,
   ScoredFile,
@@ -246,6 +247,7 @@ function HomeContent() {
                 </span>
               )}
             </h2>
+            <WantButton movie={selectedMovie} />
             {resultsCollapsed && files.length > 0 && (
               <button
                 onClick={() => setResultsCollapsed(false)}
