@@ -135,35 +135,38 @@ def assemble_audio(other_path: str, other_track: int, pieces: list[dict], speed:
 
 
 def mux(ref_path: str, added: list[dict], out_path: str, progress=None, ref_keep: list[int] | None = None,
-        ref_names: dict[int, str] | None = None) -> None:
-    """Reference file + the added tracks ({file, tid, delay_ms, language, name}); the first added track
-    becomes the default audio. ``ref_keep``: audio tracks of the reference to keep (None = all);
-    ``ref_names``: new names of the reference's tracks (by audio index)."""
+        ref_names: dict[int, str] | None = None, default: int | None = None) -> None:
+    """Reference file + the added tracks ({file, tid, delay_ms, language, name}). ``ref_keep``: audio
+    tracks of the reference to keep (None = all); ``ref_names``: new names of the reference's tracks
+    (by audio index); ``default``: the default audio track by its position in the result (kept
+    tracks, then added ones) — None = the first added one, without any the first kept one."""
     cmd = ["mkvmerge", "--gui-mode", "-o", out_path]
     ids = audio_track_ids(ref_path)
     keep = list(range(len(ids))) if ref_keep is None else list(ref_keep)
     kept = [ids[i] for i in keep]
     if ref_keep is not None:
         cmd += ["--audio-tracks", ",".join(str(t) for t in kept)]
-    for i, tid in zip(keep, kept):
-        cmd += ["--default-track-flag", f"{tid}:{0 if added else (1 if tid == kept[0] else 0)}"]
+    if default is None:
+        default = len(kept) if added else 0
+    for pos, (i, tid) in enumerate(zip(keep, kept)):
+        cmd += ["--default-track-flag", f"{tid}:{1 if pos == default else 0}"]
         if (ref_names or {}).get(i):
             cmd += ["--track-name", f"{tid}:{ref_names[i]}"]
     cmd.append(ref_path)
     by_file: dict[str, list[dict]] = {}
     for t in added:
         by_file.setdefault(t["file"], []).append(t)
-    first = True
+    pos = len(kept)
     for path, tracks in by_file.items():
         cmd += ["--no-video", "--no-subtitles", "--no-chapters", "--no-attachments", "--no-global-tags",
                 "--audio-tracks", ",".join(str(t["tid"]) for t in tracks)]
         for t in tracks:
             tid = t["tid"]
             cmd += ["--sync", f"{tid}:{t['delay_ms']}", "--track-name", f"{tid}:{t['name']}",
-                    "--default-track-flag", f"{tid}:{1 if first else 0}"]
+                    "--default-track-flag", f"{tid}:{1 if pos == default else 0}"]
             if t["language"]:
                 cmd += ["--language", f"{tid}:{t['language']}"]
-            first = False
+            pos += 1
         cmd.append(path)
     _run_mkvmerge(cmd, progress)
 
@@ -287,9 +290,32 @@ def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int |
                          workdir, out_name, progress, report, ref_keep, dedupe)
 
 
+def reencoded(analysis: dict) -> bool:
+    """A track for another cut or speed is re-encoded (AC-3); one with the same timing is copied."""
+    return analysis.get("verdict") == "cuts" or abs(analysis.get("speed", 1.0) - 1) > 1e-9
+
+
+def as_added(info: dict, analysis: dict) -> dict:
+    """The track as it ends up in the result (a re-encoded one is AC-3 640/224 kbps)."""
+    if not reencoded(analysis):
+        return info
+    ch = info.get("channels") or 2
+    return {**info, "codec": "ac3", "profile": "", "bitrate": 640000 if ch > 2 else 224000}
+
+
+def output_order(items: list, file_of, tid_of) -> list:
+    """The order mkvmerge writes added tracks in: by input file (first appearance), within one file
+    by track id. The plan shown to the user and the checks after muxing use the same order."""
+    files: list = []
+    for x in items:
+        if file_of(x) not in files:
+            files.append(file_of(x))
+    return sorted(items, key=lambda x: (files.index(file_of(x)), tid_of(x)))
+
+
 def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: Path, out_name: str,
                   progress=None, report: dict | None = None, ref_keep: list[int] | None = None,
-                  dedupe: bool = True) -> str:
+                  dedupe: bool = True, default: int | None = None) -> str:
     """Tracks from several versions into the reference in one go: ``sources`` =
     [{path, tracks, analysis}] (analysis = reference → that version). One mux, every added track checked."""
     workdir.mkdir(parents=True, exist_ok=True)
@@ -299,7 +325,7 @@ def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: P
     ref = engine.probe(ref_path)
     if ref_keep is not None and ref_track not in ref_keep:
         raise TransferError("Stopa, se kterou se porovnává, musí zůstat")
-    added, checks = [], []
+    added = []
     for k, src in enumerate(sources):
         analysis = src["analysis"]
         cut = analysis.get("verdict") == "cuts"
@@ -321,17 +347,17 @@ def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: P
             else:
                 file, tid, delay_ms = prepare_audio(src["path"], t, analysis["speed"], analysis["offset"], srcdir,
                                                     info.get("channels") or 2, ref["start"], other["start"])
-            if cut or abs(analysis["speed"] - 1) > 1e-9:     # re-encoded: name what it is now
-                ch = info.get("channels") or 2
-                info = {**info, "codec": "ac3", "profile": "", "bitrate": 640000 if ch > 2 else 224000}
+            info = as_added(info, analysis)
             added.append({"file": file, "tid": tid, "delay_ms": delay_ms, "language": info.get("language") or "",
-                          "name": track_name(info, moved=True), "source": src["path"]})
-            checks.append(analysis.get("pieces") if cut else None)
+                          "name": track_name(info, moved=True), "source": src["path"],
+                          "check": analysis.get("pieces") if cut else None})
     if not added:
         raise NothingToAdd("Tyto dabingy už soubor má — není co přidat")
+    added = output_order(added, lambda a: a["file"], lambda a: a["tid"])
+    checks = [a.pop("check") for a in added]
     if report is not None:
         report["added"] = [a["name"] for a in added]
-    mux(ref_path, added, out_path, progress, ref_keep, ref_track_names(ref))
+    mux(ref_path, added, out_path, progress, ref_keep, ref_track_names(ref), default)
     for a in added:
         if a["file"] != a["source"]:
             os.remove(a["file"])
@@ -346,7 +372,8 @@ def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: P
     return out_path
 
 
-def strip(ref_path: str, keep: list[int], workdir: Path, out_name: str, progress=None) -> str:
+def strip(ref_path: str, keep: list[int], workdir: Path, out_name: str, progress=None,
+          default: int | None = None) -> str:
     """A copy of the file without the audio tracks not in ``keep`` (nothing re-encoded)."""
     ref = engine.probe(ref_path)
     keep = sorted(set(keep))
@@ -356,7 +383,7 @@ def strip(ref_path: str, keep: list[int], workdir: Path, out_name: str, progress
         raise TransferError("Neznámá zvuková stopa")
     workdir.mkdir(parents=True, exist_ok=True)
     out_path = str(workdir / out_name)
-    mux(ref_path, [], out_path, progress, keep, ref_track_names(ref))
+    mux(ref_path, [], out_path, progress, keep, ref_track_names(ref), default)
     if len(engine.probe(out_path)["audio"]) != len(keep):
         raise TransferError("Výsledek nemá očekávané stopy — soubor nepoužit")
     return out_path

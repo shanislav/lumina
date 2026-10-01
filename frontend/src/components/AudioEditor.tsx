@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AudioReference, AudioSyncJob, AudioTrackInfo, FilmMap, FilmMapMember, LibraryMovie, TargetTrackCheck,
-  applyFilmMap, audioPreviewUrl, deleteVersionFile, formatSize, getAudioReference, getAudioSyncJob, getFilmMap,
+  PlannedTrack, applyFilmMap, audioPreviewUrl, planFilmMap, deleteVersionFile, formatSize, getAudioReference, getAudioSyncJob, getFilmMap,
   getAudioTracks, getLibraryMovies, makeAudioPreview, makeTrackPreview, setAudioAdjust, setAudioReference, startFilmMap,
 } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
@@ -67,6 +67,9 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
   const [confirm, setConfirm] = useState<"replace" | "version" | null>(null);
+  const [defaultKey, setDefaultKey] = useState<string | null>(null);
+  const [plan, setPlan] = useState<{ tracks: PlannedTrack[]; reference_dropped: boolean } | null>(null);
+  const [planError, setPlanError] = useState("");
 
   const loadVersions = useCallback(async () => {
     const [all, r, m] = await Promise.all([getLibraryMovies(), getAudioReference(tmdbId), getFilmMap(tmdbId)]);
@@ -108,6 +111,7 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
             const added = j.report?.added?.length ? ` Nové stopy: ${j.report.added.join(", ")}.` : "";
             setDone((j.imported ? "✓ Hotovo — soubor je v knihovně." : `Hotovo, ale knihovna soubor nepřevzala (${j.path ?? ""}).`) + added);
             setAdd({});
+            setDefaultKey(null);
             setFix([]);
             setDrop([]);
             setClip(null);
@@ -161,6 +165,21 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
   useEffect(() => {
     if (map && map.target_id === target && map.ref_track === refTrack) setSel(map.selection ?? null);
   }, [map, target, refTrack]);
+
+  // the result as it will be built — asked from the backend whenever the edit changes
+  const edits = useMemo(() => ({
+    picks: Object.values(add).filter((m): m is FilmMapMember => !!m).map((m) => ({ version_id: m.version_id, track: m.track })),
+    fixTracks: fix, dropTracks: drop, defaultKey,
+  }), [add, fix, drop, defaultKey]);
+  useEffect(() => {
+    if (!mapOk || !map) { setPlan(null); return; }
+    let alive = true;
+    const t = setTimeout(() => {
+      planFilmMap(map.id, edits).then((p) => { if (alive) { setPlan(p); setPlanError(""); } })
+        .catch((e) => { if (alive) { setPlan(null); setPlanError(e instanceof Error ? e.message : "Náhled selhal"); } });
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [map, mapOk, edits]);
 
   const selected = (vid: number, t: number) => !sel || (sel[vid] ?? []).includes(t);
   function toggle(vid: number, t: number, on: boolean) {
@@ -233,6 +252,9 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
   }
 
   const picks = Object.values(add).filter((m): m is FilmMapMember => !!m);
+  const currentDefault = targetAudio.find((a) => a.default);
+  const defaultChanged = !!defaultKey && defaultKey !== (currentDefault ? `t:${currentDefault.index}` : null);
+  const anyChange = picks.length > 0 || fix.length > 0 || drop.length > 0 || defaultChanged;
   const otherDubs = mapOk ? map!.dubs.filter((d) => !d.members.some((m) => m.version_id === target)) : [];
   const versionName = (id: number) => {
     const v = versions.find((x) => x.id === id);
@@ -252,7 +274,7 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-zinc-400 text-xs">Verze (obraz, který chceš nechat):</span>
           <select value={target ?? ""} disabled={running}
-            onChange={(e) => { setTarget(Number(e.target.value)); setAdd({}); setFix([]); setDrop([]); setClip(null); }}
+            onChange={(e) => { setTarget(Number(e.target.value)); setAdd({}); setFix([]); setDrop([]); setDefaultKey(null); setClip(null); }}
             className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200 max-w-full">
             {versions.map((v) => <option key={v.id} value={v.id}>{versionName(v.id)}</option>)}
           </select>
@@ -465,19 +487,56 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
       </section>
 
       {/* 3. save */}
-      {mapOk && (picks.length > 0 || fix.length > 0 || drop.length > 0) && !running && (
-        <section className="rounded-lg border border-violet-900 bg-violet-950/20 p-4 space-y-2 text-xs">
-          <h2 className="uppercase tracking-wide text-zinc-400">3. Uložit</h2>
-          <p className="text-zinc-300">
-            {[picks.length && `přidat ${picks.map((m) => trackLabel(m)).join(", ")}`,
-              fix.length && `opravit ${fix.map((t) => trackLabel(targetAudio[t])).join(", ")}`,
-              drop.length && `odebrat ${drop.map((t) => trackLabel(targetAudio[t])).join(", ")}`].filter(Boolean).join(" · ")}.
-            Výsledek se před použitím zkontroluje; stopy dostanou názvy jako „CZ 5.1“, přenesené a opravené se značkou [L].
-          </p>
-          {confirm ? (
+      {mapOk && !running && (
+        <section className="rounded-lg border border-violet-900 bg-violet-950/20 p-4 space-y-3 text-xs">
+          <h2 className="uppercase tracking-wide text-zinc-400">3. Výsledný soubor</h2>
+          {planError && <p className="text-red-400">{planError}</p>}
+          {plan && (
+            <table className="w-full">
+              <thead>
+                <tr className="text-left text-zinc-500 border-b border-zinc-800">
+                  <th className="py-1 pr-2 font-normal">#</th>
+                  <th className="py-1 pr-3 font-normal">Název v souboru</th>
+                  <th className="py-1 pr-3 font-normal">Stopa</th>
+                  <th className="py-1 pr-3 font-normal">Odkud</th>
+                  <th className="py-1 font-normal" title="Stopa, kterou přehrávač pustí sám (MKV příznak default)">Výchozí</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.tracks.map((p, i) => (
+                  <tr key={p.key} className="border-b border-zinc-800/50">
+                    <td className="py-1 pr-2 text-zinc-500">{i + 1}</td>
+                    <td className={`py-1 pr-3 ${p.origin === "keep" && !p.renamed ? "text-zinc-300" : "text-zinc-100"}`}>
+                      {p.name || <span className="text-zinc-600">(bez názvu)</span>}
+                    </td>
+                    <td className="py-1 pr-3 text-zinc-400 whitespace-nowrap">
+                      {lang(p.language)} {channels(p.channels)} {(p.codec || "?").toUpperCase()}{p.bitrate ? ` ${Math.round(p.bitrate / 1000)} kbps` : ""}
+                    </td>
+                    <td className="py-1 pr-3 text-zinc-400">
+                      {p.origin === "keep" ? (p.renamed ? "ponechaná, nový název" : "ponechaná")
+                        : p.origin === "fix" ? "opravená (posunutá na referenci)"
+                        : `z ${p.from}${p.reencoded ? " — přepočítaná do AC3" : ""}`}
+                    </td>
+                    <td className="py-1">
+                      <input type="radio" name="default-track" checked={p.default} onChange={() => setDefaultKey(p.key)} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {plan?.reference_dropped && <p className="text-zinc-500">Referenční stopa poslouží ke kontrole nových stop a pak se odebere.</p>}
+          {anyChange ? (
+            <p className="text-zinc-300">
+              {[picks.length && `přidat ${picks.length}`, fix.length && `opravit ${fix.length}`, drop.length && `odebrat ${drop.length}`,
+                defaultChanged && "změnit výchozí stopu"].filter(Boolean).join(" · ")}.
+              Nové a opravené stopy se před použitím zkontrolují proti referenci.
+            </p>
+          ) : <p className="text-zinc-500">Zatím beze změn — přidej, oprav nebo odeber stopy výš, nebo zvol jinou výchozí stopu.</p>}
+          {!anyChange ? null : confirm ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-orange-200">{confirm === "replace" ? "Nahradit soubor této verze upraveným?" : "Uložit jako novou verzi?"}</span>
-              <button onClick={() => { const m = confirm; setConfirm(null); run(() => applyFilmMap(map!.id, picks, fix, drop, m)); }}
+              <button onClick={() => { const m = confirm; setConfirm(null); run(() => applyFilmMap(map!.id, edits, m)); }}
                 className="rounded bg-violet-600 px-3 py-1 text-white hover:bg-violet-500">Ano</button>
               <button onClick={() => setConfirm(null)} className="text-zinc-400 hover:text-zinc-200">Zrušit</button>
             </div>

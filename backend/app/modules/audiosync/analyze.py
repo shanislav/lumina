@@ -55,7 +55,7 @@ def probe(path: str) -> dict:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries",
          "format=duration,start_time:stream=index,codec_type,codec_name,profile,channels,bit_rate"
-         ":stream_tags=language,title,BPS,BPS-eng",
+         ":stream_tags=language,title,BPS,BPS-eng:stream_disposition=default",
          "-of", "json", path], capture_output=True, text=True, timeout=60, check=True).stdout
     data = json.loads(out)
     audio = []
@@ -69,7 +69,8 @@ def probe(path: str) -> dict:
             bitrate = 0
         audio.append({"index": len(audio), "language": (tags.get("language") or "").lower(),
                       "title": tags.get("title") or "", "codec": s.get("codec_name") or "",
-                      "channels": s.get("channels") or 0, "bitrate": bitrate, "profile": s.get("profile") or ""})
+                      "channels": s.get("channels") or 0, "bitrate": bitrate, "profile": s.get("profile") or "",
+                      "default": bool((s.get("disposition") or {}).get("default"))})
     fmt = data.get("format", {})
     return {"duration": float(fmt.get("duration") or 0), "start": float(fmt.get("start_time") or 0), "audio": audio}
 

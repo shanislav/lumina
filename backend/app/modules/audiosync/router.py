@@ -519,28 +519,24 @@ class ApplyBody(BaseModel):
     picks: list[dict] = []         # [{version_id, track}] — tracks of other versions to add
     fix_tracks: list[int] = []     # target tracks to replace by their copy moved onto the reference
     drop_tracks: list[int] = []    # target tracks to leave out
+    default_key: str | None = None  # the default audio track of the result (a key from the plan)
     mode: str = "replace"          # replace the target | keep it and add a new version
 
 
-@router.post("/map/apply")
-async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync"))) -> dict:
-    global _task
-    if body.mode not in ("version", "replace"):
-        raise HTTPException(400, "Neznámý režim")
-    if not user.can("library.delete" if body.mode == "replace" else "library.edit"):
-        raise HTTPException(403, "Na tohle nemáš oprávnění (upravit soubor = mazat v knihovně, nová verze = upravovat knihovnu)")
-    if busy():
-        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
+async def _load_map(map_id: int) -> dict:
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT * FROM audiosync_maps WHERE id = ?", (body.map_id,))
+        cursor = await db.execute("SELECT * FROM audiosync_maps WHERE id = ?", (map_id,))
         row = await cursor.fetchone()
     finally:
         await db.close()
     if not row:
         raise HTTPException(404, "Mapa nenalezena")
-    fmap = json.loads(row["result"])
-    target = await _file(fmap["target_id"])
+    return json.loads(row["result"])
+
+
+def _sources(body: ApplyBody, fmap: dict, target: dict) -> dict[tuple, dict]:
+    """What goes in, from where, with which measurement (each pick and fix checked against the map)."""
     ref_track = fmap.get("ref_track", 0)
     if ref_track in body.fix_tracks:
         raise HTTPException(400, "Referenční stopa se neopravuje — podle ní se měří ostatní")
@@ -566,18 +562,105 @@ async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync")))
         c = checks.get(str(t))
         if not c or not c.get("fixable"):
             raise HTTPException(400, f"Stopu {t + 1} nejde opravit")
-        sources[("fix", t)] = {"version_id": target["id"], "result_id": c["result_id"], "delta": 0.0, "tracks": [t]}
-    if not sources and not body.drop_tracks:
+        sources[("fix", t)] = {"version_id": target["id"], "result_id": c["result_id"], "delta": 0.0, "tracks": [t],
+                               "fix": True}
+    return sources
+
+
+async def _layout(body: ApplyBody, fmap: dict, target: dict, sources: dict) -> dict:
+    """The result track by track, the way it will be built: the kept tracks of the target (with their
+    new names), then the added ones in mkvmerge's order. ``build`` still holds a dropped reference
+    (new tracks are checked against it), ``final`` is the file the user gets."""
+    tinfo = await asyncio.to_thread(engine.probe, target["file_path"])
+    count = len(tinfo["audio"])
+    if any(not 0 <= t < count for t in body.drop_tracks + body.fix_tracks):
+        raise HTTPException(400, "Neznámá zvuková stopa")
+    ref_track = fmap.get("ref_track", 0)
+    keep = [i for i in range(count) if i not in body.drop_tracks and i not in body.fix_tracks]
+    drop_ref = ref_track not in keep
+    build_keep = sorted(keep + [ref_track]) if drop_ref and sources else keep
+    names = muxer.ref_track_names(tinfo)
+    build = []
+    for i in build_keep:
+        a = tinfo["audio"][i]
+        build.append({"key": f"t:{i}", "origin": "keep", "track": i, "name": names.get(i) or a.get("title") or "",
+                      "renamed": i in names, "info": a})
+    added = []
+    versions = {v["id"]: v for v in fmap["versions"]}
+    for k, src in enumerate(sources.values()):
+        row = await _result_row(src["result_id"])
+        analysis = json.loads(row["result"])
+        path = (await _file(src["version_id"]))["file_path"]
+        sinfo = await asyncio.to_thread(engine.probe, path)
+        for t in sorted(set(src["tracks"])):
+            if t >= len(sinfo["audio"]):
+                raise HTTPException(400, "Zvuková stopa ve zdrojové verzi nenalezena")
+            info = muxer.as_added(sinfo["audio"][t], analysis)
+            v = versions.get(src["version_id"]) or {}
+            again = muxer.reencoded(analysis)
+            added.append({"key": f"f:{t}" if src.get("fix") else f"v:{src['version_id']}:{t}",
+                          "origin": "fix" if src.get("fix") else "add", "track": t,
+                          "from": None if src.get("fix") else v.get("quality") or v.get("filename"),
+                          "name": muxer.track_name(info, moved=True), "info": info, "reencoded": again,
+                          # mkvmerge order: a copied track comes from the source file, a re-encoded one from its own
+                          "_file": f"{k}:{t}" if again else path, "_tid": t})
+    added = muxer.output_order(added, lambda x: x["_file"], lambda x: x["_tid"])
+    build += added
+    final = [x for x in build if not (drop_ref and x["key"] == f"t:{ref_track}")]
+    if not final:
+        raise HTTPException(400, "Aspoň jedna zvuková stopa musí zůstat")
+    keys = [x["key"] for x in final]
+    # unless chosen: a new track (what the edit is for), else the file's own default if it stays
+    current = next((f"t:{a['index']}" for a in tinfo["audio"] if a.get("default")), None)
+    default = body.default_key if body.default_key in keys else (
+        added[0]["key"] if added else current if current in keys else keys[0])
+    for x in build:
+        x["default"] = x["key"] == default
+        x.pop("_file", None)
+        x.pop("_tid", None)
+    return {"keep": keep, "build_keep": build_keep, "drop_ref": drop_ref and bool(sources), "build": build,
+            "final": final, "default": default, "build_default": [x["key"] for x in build].index(default),
+            "final_default": keys.index(default)}
+
+
+@router.post("/map/plan", dependencies=[Depends(require("audiosync"))])
+async def plan_map(body: ApplyBody) -> dict:
+    """How the result will look (order, names, origin, the default track) — before building it."""
+    fmap = await _load_map(body.map_id)
+    target = await _file(fmap["target_id"])
+    lay = await _layout(body, fmap, target, _sources(body, fmap, target))
+    return {"tracks": [{"key": x["key"], "origin": x["origin"], "track": x["track"], "name": x["name"],
+                        "renamed": x.get("renamed", False), "from": x.get("from"), "reencoded": x.get("reencoded", False),
+                        "default": x["default"], "language": x["info"].get("language"), "codec": x["info"].get("codec"),
+                        "channels": x["info"].get("channels"), "bitrate": x["info"].get("bitrate")}
+                       for x in lay["final"]],
+            "default": lay["default"], "reference_dropped": lay["drop_ref"]}
+
+
+@router.post("/map/apply")
+async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync"))) -> dict:
+    global _task
+    if body.mode not in ("version", "replace"):
+        raise HTTPException(400, "Neznámý režim")
+    if not user.can("library.delete" if body.mode == "replace" else "library.edit"):
+        raise HTTPException(403, "Na tohle nemáš oprávnění (upravit soubor = mazat v knihovně, nová verze = upravovat knihovnu)")
+    if busy():
+        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
+    fmap = await _load_map(body.map_id)
+    target = await _file(fmap["target_id"])
+    sources = _sources(body, fmap, target)
+    if not sources and not body.drop_tracks and not body.default_key:
         raise HTTPException(400, "Nic k přidání, opravě ani odebrání")
+    lay = await _layout(body, fmap, target, sources)
     downloads = await _work_dir(target)
     _job.clear()
     _job.update(running=True, kind="apply", phase="start", done=0, total=0, title=target["title"],
                 tmdb_id=target["tmdb_id"], request=body.model_dump(), error=None, imported=None)
-    _task = asyncio.create_task(_run_apply(body, fmap, target, sources, downloads))
+    _task = asyncio.create_task(_run_apply(body, fmap, target, sources, lay, downloads))
     return _job
 
 
-async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, downloads: Path) -> None:
+async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, lay: dict, downloads: Path) -> None:
     async with _lock:
         loop = asyncio.get_running_loop()
 
@@ -587,12 +670,8 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, d
         workdir = downloads / f".lumina-map-{target['id']}"
         report: dict = {}
         try:
-            count = len((await asyncio.to_thread(engine.probe, target["file_path"]))["audio"])
-            keep = [i for i in range(count) if i not in body.drop_tracks and i not in body.fix_tracks]
+            keep, build_keep = lay["keep"], lay["build_keep"]
             ref_track = fmap.get("ref_track", 0)
-            # the reference may go too — but only after the added tracks were checked against it
-            drop_ref = ref_track not in keep
-            build_keep = sorted(keep + [ref_track]) if drop_ref and sources else keep
             if sources:
                 srcs = []
                 for src in sources.values():
@@ -602,14 +681,16 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, d
                                  "tracks": sorted(set(src["tracks"])), "analysis": analysis})
                 out_name = Path(target["filename"]).stem + " [audio].mkv"
                 out = await asyncio.to_thread(muxer.transfer_many, target["file_path"], ref_track, srcs, workdir,
-                                              out_name, progress, report, build_keep, False)
-                if drop_ref:
-                    total = len(build_keep) + len(report.get("added") or [])
-                    out = await asyncio.to_thread(muxer.strip, out, [i for i in range(total) if i != build_keep.index(ref_track)],
-                                                  workdir / "final", out_name, progress)
+                                              out_name, progress, report, build_keep, False, lay["build_default"])
+                if lay["drop_ref"]:
+                    # the new tracks were checked against the reference — now it goes
+                    out = await asyncio.to_thread(muxer.strip, out,
+                                                  [i for i in range(len(lay["build"])) if i != build_keep.index(ref_track)],
+                                                  workdir / "final", out_name, progress, lay["final_default"])
             else:
                 out_name = Path(target["filename"]).stem + " [tracks].mkv"
-                out = await asyncio.to_thread(muxer.strip, target["file_path"], keep, workdir, out_name, progress)
+                out = await asyncio.to_thread(muxer.strip, target["file_path"], keep, workdir, out_name, progress,
+                                              lay["final_default"])
             _job.update(report=report)
             payload = await _hand_over(out, downloads / out_name, target, body.mode, f"map-{target['id']}", progress)
             if body.mode == "replace" and payload.get("imported"):

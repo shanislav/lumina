@@ -205,3 +205,10 @@ def test_dropping_the_reference_hands_it_to_a_track_that_fits():
     assert _new_reference(fmap, [0, 1], 3, False) == 1              # dropped: track 1 fits it
     assert _new_reference({"target_tracks": {}}, [0], 3, True) == 1  # else the first added track
     assert _new_reference({"target_tracks": {}}, [0], 3, False) is None
+
+
+def test_added_tracks_are_listed_in_the_order_mkvmerge_writes_them():
+    from app.modules.audiosync.transfer import output_order
+    # copied tracks of one source file go together by track id; a re-encoded one is its own file
+    added = [("sd.mkv", 2), ("x-0", 0), ("sd.mkv", 0), ("uhd.mkv", 1)]
+    assert output_order(added, lambda a: a[0], lambda a: a[1]) == [("sd.mkv", 0), ("sd.mkv", 2), ("x-0", 0), ("uhd.mkv", 1)]

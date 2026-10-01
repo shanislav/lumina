@@ -1049,6 +1049,7 @@ export interface AudioTrackInfo {
   channels: number;
   bitrate?: number;
   profile?: string;
+  default?: boolean;
 }
 
 export type AudioVerdict = "constant" | "speed" | "cuts" | "no_match";
@@ -1159,9 +1160,33 @@ export interface FilmMap {
 export const startFilmMap = (tmdbId: number, targetId: number, refTrack: number, tracks: Record<number, number[]> | null) =>
   audioSyncCall<AudioSyncJob>("/map", jsonBody("POST", { tmdb_id: tmdbId, target_id: targetId, ref_track: refTrack, tracks }));
 export const getFilmMap = (tmdbId: number) => audioSyncCall<FilmMap | null>(`/map/${tmdbId}`);
-export const applyFilmMap = (mapId: number, picks: { version_id: number; track: number }[], fixTracks: number[],
-                             dropTracks: number[], mode: "replace" | "version") =>
-  audioSyncCall<AudioSyncJob>("/map/apply", jsonBody("POST", { map_id: mapId, picks, fix_tracks: fixTracks, drop_tracks: dropTracks, mode }));
+export interface PlannedTrack {
+  key: string;
+  origin: "keep" | "fix" | "add";
+  track: number;
+  name: string;
+  renamed: boolean;
+  from: string | null;
+  reencoded: boolean;
+  default: boolean;
+  language: string;
+  codec: string;
+  channels: number;
+  bitrate: number;
+}
+export interface FilmMapEdit {
+  picks: { version_id: number; track: number }[];
+  fixTracks: number[];
+  dropTracks: number[];
+  defaultKey: string | null;
+}
+const editBody = (mapId: number, e: FilmMapEdit) =>
+  ({ map_id: mapId, picks: e.picks, fix_tracks: e.fixTracks, drop_tracks: e.dropTracks, default_key: e.defaultKey });
+/** How the result would look: order, names written into the file, origin, default track. */
+export const planFilmMap = (mapId: number, e: FilmMapEdit) =>
+  audioSyncCall<{ tracks: PlannedTrack[]; default: string; reference_dropped: boolean }>("/map/plan", jsonBody("POST", editBody(mapId, e)));
+export const applyFilmMap = (mapId: number, e: FilmMapEdit, mode: "replace" | "version") =>
+  audioSyncCall<AudioSyncJob>("/map/apply", jsonBody("POST", { ...editBody(mapId, e), mode }));
 
 // ── browser player ──
 
