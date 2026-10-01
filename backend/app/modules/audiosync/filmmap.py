@@ -51,9 +51,16 @@ _TECH = re.compile(
     re.IGNORECASE)
 
 
+MARK = "[L]"   # a track Lumina moved or fixed
+
+
+def channels_label(channels: int | None) -> str:
+    return {1: "1.0", 2: "2.0", 6: "5.1", 8: "7.1"}.get(channels or 0, f"{channels}ch" if channels else "")
+
+
 def dub_name(lang: str, title: str) -> str:
     """"CZ" or "CZ Nova" — the language plus whatever in the title is not codec/channels/language."""
-    rest = _TECH.sub(" ", title or "")
+    rest = _TECH.sub(" ", (title or "").replace(MARK, " "))
     rest = re.sub(r"[\s\-_,.;:/|()\[\]]+", " ", rest).strip()
     code = {"cs": "CZ"}.get(lang, (lang or "?").upper())
     return f"{code} {rest}" if len(rest) >= 2 else code
@@ -91,10 +98,15 @@ def cluster(versions: list[dict], duration: float, progress=None) -> list[dict]:
         fits = v.get("tracks") or {}
         for a in v["audio"]:
             tf = fits.get(a["index"]) or {"delta": 0.0, "ok": True}
-            analysis = v["analysis"] if v["analysis"] is None else engine.shifted(v["analysis"], tf["delta"])
+            if tf.get("own"):                  # measured on its own against the reference track
+                analysis = tf["own"]
+            elif v["analysis"] is None:
+                analysis = None
+            else:
+                analysis = engine.shifted(v["analysis"], tf["delta"])
             tracks.append({"version_id": v["id"], "path": v["path"], "track": a["index"], "analysis": analysis,
-                           "info": a, "target": v["analysis"] is None,
-                           "usable": v.get("usable", True) and tf["ok"]})
+                           "info": a, "target": v.get("target", v["analysis"] is None),
+                           "usable": v.get("usable", True) and (tf["ok"] or bool(tf.get("own")))})
     # the target's tracks first (they name the groups), then the better sources
     tracks.sort(key=lambda x: (not x["target"], [-r for r in source_rank(x["info"])]))
     dubs: list[dict] = []

@@ -4,20 +4,18 @@ import { useEffect, useState } from "react";
 import { AudioSyncJob, getAudioSyncJob } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 
-const KIND: Record<string, string> = {
-  analyze: "Porovnání zvuku", transfer: "Přenos zvuku", upgrade: "Zachování dabingu po stažení",
-  check: "Kontrola zvukových stop", strip: "Odebrání stop", map: "Mapa zvuku filmu", apply: "Úprava zvuku filmu",
-};
+const KIND: Record<string, string> = { map: "Měření zvukových stop", apply: "Úprava zvuku filmu" };
 
 const PHASE: Record<string, string> = {
-  start: "začínám", speed: "zjišťuji rychlost", windows: "porovnávám úseky filmu", cuts: "hledám místa střihu",
-  check: "kontroluji stopy", align: "srovnávám verze", tracks: "dolaďuji jednotlivé stopy", compare: "porovnávám dabingy",
-  prepare: "připravuji stopy", mux: "skládám soubor", verify: "kontroluji výsledek", import: "předávám knihovně",
+  start: "začínám", target: "kontroluji stopy cíle", align: "srovnávám verze", tracks: "měřím jednotlivé stopy",
+  track: "měřím stopu zvlášť", compare: "porovnávám dabingy", speed: "zjišťuji rychlost", windows: "porovnávám úseky filmu",
+  cuts: "hledám místa střihu", prepare: "připravuji stopy", mux: "skládám soubor", verify: "kontroluji výsledek",
+  import: "předávám knihovně",
 };
 
 const SEEN_KEY = "lumina.audioJobSeen";
 
-/** Work with audio runs in the background (also after a download) — show it on every page. */
+/** Work with audio runs in the background — show it on every page. */
 export default function AudioJobBanner() {
   const { can } = useAuth();
   const allowed = can("audiosync");   // a boolean: "can" itself is a new function on every render

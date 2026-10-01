@@ -67,50 +67,29 @@ def test_judge_cut_and_no_match():
     assert judge(bad, 1.0, 7200)[0] == "no_match"
 
 
-def test_keep_audio_takes_every_local_dub_and_names_them():
-    from app.modules.audiosync.keep_audio import local_tracks
-    from app.modules.audiosync.transfer import track_name
-    old = [{"index": 0, "language": "cze", "title": "CZ dabing Nova"}, {"index": 1, "language": "eng"},
-           {"index": 2, "language": "ces", "title": "CZ dabing Prima"}, {"index": 3, "language": "slo"}]
-    assert local_tracks(old) == [0, 2, 3]                  # both CZ dubs + SK; which the new file has = content check
-    assert track_name(old[0]) == "CZ Nova (Lumina sync)"
-    assert track_name(old[3]) == "SK (Lumina sync)"
-    assert track_name({"language": "slo", "title": "SLO (Lumina sync)"}) == "SK (Lumina sync)"
-    assert track_name({"language": "slo", "title": "Slovak AC3 2.0 @ 192 kbps"}) == "SK (Lumina sync)"
+def test_tracks_are_named_by_language_and_channels_moved_ones_marked():
+    from app.modules.audiosync.transfer import ref_track_names, track_name
+    assert track_name({"language": "cze", "title": "CZ dabing Nova", "channels": 6}) == "CZ Nova 5.1 [L]"
+    assert track_name({"language": "slo", "title": "Slovak AC3 2.0 @ 192 kbps", "channels": 2}) == "SK 2.0 [L]"
+    # the file's own tracks: tidied up, no mark — unless Lumina moved them before
+    assert track_name({"language": "eng", "title": "English DTS-HD MA 7.1", "channels": 8}, moved=False) == "EN 7.1"
+    assert track_name({"language": "slo", "title": "SLO (Lumina sync)", "channels": 2}, moved=False) == "SK 2.0 [L]"
+    assert track_name({"language": "cze", "title": "CZ 2.0 [L]", "channels": 2}, moved=False) == "CZ 2.0 [L]"
+    # an untagged track keeps its name
+    assert track_name({"language": "", "title": "Stereo", "channels": 2}, moved=False) is None
+    ref = {"audio": [{"index": 0, "language": "", "title": "x", "channels": 6},
+                     {"index": 1, "language": "cze", "title": "Stereo", "channels": 2}]}
+    assert ref_track_names(ref) == {1: "CZ 2.0"}
 
 
-async def test_keep_audio_download_is_held_back_from_the_library(monkeypatch):
-    from app.core import events
-    from app.modules.audiosync import keep_audio
-    from app.modules.library import imports
-
-    started, imported = [], []
-
-    async def fake_import(payload):
-        imported.append(payload)
-
-    from app.core import registry
-    from app.db import init_db
-    await init_db(registry.discover())
-
-    async def fake_keep(payload, pending_id=None):
-        started.append(payload)
-
-    monkeypatch.setattr(keep_audio, "_keep_audio", fake_keep)
-    monkeypatch.setattr(imports, "import_movie", fake_import)
-    events.subscribe("download.completed", keep_audio.on_download_completed, 20, owner="audiosync")
-    events.subscribe("download.completed", imports.on_download_completed, 30, owner="library")
-
-    base = {"tmdb_id": 605, "title": "M", "content_type": "movie", "path": "/d/m.mkv"}
-    held = await events.emit("download.completed",
-                             {**base, "library_action": {"mode": "replace", "file_id": 3, "keep_audio": True}})
-    import asyncio
-    await asyncio.sleep(0)
-    assert held["held_by"] == "audiosync" and not imported and len(started) == 1
-    # a normal replace goes straight to the library
-    await events.emit("download.completed", {**base, "library_action": {"mode": "replace", "file_id": 3}})
-    assert len(imported) == 1 and len(started) == 1
-
+def test_default_reference_is_the_original_language_then_english():
+    from app.modules.audiosync.router import default_track
+    audio = [{"index": 0, "language": "cze"}, {"index": 1, "language": "eng"}, {"index": 2, "language": "fre"}]
+    assert default_track(audio, "fr") == 2
+    assert default_track(audio, "cs") == 0
+    assert default_track(audio, "ja") == 1             # no Japanese track → English
+    assert default_track(audio, "") == 1
+    assert default_track([{"index": 0, "language": "slo"}], "en") == 0
 
 
 def test_cut_point_uses_the_known_shape_of_a_cut():
@@ -159,6 +138,7 @@ def test_dub_names_drop_the_technical_part():
     assert dub_name("en", "English DTS-HD MA 7.1") == "EN"
     assert dub_name("en", "Commentary by director") == "EN Commentary by director"
     assert dub_name("cs", "") == "CZ"
+    assert dub_name("sk", "SK 2.0 [L]") == "SK"
 
 
 def test_a_drifting_stretch_then_a_jump_is_two_segments_with_a_slope():

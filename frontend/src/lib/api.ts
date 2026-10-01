@@ -938,7 +938,7 @@ export interface OwnedVersion {
 }
 
 /** What to do with an owned movie once a download finishes. */
-export type LibraryAction = { mode: "version" } | { mode: "replace"; file_id: number; keep_audio?: boolean };
+export type LibraryAction = { mode: "version" } | { mode: "replace"; file_id: number };
 
 export async function getOwned(tmdbIds: number[]): Promise<Record<string, OwnedVersion[]>> {
   const ids = tmdbIds.filter(Boolean);
@@ -1017,7 +1017,7 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-// ── audio sync (transfer a track between versions — step 1: analysis) ──
+// ── audio editor: the reference track, every track measured against it, edits ──
 
 export interface AudioTrackInfo {
   index: number;
@@ -1027,42 +1027,20 @@ export interface AudioTrackInfo {
   channels: number;
 }
 
-export interface AudioSyncWindow {
-  at: number;
-  offset: number;
-  score: number;
-  sharpness: number;
-}
-
-export interface AudioSyncResult {
-  verdict: "constant" | "speed" | "cuts" | "no_match";
-  speed: number;
-  offset: number;
-  confidence: number;
-  segments: { start: number; end: number; offset: number }[];
-  windows: AudioSyncWindow[];
-  reference: { duration: number; audio: AudioTrackInfo[] };
-  other: { duration: number; audio: AudioTrackInfo[] };
-  note: string;
-  drift_s: number;
-  pieces?: { start: number; end: number; offset: number | null; slope?: number }[];
-  adjust_ms?: number;     // the user's correction (+ = the other audio later)
-}
+export type AudioVerdict = "constant" | "speed" | "cuts" | "no_match";
 
 export interface AudioSyncJob {
   running: boolean;
-  kind?: "analyze" | "transfer" | "check" | "strip" | "upgrade" | "map" | "apply";
+  kind?: "map" | "apply";
   map_id?: number;
   title?: string;
   finished_at?: number;
-  result_id?: number;
   imported?: boolean | null;
   path?: string;
   phase?: string;
   done?: number;
   total?: number;
-  request?: { reference_id: number; other_id: number; reference_track: number; other_track: number };
-  result?: AudioSyncResult | null;
+  current?: string;
   error?: string | null;
   report?: { added?: string[]; skipped?: { track: number; reason: string }[] };
 }
@@ -1079,69 +1057,85 @@ async function audioSyncCall<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+const jsonBody = (method: string, body: unknown): RequestInit => ({
+  method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+
 export const getAudioTracks = (movieId: number) =>
   audioSyncCall<{ id: number; filename: string; duration: number; audio: AudioTrackInfo[] }>(`/tracks/${movieId}`);
-export const startAudioSync = (body: { reference_id: number; other_id: number; reference_track: number; other_track: number }) =>
-  audioSyncCall<AudioSyncJob>("/analyze", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
 export const getAudioSyncJob = () => audioSyncCall<AudioSyncJob>("/job");
+
+export interface AudioPreview { name: string; at: number; adjust_ms: number; saved_ms: number }
+/** A track of another version on the reference picture, placed by measurement ``resultId`` (+ a trial shift). */
 export const makeAudioPreview = (resultId: number, at: number, adjustMs: number, otherTrack?: number) =>
-  audioSyncCall<{ name: string; at: number; adjust_ms: number }>("/preview", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ result_id: resultId, at, adjust_ms: adjustMs, other_track: otherTrack ?? null }),
-  });
+  audioSyncCall<AudioPreview>("/preview", jsonBody("POST", { result_id: resultId, at, adjust_ms: adjustMs, other_track: otherTrack ?? null }));
+/** A track of the file as it is, on the file's own picture. */
+export const makeTrackPreview = (movieId: number, track: number, at: number) =>
+  audioSyncCall<AudioPreview>("/preview-track", jsonBody("POST", { movie_id: movieId, track, at }));
 export const audioPreviewUrl = (name: string) => `${API_BASE}/api/audiosync/preview/${name}`;
 export const setAudioAdjust = (resultId: number, adjustMs: number) =>
-  audioSyncCall<{ id: number; adjust_ms: number }>(`/results/${resultId}`, {
-    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ adjust_ms: adjustMs }),
-  });
-export const startAudioTransfer = (resultId: number, mode: "version" | "replace", otherTracks?: number[],
-                                   dropTracks: number[] = []) =>
-  audioSyncCall<AudioSyncJob>("/transfer", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ result_id: resultId, mode, other_tracks: otherTracks, drop_tracks: dropTracks }),
-  });
-export const getAudioSyncResults = (referenceId: number, otherId: number) =>
-  audioSyncCall<{ id: number; reference_track: number; other_track: number; created_at: string; result: AudioSyncResult }[]>(
-    `/results?reference_id=${referenceId}&other_id=${otherId}`);
+  audioSyncCall<{ id: number; adjust_ms: number }>(`/results/${resultId}`, jsonBody("PATCH", { adjust_ms: adjustMs }));
 
-// ── tracks of one file: check, remove, listen ──
+export interface AudioReference {
+  original_language: string;
+  chosen: { movie_id: number; track: number; verified: boolean; verified_by: string | null; updated_at: string } | null;
+  defaults: Record<string, number>;          // version id → default reference track
+}
+export const getAudioReference = (tmdbId: number) => audioSyncCall<AudioReference>(`/reference/${tmdbId}`);
+export const setAudioReference = (tmdbId: number, movieId: number, track: number, verified: boolean) =>
+  audioSyncCall<AudioReference>(`/reference/${tmdbId}`, jsonBody("PUT", { movie_id: movieId, track, verified }));
 
-export interface TrackCheck {
-  result_id: number;
-  track: number;
-  reference_track: number | null;
-  verdict: "constant" | "speed" | "cuts" | "no_match";
-  fits: boolean;
-  offset: number;
-  speed: number;
-  confidence: number;
-  pieces: { start: number; end: number; offset: number | null }[];
-  checked_at?: string;
+export interface FilmMapVersion {
+  id: number;
+  filename: string;
+  quality: string;
+  file_size: number;
+  audio: AudioTrackInfo[];
+  alignment: {
+    result_id: number; verdict: AudioVerdict; speed: number; offset: number;
+    // each track measured against the reference: shifted by the version's timing + delta, or on its own (result_id)
+    tracks?: Record<string, { delta: number; ok: boolean; result_id?: number; verdict?: AudioVerdict }>;
+  } | null;
 }
 
-export const startTrackCheck = (movieId: number, referenceTrack: number) =>
-  audioSyncCall<AudioSyncJob>("/check", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ movie_id: movieId, reference_track: referenceTrack }),
-  });
-export const getTrackChecks = (movieId: number) => audioSyncCall<TrackCheck[]>(`/checks/${movieId}`);
-export const startStripTracks = (movieId: number, dropTracks: number[], mode: "replace" | "version" = "replace") =>
-  audioSyncCall<AudioSyncJob>("/strip", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ movie_id: movieId, drop_tracks: dropTracks, mode }),
-  });
-export const fixTrack = (resultId: number, track: number) =>
-  audioSyncCall<AudioSyncJob>("/transfer", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ result_id: resultId, mode: "replace", other_tracks: [track], drop_tracks: [track] }),
-  });
-export const makeTrackPreview = (movieId: number, track: number, at: number, resultId?: number) =>
-  audioSyncCall<{ name: string; at: number }>("/preview-track", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ movie_id: movieId, track, at, result_id: resultId ?? null }),
-  });
+export interface TargetTrackCheck {
+  ok: boolean;
+  fixable: boolean;
+  verdict: AudioVerdict;
+  offset: number;
+  speed: number;
+  note?: string;
+  pieces: { start: number; end: number; offset: number | null; slope?: number }[];
+  result_id: number;
+}
+
+export interface FilmMapMember {
+  version_id: number;
+  track: number;
+  codec: string;
+  channels: number;
+  title: string;
+  language: string;
+}
+
+export interface FilmMap {
+  id: number;
+  created_at: string;
+  stale: boolean;
+  target_id: number;
+  ref_track: number;
+  duration: number;
+  target_tracks?: Record<string, TargetTrackCheck>;
+  versions: FilmMapVersion[];
+  dubs: { id: number; lang: string; name: string; members: FilmMapMember[] }[];
+}
+
+export const startFilmMap = (tmdbId: number, targetId: number, refTrack: number) =>
+  audioSyncCall<AudioSyncJob>("/map", jsonBody("POST", { tmdb_id: tmdbId, target_id: targetId, ref_track: refTrack }));
+export const getFilmMap = (tmdbId: number) => audioSyncCall<FilmMap | null>(`/map/${tmdbId}`);
+export const applyFilmMap = (mapId: number, picks: { version_id: number; track: number }[], fixTracks: number[],
+                             dropTracks: number[], mode: "replace" | "version") =>
+  audioSyncCall<AudioSyncJob>("/map/apply", jsonBody("POST", { map_id: mapId, picks, fix_tracks: fixTracks, drop_tracks: dropTracks, mode }));
 
 // ── browser player ──
 
@@ -1180,54 +1174,6 @@ export const playerUrl = (session: string) => `${API_BASE}/api/player/s/${sessio
 export const stopPlayer = (session: string) =>
   playerCall<{ ok: boolean }>(`/s/${session}`, { method: "DELETE" }).catch(() => ({ ok: false }));
 
-
-// ── the audio of the whole film: dubs × versions ──
-
-export interface FilmMapVersion {
-  id: number;
-  filename: string;
-  quality: string;
-  file_size: number;
-  audio: AudioTrackInfo[];
-  alignment: {
-    result_id: number; verdict: AudioSyncResult["verdict"]; speed: number; offset: number;
-    // each track on its own: dubs muxed in from another release can sit elsewhere than the first track
-    tracks?: Record<string, { delta: number; ok: boolean }>;
-  } | null;
-}
-
-export interface FilmMapMember {
-  version_id: number;
-  track: number;
-  codec: string;
-  channels: number;
-  title: string;
-  language: string;
-}
-
-export interface FilmMap {
-  id: number;
-  created_at: string;
-  stale: boolean;
-  target_id: number;
-  ref_track: number;
-  duration: number;
-  versions: FilmMapVersion[];
-  dubs: { id: number; lang: string; name: string; members: FilmMapMember[] }[];
-}
-
-export const startFilmMap = (tmdbId: number, targetId: number) =>
-  audioSyncCall<AudioSyncJob>("/map", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tmdb_id: tmdbId, target_id: targetId }),
-  });
-export const getFilmMap = (tmdbId: number) => audioSyncCall<FilmMap | null>(`/map/${tmdbId}`);
-export const applyFilmMap = (mapId: number, picks: { version_id: number; track: number }[], dropTracks: number[],
-                             mode: "replace" | "version") =>
-  audioSyncCall<AudioSyncJob>("/map/apply", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ map_id: mapId, picks, drop_tracks: dropTracks, mode }),
-  });
 
 // ── before a big rename: what Plex does on its own ──
 

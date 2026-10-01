@@ -1,4 +1,5 @@
-"""API: audio tracks of a library file, and the comparison of two versions (runs in the background)."""
+"""API of the audio editor: the reference track of a film, the map of all its dubs measured against
+it, previews, and building the edited file (runs in the background, one job at a time)."""
 
 import asyncio
 import json
@@ -13,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.clients.tmdb import TMDBClient
 from app.config import get_effective_settings
 from app.core import events
 from app.core.auth import User, require
@@ -40,8 +42,32 @@ CREATE TABLE IF NOT EXISTS audiosync_results (
 CREATE INDEX IF NOT EXISTS audiosync_results_pair ON audiosync_results(reference_id, other_id);
 """
 
-# one job at a time (it decodes audio / writes a whole film); _job is what the UI shows —
-# a comparison, a transfer, or keeping the audio of a replaced version after a download
+MAPS = """
+CREATE TABLE IF NOT EXISTS audiosync_maps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tmdb_id INTEGER NOT NULL,
+    target_id INTEGER NOT NULL,
+    versions TEXT NOT NULL,
+    result TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS audiosync_maps_film ON audiosync_maps(tmdb_id);
+"""
+
+# the track of a film trusted to fit the picture — chosen (and checked by watching) by the user
+REFS = """
+CREATE TABLE IF NOT EXISTS audiosync_refs (
+    tmdb_id INTEGER PRIMARY KEY,
+    movie_id INTEGER,
+    track INTEGER,
+    verified INTEGER NOT NULL DEFAULT 0,
+    verified_by TEXT,
+    original_language TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+# one job at a time (it decodes audio / writes a whole film); _job is what the UI shows
 _job: dict = {"running": False}
 _task: asyncio.Task | None = None
 _lock = asyncio.Lock()
@@ -63,453 +89,6 @@ async def _file(movie_id: int) -> dict:
     if not row or not row["file_path"] or not os.path.isfile(row["file_path"]):
         raise HTTPException(404, "Soubor verze nenalezen")
     return dict(row)
-
-
-@router.get("/tracks/{movie_id}", dependencies=[Depends(require("audiosync"))])
-async def tracks(movie_id: int) -> dict:
-    f = await _file(movie_id)
-    try:
-        info = await asyncio.to_thread(engine.probe, f["file_path"])
-    except Exception as e:  # noqa: BLE001 — broken file, missing ffprobe …
-        raise HTTPException(500, f"Soubor nejde přečíst: {e}")
-    return {"id": movie_id, "filename": f["filename"], **info}
-
-
-class AnalyzeBody(BaseModel):
-    reference_id: int          # the version whose video stays
-    other_id: int              # the version the audio track comes from
-    reference_track: int = 0
-    other_track: int = 0
-
-
-@router.post("/analyze", dependencies=[Depends(require("audiosync"))])
-async def start_analysis(body: AnalyzeBody) -> dict:
-    global _task
-    if busy():
-        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
-    if body.reference_id == body.other_id:
-        raise HTTPException(400, "Vyber dvě různé verze")
-    ref, other = await _file(body.reference_id), await _file(body.other_id)
-    if ref["tmdb_id"] != other["tmdb_id"]:
-        raise HTTPException(400, "Verze musí být stejného filmu")
-    _job.clear()
-    _job.update(running=True, kind="analyze", phase="start", done=0, total=0, request=body.model_dump(),
-                title=ref["title"], result=None, error=None)
-    _task = asyncio.create_task(_run(body, ref["file_path"], other["file_path"]))
-    return _job
-
-
-async def _run(body: AnalyzeBody, ref_path: str, other_path: str) -> None:
-    async with _lock:
-        await _analysis(body, ref_path, other_path)
-
-
-async def _analysis(body: AnalyzeBody, ref_path: str, other_path: str) -> None:
-    loop = asyncio.get_running_loop()
-
-    def progress(phase: str, done: int, total: int) -> None:
-        loop.call_soon_threadsafe(_job.update, {"phase": phase, "done": done, "total": total})
-
-    try:
-        result = await asyncio.to_thread(engine.analyze, ref_path, body.reference_track, other_path,
-                                         body.other_track, progress)
-        data = result.to_dict()
-        db = await get_db()
-        try:
-            cursor = await db.execute(
-                "INSERT INTO audiosync_results (reference_id, reference_track, other_id, other_track, verdict, result) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (body.reference_id, body.reference_track, body.other_id, body.other_track, result.verdict,
-                 json.dumps(data)))
-            await db.commit()
-            result_id = cursor.lastrowid
-        finally:
-            await db.close()
-        _job.update(result=data, result_id=result_id)
-        logger.info("audiosync %s: %s speed %.5f offset %+.3f", _job.get("title"), result.verdict, result.speed,
-                    result.offset)
-    except Exception as e:  # noqa: BLE001 — shown to the user
-        logger.exception("audiosync analysis failed")
-        _job.update(error=str(e))
-    finally:
-        _job.update(running=False, finished_at=time.time())
-
-
-@router.get("/job", dependencies=[Depends(require("audiosync"))])
-async def job() -> dict:
-    return _job
-
-
-@router.get("/results", dependencies=[Depends(require("audiosync"))])
-async def results(reference_id: int, other_id: int) -> list[dict]:
-    """Earlier comparisons of the pair, newest first."""
-    db = await get_db()
-    try:
-        cursor = await db.execute(
-            "SELECT * FROM audiosync_results WHERE reference_id = ? AND other_id = ? ORDER BY id DESC LIMIT 5",
-            (reference_id, other_id))
-        rows = await cursor.fetchall()
-    finally:
-        await db.close()
-    return [{**{k: r[k] for k in r.keys() if k != "result"}, "result": json.loads(r["result"])} for r in rows]
-
-
-class TransferBody(BaseModel):
-    result_id: int            # an analysis of the pair (its mapping is used)
-    mode: str = "version"     # version = keep both files | replace = the new file replaces the reference
-    other_tracks: list[int] | None = None   # tracks of the other version to add (None = the analysed one)
-    drop_tracks: list[int] = []             # audio tracks of the reference to leave out
-
-
-@router.post("/transfer")
-async def start_transfer(body: TransferBody, user: User = Depends(require("audiosync"))) -> dict:
-    global _task
-    if body.mode not in ("version", "replace"):
-        raise HTTPException(400, "Neznámý režim")
-    # the replaced file is deleted once the new one is in the library
-    if not user.can("library.delete" if body.mode == "replace" else "library.edit"):
-        raise HTTPException(403, "Na tohle nemáš oprávnění (nahradit = mazat v knihovně, nová verze = upravovat knihovnu)")
-    if busy():
-        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
-    db = await get_db()
-    try:
-        cursor = await db.execute("SELECT * FROM audiosync_results WHERE id = ?", (body.result_id,))
-        row = await cursor.fetchone()
-    finally:
-        await db.close()
-    if not row:
-        raise HTTPException(404, "Porovnání nenalezeno")
-    analysis = clips.with_adjustment(json.loads(row["result"]))
-    if analysis["verdict"] not in ("constant", "speed", "cuts") or not analysis.get("pieces"):
-        raise HTTPException(400, "Zvuk k tomuto obrazu nesedí — není co přenést")
-    ref, other = await _file(row["reference_id"]), await _file(row["other_id"])
-
-    if body.drop_tracks and not user.can("library.delete"):
-        raise HTTPException(403, "Odebrat stopy může jen uživatel s oprávněním mazat v knihovně")
-    downloads = await _work_dir(ref)
-
-    _job.clear()
-    _job.update(running=True, kind="transfer", phase="start", done=0, total=0, title=ref["title"],
-                request=body.model_dump(), result=None, error=None, imported=None)
-    _task = asyncio.create_task(_run_transfer(body, dict(row), analysis, ref, other, downloads))
-    return _job
-
-
-async def _run_transfer(body: TransferBody, row: dict, analysis: dict, ref: dict, other: dict, downloads: Path) -> None:
-    async with _lock:
-        await _transfer(body, row, analysis, ref, other, downloads)
-
-
-async def _transfer(body: TransferBody, row: dict, analysis: dict, ref: dict, other: dict, downloads: Path) -> None:
-    loop = asyncio.get_running_loop()
-
-    def progress(phase: str, done: int, total: int) -> None:
-        loop.call_soon_threadsafe(_job.update, {"phase": phase, "done": done, "total": total})
-
-    workdir = downloads / f".lumina-audiosync-{row['id']}"
-    out_name = Path(ref["filename"]).stem + " [audio].mkv"
-    report: dict = {}
-    try:
-        ref_keep = None
-        if body.drop_tracks:
-            count = len((await asyncio.to_thread(engine.probe, ref["file_path"]))["audio"])
-            ref_keep = [i for i in range(count) if i not in body.drop_tracks]
-        out = await asyncio.to_thread(muxer.transfer, ref["file_path"], row["reference_track"], other["file_path"],
-                                      body.other_tracks or [row["other_track"]], analysis, workdir, out_name,
-                                      progress, report, ref_keep,
-                                      # fixing a track of the same file: that very track is wanted
-                                      row["reference_id"] != row["other_id"])
-        _job.update(report=report)
-        await _hand_over(out, downloads / out_name, ref, body.mode, f"audiosync-{row['id']}", progress)
-    except muxer.TransferError as e:
-        _job.update(error=str(e))
-    except Exception as e:  # noqa: BLE001 — shown to the user
-        logger.exception("audiosync transfer failed")
-        _job.update(error=str(e))
-    finally:
-        shutil.rmtree(workdir, ignore_errors=True)
-        _job.update(running=False, finished_at=time.time())
-
-
-# ── previews and manual correction (step 4) ──
-
-async def _result_row(result_id: int) -> dict:
-    db = await get_db()
-    try:
-        cursor = await db.execute("SELECT * FROM audiosync_results WHERE id = ?", (result_id,))
-        row = await cursor.fetchone()
-    finally:
-        await db.close()
-    if not row:
-        raise HTTPException(404, "Porovnání nenalezeno")
-    return dict(row)
-
-
-class PreviewBody(BaseModel):
-    result_id: int
-    at: float                  # reference second where the clip starts
-    adjust_ms: int = 0         # trying a correction: + = the other audio later
-    other_track: int | None = None   # listen to another track of the other version (same timing)
-
-
-@router.post("/preview", dependencies=[Depends(require("audiosync"))])
-async def make_preview(body: PreviewBody) -> dict:
-    row = await _result_row(body.result_id)
-    if not row["reference_id"]:
-        raise HTTPException(400, "Ukázka jde jen u porovnání dvou verzí v knihovně")
-    ref, other = await _file(row["reference_id"]), await _file(row["other_id"])
-    analysis = json.loads(row["result"])
-    if analysis["verdict"] == "no_match":
-        raise HTTPException(400, "Zvuk nesedí — není co ukázat")
-    if not -10000 <= body.adjust_ms <= 10000:
-        raise HTTPException(400, "Posun nejvýš ±10 s")
-    at = max(0.0, min(body.at, (analysis.get("reference") or {}).get("duration", body.at + 30) - 25))
-    track = row["other_track"] if body.other_track is None else body.other_track
-    name = f"r{row['id']}x{track}-{int(at * 1000)}-{body.adjust_ms}"
-    try:
-        await asyncio.to_thread(clips.make_clip, ref["file_path"], other["file_path"], track, analysis,
-                                at, body.adjust_ms, name)
-    except Exception as e:  # noqa: BLE001
-        logger.exception("audiosync preview failed")
-        raise HTTPException(500, f"Ukázku se nepodařilo vyrobit: {e}")
-    return {"name": f"{name}.mp4", "at": at, "adjust_ms": body.adjust_ms}
-
-
-@router.get("/preview/{name}", dependencies=[Depends(require("audiosync"))])
-async def get_preview(name: str) -> FileResponse:
-    if not re.fullmatch(r"(r\d+x\d+|t\d+-\d+-(raw|fix\d+))-\d+--?\d+\.mp4", name):
-        raise HTTPException(404)
-    path = clips.PREVIEW_DIR / name
-    if not path.is_file():
-        raise HTTPException(404, "Ukázka už neexistuje")
-    return FileResponse(path, media_type="video/mp4")
-
-
-class AdjustBody(BaseModel):
-    adjust_ms: int
-
-
-@router.patch("/results/{result_id}", dependencies=[Depends(require("audiosync"))])
-async def set_adjustment(result_id: int, body: AdjustBody) -> dict:
-    """Keeps the user's correction; a transfer uses it."""
-    if not -10000 <= body.adjust_ms <= 10000:
-        raise HTTPException(400, "Posun nejvýš ±10 s")
-    row = await _result_row(result_id)
-    analysis = json.loads(row["result"])
-    analysis["adjust_ms"] = body.adjust_ms
-    db = await get_db()
-    try:
-        await db.execute("UPDATE audiosync_results SET result = ? WHERE id = ?", (json.dumps(analysis), result_id))
-        await db.commit()
-    finally:
-        await db.close()
-    return {"id": result_id, "adjust_ms": body.adjust_ms}
-
-
-
-# ── the tracks of one file: check, remove, listen (single file) ──
-
-async def _work_dir(ref: dict) -> Path:
-    """The movie downloads folder (the result goes to the library from there) with room for a copy."""
-    cfg = await get_effective_settings()
-    downloads = Path(cfg.get("plex_media_dir") or "")
-    if not downloads.is_dir():
-        raise HTTPException(400, "Složka pro stahování filmů neexistuje")
-    free = shutil.disk_usage(downloads).free
-    if free < (ref["file_size"] or 0) * 1.05 + 2 * 1024**3:
-        raise HTTPException(507, f"Málo místa ve složce stahování ({free / 1024**3:.0f} GB volno)")
-    return downloads
-
-
-async def _hand_over(built: str, final: Path, ref: dict, mode: str, download_id: str, progress) -> None:
-    """The library takes the file over like a finished download (naming, NFO, replacing the old file)."""
-    os.replace(built, final)
-    progress("import", 0, 1)
-    action = {"mode": "replace", "file_id": ref["id"]} if mode == "replace" else {"mode": "version"}
-    payload = await events.emit("download.completed", {
-        "download_id": download_id, "tmdb_id": ref["tmdb_id"], "title": ref["title"], "year": ref["year"],
-        "content_type": "movie", "path": str(final), "library_action": action})
-    _job.update(imported=bool(payload.get("imported")), path=payload.get("path"))
-
-
-class CheckBody(BaseModel):
-    movie_id: int
-    reference_track: int = 0       # the track trusted to fit the picture
-
-
-@router.post("/check", dependencies=[Depends(require("audiosync"))])
-async def start_check(body: CheckBody) -> dict:
-    """Does every audio track of one file line up with the reference track? (uploaders sometimes
-    add a dub from another release that is shifted, at PAL speed or from another cut)"""
-    global _task
-    if busy():
-        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
-    f = await _file(body.movie_id)
-    info = await asyncio.to_thread(engine.probe, f["file_path"])
-    others = [a["index"] for a in info["audio"] if a["index"] != body.reference_track]
-    if body.reference_track >= len(info["audio"]) or not others:
-        raise HTTPException(400, "Soubor má jen jednu zvukovou stopu — není s čím porovnat")
-    _job.clear()
-    _job.update(running=True, kind="check", phase="check", done=0, total=len(others), title=f["title"],
-                request=body.model_dump(), checks=[], error=None)
-    _task = asyncio.create_task(_run_check(body, f, others))
-    return _job
-
-
-async def _run_check(body: CheckBody, f: dict, others: list[int]) -> None:
-    async with _lock:
-        try:
-            for k, t in enumerate(others):
-                _job.update(phase="check", done=k, current=t)
-                result = await asyncio.to_thread(engine.analyze, f["file_path"], body.reference_track,
-                                                 f["file_path"], t)
-                data = result.to_dict()
-                db = await get_db()
-                try:
-                    cursor = await db.execute(
-                        "INSERT INTO audiosync_results (reference_id, reference_track, other_id, other_track, verdict, "
-                        "result) VALUES (?, ?, ?, ?, ?, ?)",
-                        (f["id"], body.reference_track, f["id"], t, result.verdict, json.dumps(data)))
-                    await db.commit()
-                    rid = cursor.lastrowid
-                finally:
-                    await db.close()
-                _job["checks"].append(_check_summary(rid, t, data))
-            _job.update(done=len(others))
-        except Exception as e:  # noqa: BLE001 — shown to the user
-            logger.exception("audiosync track check failed")
-            _job.update(error=str(e))
-        finally:
-            _job.update(running=False, finished_at=time.time())
-
-
-def _check_summary(result_id: int, track: int, data: dict) -> dict:
-    fits = data["verdict"] == "constant" and abs(data["offset"]) <= 0.08
-    return {"result_id": result_id, "track": track, "verdict": data["verdict"], "fits": fits,
-            "offset": data["offset"], "speed": data["speed"], "confidence": data["confidence"],
-            "pieces": data.get("pieces") or [], "reference_track": None}
-
-
-@router.get("/checks/{movie_id}", dependencies=[Depends(require("audiosync"))])
-async def checks(movie_id: int) -> list[dict]:
-    """The latest check of every track of the file (reference track included in each row)."""
-    db = await get_db()
-    try:
-        cursor = await db.execute(
-            "SELECT * FROM audiosync_results WHERE reference_id = ? AND other_id = ? ORDER BY id DESC", (movie_id, movie_id))
-        rows = await cursor.fetchall()
-    finally:
-        await db.close()
-    seen, out = set(), []
-    for r in rows:
-        if r["other_track"] in seen:
-            continue
-        seen.add(r["other_track"])
-        summary = _check_summary(r["id"], r["other_track"], json.loads(r["result"]))
-        summary.update(reference_track=r["reference_track"], checked_at=r["created_at"])
-        out.append(summary)
-    return sorted(out, key=lambda x: x["track"])
-
-
-class StripBody(BaseModel):
-    movie_id: int
-    drop_tracks: list[int]
-    mode: str = "replace"
-
-
-@router.post("/strip")
-async def start_strip(body: StripBody, user: User = Depends(require("audiosync"))) -> dict:
-    """A copy of the file without the chosen audio tracks (nothing re-encoded); replaces the file
-    or is kept as a new version."""
-    global _task
-    if body.mode not in ("version", "replace"):
-        raise HTTPException(400, "Neznámý režim")
-    if not user.can("library.delete" if body.mode == "replace" else "library.edit"):
-        raise HTTPException(403, "Na tohle nemáš oprávnění")
-    if not body.drop_tracks:
-        raise HTTPException(400, "Vyber stopy k odebrání")
-    if busy():
-        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
-    f = await _file(body.movie_id)
-    downloads = await _work_dir(f)
-    _job.clear()
-    _job.update(running=True, kind="strip", phase="mux", done=0, total=100, title=f["title"],
-                request=body.model_dump(), error=None, imported=None)
-    _task = asyncio.create_task(_run_strip(body, f, downloads))
-    return _job
-
-
-async def _run_strip(body: StripBody, f: dict, downloads: Path) -> None:
-    async with _lock:
-        loop = asyncio.get_running_loop()
-
-        def progress(phase: str, done: int, total: int) -> None:
-            loop.call_soon_threadsafe(_job.update, {"phase": phase, "done": done, "total": total})
-
-        workdir = downloads / f".lumina-strip-{f['id']}"
-        out_name = Path(f["filename"]).stem + " [tracks].mkv"
-        try:
-            count = len((await asyncio.to_thread(engine.probe, f["file_path"]))["audio"])
-            keep = [i for i in range(count) if i not in body.drop_tracks]
-            out = await asyncio.to_thread(muxer.strip, f["file_path"], keep, workdir, out_name, progress)
-            await _hand_over(out, downloads / out_name, f, body.mode, f"strip-{f['id']}", progress)
-        except muxer.TransferError as e:
-            _job.update(error=str(e))
-        except Exception as e:  # noqa: BLE001 — shown to the user
-            logger.exception("audiosync strip failed")
-            _job.update(error=str(e))
-        finally:
-            shutil.rmtree(workdir, ignore_errors=True)
-            _job.update(running=False, finished_at=time.time())
-
-
-class TrackPreviewBody(BaseModel):
-    movie_id: int
-    track: int
-    at: float
-    result_id: int | None = None   # a check of this track: listen to it corrected (+ adjust_ms)
-    adjust_ms: int = 0
-
-
-@router.post("/preview-track", dependencies=[Depends(require("audiosync"))])
-async def preview_track(body: TrackPreviewBody) -> dict:
-    """20 s of the file's own picture with one of its tracks — as it is, or corrected by a check."""
-    f = await _file(body.movie_id)
-    info = await asyncio.to_thread(engine.probe, f["file_path"])
-    if body.track >= len(info["audio"]):
-        raise HTTPException(400, "Neznámá zvuková stopa")
-    analysis = {"speed": 1.0, "offset": 0.0}
-    tag = "raw"
-    if body.result_id:
-        row = await _result_row(body.result_id)
-        if row["reference_id"] != body.movie_id or row["other_id"] != body.movie_id or row["other_track"] != body.track:
-            raise HTTPException(400, "Kontrola nepatří k této stopě")
-        analysis = json.loads(row["result"])
-        tag = f"fix{row['id']}"
-    at = max(0.0, min(body.at, info["duration"] - 25))
-    name = f"t{f['id']}-{body.track}-{tag}-{int(at * 1000)}-{body.adjust_ms}"
-    try:
-        await asyncio.to_thread(clips.make_clip, f["file_path"], f["file_path"], body.track, analysis, at,
-                                body.adjust_ms, name)
-    except Exception as e:  # noqa: BLE001
-        logger.exception("audiosync track preview failed")
-        raise HTTPException(500, f"Ukázku se nepodařilo vyrobit: {e}")
-    return {"name": f"{name}.mp4", "at": at}
-
-
-# ── the audio of the whole film (all versions): dubs, where they are, add to one version ──
-
-MAPS = """
-CREATE TABLE IF NOT EXISTS audiosync_maps (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tmdb_id INTEGER NOT NULL,
-    target_id INTEGER NOT NULL,
-    versions TEXT NOT NULL,
-    result TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS audiosync_maps_film ON audiosync_maps(tmdb_id);
-"""
 
 
 async def _versions(tmdb_id: int) -> list[dict]:
@@ -536,9 +115,244 @@ async def _save_result(ref_id: int, ref_track: int, other_id: int, other_track: 
         await db.close()
 
 
+async def _result_row(result_id: int) -> dict:
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT * FROM audiosync_results WHERE id = ?", (result_id,))
+        row = await cursor.fetchone()
+    finally:
+        await db.close()
+    if not row:
+        raise HTTPException(404, "Porovnání nenalezeno")
+    return dict(row)
+
+
+@router.get("/job", dependencies=[Depends(require("audiosync"))])
+async def job() -> dict:
+    return _job
+
+
+@router.get("/tracks/{movie_id}", dependencies=[Depends(require("audiosync"))])
+async def tracks(movie_id: int) -> dict:
+    f = await _file(movie_id)
+    try:
+        info = await asyncio.to_thread(engine.probe, f["file_path"])
+    except Exception as e:  # noqa: BLE001 — broken file, missing ffprobe …
+        raise HTTPException(500, f"Soubor nejde přečíst: {e}")
+    return {"id": movie_id, "filename": f["filename"], **info}
+
+
+# ── the reference track ──
+
+def default_track(audio: list[dict], original_language: str) -> int:
+    """The film's original language (usually what the picture was shot with), else English, else the first."""
+    for lang in (engine.lang_code(original_language), "en"):
+        for a in audio:
+            if lang and engine.lang_code(a.get("language", "")) == lang:
+                return a["index"]
+    return audio[0]["index"] if audio else 0
+
+
+async def _stored_ref(tmdb_id: int) -> dict | None:
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT * FROM audiosync_refs WHERE tmdb_id = ?", (tmdb_id,))
+        row = await cursor.fetchone()
+    finally:
+        await db.close()
+    return dict(row) if row else None
+
+
+async def _write_ref(tmdb_id: int, **fields) -> None:
+    db = await get_db()
+    try:
+        await db.execute("INSERT OR IGNORE INTO audiosync_refs (tmdb_id) VALUES (?)", (tmdb_id,))
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        await db.execute(f"UPDATE audiosync_refs SET {sets}, updated_at = datetime('now') WHERE tmdb_id = ?",
+                         (*fields.values(), tmdb_id))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def _original_language(tmdb_id: int) -> str:
+    stored = await _stored_ref(tmdb_id)
+    if stored and stored.get("original_language") is not None:
+        return stored["original_language"]
+    cfg = await get_effective_settings()
+    lang = ""
+    if cfg.get("tmdb_api_key"):
+        client = TMDBClient(cfg["tmdb_api_key"])
+        try:
+            lang = (await client.get_movie_full(tmdb_id)).get("original_language", "") or ""
+        except Exception as e:  # noqa: BLE001 — without it the default is English
+            logger.info("audiosync: original language of %s unknown: %s", tmdb_id, e)
+            return ""
+        finally:
+            await client.close()
+    await _write_ref(tmdb_id, original_language=lang)
+    return lang
+
+
+@router.get("/reference/{tmdb_id}", dependencies=[Depends(require("audiosync"))])
+async def get_reference(tmdb_id: int) -> dict:
+    """The chosen reference (if its version still exists) and the default track of every version."""
+    versions = await _versions(tmdb_id)
+    orig = await _original_language(tmdb_id)
+    defaults = {}
+    for v in versions:
+        try:
+            audio = (await asyncio.to_thread(engine.probe, v["file_path"]))["audio"]
+        except Exception:  # noqa: BLE001 — a broken file has no default
+            continue
+        defaults[v["id"]] = default_track(audio, orig)
+    stored = await _stored_ref(tmdb_id)
+    chosen = None
+    if stored and stored.get("movie_id") in defaults:
+        chosen = {"movie_id": stored["movie_id"], "track": stored["track"], "verified": bool(stored["verified"]),
+                  "verified_by": stored["verified_by"], "updated_at": stored["updated_at"]}
+    return {"original_language": orig, "chosen": chosen, "defaults": defaults}
+
+
+class ReferenceBody(BaseModel):
+    movie_id: int
+    track: int
+    verified: bool = False
+
+
+@router.put("/reference/{tmdb_id}")
+async def set_reference(tmdb_id: int, body: ReferenceBody, user: User = Depends(require("audiosync"))) -> dict:
+    f = await _file(body.movie_id)
+    if f["tmdb_id"] != tmdb_id:
+        raise HTTPException(400, "Verze nepatří k tomuto filmu")
+    audio = (await asyncio.to_thread(engine.probe, f["file_path"]))["audio"]
+    if not 0 <= body.track < len(audio):
+        raise HTTPException(400, "Neznámá zvuková stopa")
+    await _write_ref(tmdb_id, movie_id=body.movie_id, track=body.track, verified=int(body.verified),
+                     verified_by=user.username if body.verified else None)
+    return await get_reference(tmdb_id)
+
+
+# ── previews and manual correction ──
+
+class PreviewBody(BaseModel):
+    result_id: int
+    at: float                  # reference second where the clip starts
+    adjust_ms: int = 0         # trying a correction on top of the saved one: + = the other audio later
+    other_track: int | None = None   # another track of the other version (same timing)
+
+
+@router.post("/preview", dependencies=[Depends(require("audiosync"))])
+async def make_preview(body: PreviewBody) -> dict:
+    """20 s of the reference picture with a track of another version placed by a measurement."""
+    row = await _result_row(body.result_id)
+    ref, other = await _file(row["reference_id"]), await _file(row["other_id"])
+    analysis = json.loads(row["result"])
+    if analysis["verdict"] == "no_match":
+        raise HTTPException(400, "Zvuk nesedí — není co ukázat")
+    if not -10000 <= body.adjust_ms <= 10000:
+        raise HTTPException(400, "Posun nejvýš ±10 s")
+    at = max(0.0, min(body.at, (analysis.get("reference") or {}).get("duration", body.at + 30) - 25))
+    track = row["other_track"] if body.other_track is None else body.other_track
+    name = f"r{row['id']}x{track}-{int(at * 1000)}-{body.adjust_ms}-{analysis.get('adjust_ms') or 0}"
+    try:
+        await asyncio.to_thread(clips.make_clip, ref["file_path"], other["file_path"], track,
+                                clips.with_adjustment(analysis), at, body.adjust_ms, name)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("audiosync preview failed")
+        raise HTTPException(500, f"Ukázku se nepodařilo vyrobit: {e}")
+    return {"name": f"{name}.mp4", "at": at, "adjust_ms": body.adjust_ms, "saved_ms": analysis.get("adjust_ms") or 0}
+
+
+class TrackPreviewBody(BaseModel):
+    movie_id: int
+    track: int
+    at: float
+
+
+@router.post("/preview-track", dependencies=[Depends(require("audiosync"))])
+async def preview_track(body: TrackPreviewBody) -> dict:
+    """20 s of the file's own picture with one of its tracks as it is."""
+    f = await _file(body.movie_id)
+    info = await asyncio.to_thread(engine.probe, f["file_path"])
+    if body.track >= len(info["audio"]):
+        raise HTTPException(400, "Neznámá zvuková stopa")
+    at = max(0.0, min(body.at, info["duration"] - 25))
+    name = f"t{f['id']}-{body.track}-raw-{int(at * 1000)}-0"
+    try:
+        await asyncio.to_thread(clips.make_clip, f["file_path"], f["file_path"], body.track,
+                                {"speed": 1.0, "offset": 0.0}, at, 0, name)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("audiosync track preview failed")
+        raise HTTPException(500, f"Ukázku se nepodařilo vyrobit: {e}")
+    return {"name": f"{name}.mp4", "at": at, "adjust_ms": 0, "saved_ms": 0}
+
+
+@router.get("/preview/{name}", dependencies=[Depends(require("audiosync"))])
+async def get_preview(name: str) -> FileResponse:
+    if not re.fullmatch(r"(r\d+x\d+-\d+--?\d+--?\d+|t\d+-\d+-raw-\d+-0)\.mp4", name):
+        raise HTTPException(404)
+    path = clips.PREVIEW_DIR / name
+    if not path.is_file():
+        raise HTTPException(404, "Ukázka už neexistuje")
+    return FileResponse(path, media_type="video/mp4")
+
+
+class AdjustBody(BaseModel):
+    adjust_ms: int
+
+
+@router.patch("/results/{result_id}", dependencies=[Depends(require("audiosync"))])
+async def set_adjustment(result_id: int, body: AdjustBody) -> dict:
+    """Keeps the user's correction of a measurement; building the file uses it."""
+    if not -10000 <= body.adjust_ms <= 10000:
+        raise HTTPException(400, "Posun nejvýš ±10 s")
+    row = await _result_row(result_id)
+    analysis = json.loads(row["result"])
+    analysis["adjust_ms"] = body.adjust_ms
+    db = await get_db()
+    try:
+        await db.execute("UPDATE audiosync_results SET result = ? WHERE id = ?", (json.dumps(analysis), result_id))
+        await db.commit()
+    finally:
+        await db.close()
+    return {"id": result_id, "adjust_ms": body.adjust_ms}
+
+
+# ── the map: every track of every version measured against the reference track ──
+
+async def _work_dir(ref: dict) -> Path:
+    """The movie downloads folder (the result goes to the library from there) with room for a copy."""
+    cfg = await get_effective_settings()
+    downloads = Path(cfg.get("plex_media_dir") or "")
+    if not downloads.is_dir():
+        raise HTTPException(400, "Složka pro stahování filmů neexistuje")
+    free = shutil.disk_usage(downloads).free
+    if free < (ref["file_size"] or 0) * 1.05 + 2 * 1024**3:
+        raise HTTPException(507, f"Málo místa ve složce stahování ({free / 1024**3:.0f} GB volno)")
+    return downloads
+
+
+async def _hand_over(built: str, final: Path, ref: dict, mode: str, download_id: str, progress) -> dict:
+    """The library takes the file over like a finished download (naming, NFO, replacing the old file)."""
+    os.replace(built, final)
+    progress("import", 0, 1)
+    action = {"mode": "replace", "file_id": ref["id"]} if mode == "replace" else {"mode": "version"}
+    payload = await events.emit("download.completed", {
+        "download_id": download_id, "tmdb_id": ref["tmdb_id"], "title": ref["title"], "year": ref["year"],
+        "content_type": "movie", "path": str(final), "library_action": action})
+    _job.update(imported=bool(payload.get("imported")), path=payload.get("path"))
+    return payload
+
+
+def _fits_reference(data: dict) -> bool:
+    return data["verdict"] == "constant" and abs(data["offset"]) <= 0.08
+
+
 class MapBody(BaseModel):
     tmdb_id: int
     target_id: int
+    ref_track: int | None = None     # None = the chosen reference / the default
 
 
 @router.post("/map", dependencies=[Depends(require("audiosync"))])
@@ -547,11 +361,21 @@ async def start_map(body: MapBody) -> dict:
     if busy():
         raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
     versions = await _versions(body.tmdb_id)
-    if not any(v["id"] == body.target_id for v in versions):
+    target = next((v for v in versions if v["id"] == body.target_id), None)
+    if not target:
         raise HTTPException(404, "Cílová verze nenalezena")
+    audio = (await asyncio.to_thread(engine.probe, target["file_path"]))["audio"]
+    if not audio:
+        raise HTTPException(400, "Cílová verze nemá zvuk")
+    if body.ref_track is None:
+        ref = await get_reference(body.tmdb_id)
+        chosen = ref["chosen"]
+        body.ref_track = chosen["track"] if chosen and chosen["movie_id"] == target["id"] else ref["defaults"][target["id"]]
+    if not 0 <= body.ref_track < len(audio):
+        raise HTTPException(400, "Neznámá referenční stopa")
     _job.clear()
-    _job.update(running=True, kind="map", phase="align", done=0, total=len(versions) - 1,
-                title=versions[0]["title"], request=body.model_dump(), error=None)
+    _job.update(running=True, kind="map", phase="target", done=0, total=len(audio) - 1 + len(versions) - 1,
+                title=target["title"], request=body.model_dump(), error=None)
     _task = asyncio.create_task(_run_map(body, versions))
     return _job
 
@@ -564,65 +388,100 @@ async def _run_map(body: MapBody, versions: list[dict]) -> None:
             loop.call_soon_threadsafe(_job.update, {"phase": phase, "done": done, "total": total})
 
         try:
-            target = next(v for v in versions if v["id"] == body.target_id)
-            infos = {v["id"]: await asyncio.to_thread(engine.probe, v["file_path"]) for v in versions}
-            ref_track = 0
-            ref_lang = engine.lang_code((infos[target["id"]]["audio"] or [{}])[0].get("language", ""))
-            placed, alignments = [], {}
-            k = 0
-            for v in versions:
-                if v["id"] == target["id"]:
-                    placed.append({"id": v["id"], "path": v["file_path"], "analysis": None,
-                                   "audio": infos[v["id"]]["audio"]})
-                    continue
-                audio = infos[v["id"]]["audio"]
-                if not audio:
-                    continue
-                # align with the track most likely shared with the target's first one (same language)
-                other_track = next((a["index"] for a in audio if engine.lang_code(a.get("language", "")) == ref_lang), 0)
-                _job.update(phase="align", done=k, total=len(versions) - 1, current=v["filename"])
-                result = await asyncio.to_thread(engine.analyze, target["file_path"], ref_track, v["file_path"],
-                                                 other_track)
-                data = result.to_dict()
-                rid = await _save_result(target["id"], ref_track, v["id"], other_track, data)
-                alignments[v["id"]] = {"result_id": rid, "verdict": data["verdict"], "speed": data["speed"],
-                                       "offset": data["offset"], "pieces": data.get("pieces") or []}
-                usable = data["verdict"] != "no_match"
-                # every track on its own: dubs muxed in from another release may sit elsewhere
-                fits = {}
-                if usable:
-                    for a in audio:
-                        _job.update(phase="tracks", current=f"{v['filename']} · stopa {a['index'] + 1}")
-                        delta, ok = await asyncio.to_thread(filmmap.track_delta, target["file_path"], ref_track,
-                                                            v["file_path"], a["index"], data,
-                                                            infos[target["id"]]["duration"])
-                        fits[a["index"]] = {"delta": delta, "ok": ok}
-                alignments[v["id"]]["tracks"] = fits
-                placed.append({"id": v["id"], "path": v["file_path"], "audio": audio, "usable": usable, "tracks": fits,
-                               # a version whose audio does not fit cannot be compared on the timeline
-                               "analysis": data if usable else {"speed": 1.0, "offset": 0.0}})
-                k += 1
-            duration = infos[target["id"]]["duration"]
-            dubs = await asyncio.to_thread(filmmap.cluster, placed, duration, progress)
-            result = {"target_id": target["id"], "ref_track": ref_track, "duration": duration,
-                      "versions": [{"id": v["id"], "filename": v["filename"], "quality": v["quality"],
-                                    "file_size": v["file_size"], "audio": infos[v["id"]]["audio"],
-                                    "alignment": alignments.get(v["id"])} for v in versions],
-                      "dubs": dubs}
-            db = await get_db()
-            try:
-                cursor = await db.execute(
-                    "INSERT INTO audiosync_maps (tmdb_id, target_id, versions, result) VALUES (?, ?, ?, ?)",
-                    (body.tmdb_id, target["id"], ",".join(str(v["id"]) for v in versions), json.dumps(result)))
-                await db.commit()
-                _job.update(map_id=cursor.lastrowid)
-            finally:
-                await db.close()
+            await _map(body, versions, progress)
         except Exception as e:  # noqa: BLE001 — shown to the user
             logger.exception("audiosync film map failed")
             _job.update(error=str(e))
         finally:
             _job.update(running=False, finished_at=time.time())
+
+
+async def _map(body: MapBody, versions: list[dict], progress) -> None:
+    target = next(v for v in versions if v["id"] == body.target_id)
+    infos = {v["id"]: await asyncio.to_thread(engine.probe, v["file_path"]) for v in versions}
+    ref_track = body.ref_track
+    tinfo = infos[target["id"]]
+    duration = tinfo["duration"]
+    ref_lang = engine.lang_code(tinfo["audio"][ref_track].get("language", ""))
+    step = 0
+
+    # 1) the target's own tracks: does each line up with the reference track? (uploaders mux in dubs
+    #    from other releases — shifted, drifting, another cut). One that does not can be fixed.
+    target_tracks: dict[int, dict] = {}
+    own_fits: dict[int, dict] = {}
+    for a in tinfo["audio"]:
+        if a["index"] == ref_track:
+            continue
+        _job.update(phase="target", done=step, current=f"stopa {a['index'] + 1}")
+        data = (await asyncio.to_thread(engine.analyze, target["file_path"], ref_track, target["file_path"],
+                                        a["index"])).to_dict()
+        rid = await _save_result(target["id"], ref_track, target["id"], a["index"], data)
+        ok = _fits_reference(data)
+        fixable = not ok and data["verdict"] in ("constant", "speed", "cuts") and bool(data.get("pieces"))
+        target_tracks[a["index"]] = {"ok": ok, "fixable": fixable, "verdict": data["verdict"],
+                                     "offset": data["offset"], "speed": data["speed"], "note": data.get("note"),
+                                     "pieces": data.get("pieces") or [], "result_id": rid}
+        own_fits[a["index"]] = {"delta": 0.0, "ok": ok, "own": data if fixable else None}
+        step += 1
+    placed = [{"id": target["id"], "path": target["file_path"], "analysis": None, "target": True,
+               "audio": tinfo["audio"], "tracks": own_fits}]
+
+    # 2) every other version: aligned through its track of the reference's language, then each of
+    #    its tracks measured against the reference track on its own
+    alignments = {}
+    for v in versions:
+        if v["id"] == target["id"]:
+            continue
+        audio = infos[v["id"]]["audio"]
+        if not audio:
+            continue
+        other_track = next((a["index"] for a in audio if ref_lang and engine.lang_code(a.get("language", "")) == ref_lang), 0)
+        _job.update(phase="align", done=step, current=v["filename"])
+        data = (await asyncio.to_thread(engine.analyze, target["file_path"], ref_track, v["file_path"],
+                                        other_track)).to_dict()
+        rid = await _save_result(target["id"], ref_track, v["id"], other_track, data)
+        usable = data["verdict"] != "no_match"
+        fits: dict[int, dict] = {}
+        if usable:
+            for a in audio:
+                _job.update(phase="tracks", current=f"{v['filename']} · stopa {a['index'] + 1}")
+                delta, ok = await asyncio.to_thread(filmmap.track_delta, target["file_path"], ref_track,
+                                                    v["file_path"], a["index"], data, duration)
+                fits[a["index"]] = {"delta": delta, "ok": ok}
+                if ok:
+                    continue
+                # not the version's timing (drifts, its own cut) — a full measurement of this track alone
+                _job.update(phase="track", current=f"{v['filename']} · stopa {a['index'] + 1} zvlášť")
+                own = (await asyncio.to_thread(engine.analyze, target["file_path"], ref_track, v["file_path"],
+                                               a["index"])).to_dict()
+                if own["verdict"] != "no_match" and own.get("pieces"):
+                    orid = await _save_result(target["id"], ref_track, v["id"], a["index"], own)
+                    fits[a["index"]] = {"delta": 0.0, "ok": True, "own": own, "result_id": orid,
+                                        "verdict": own["verdict"]}
+        alignments[v["id"]] = {"result_id": rid, "verdict": data["verdict"], "speed": data["speed"],
+                               "offset": data["offset"], "pieces": data.get("pieces") or [],
+                               "tracks": {i: {k: x for k, x in f.items() if k != "own"} for i, f in fits.items()}}
+        placed.append({"id": v["id"], "path": v["file_path"], "audio": audio, "usable": usable, "tracks": fits,
+                       # a version whose audio does not fit cannot be compared on the timeline
+                       "analysis": data if usable else {"speed": 1.0, "offset": 0.0}})
+        step += 1
+
+    dubs = await asyncio.to_thread(filmmap.cluster, placed, duration, progress)
+    result = {"target_id": target["id"], "ref_track": ref_track, "duration": duration,
+              "target_tracks": target_tracks,
+              "versions": [{"id": v["id"], "filename": v["filename"], "quality": v["quality"],
+                            "file_size": v["file_size"], "audio": infos[v["id"]]["audio"],
+                            "alignment": alignments.get(v["id"])} for v in versions],
+              "dubs": dubs}
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "INSERT INTO audiosync_maps (tmdb_id, target_id, versions, result) VALUES (?, ?, ?, ?)",
+            (body.tmdb_id, target["id"], ",".join(str(v["id"]) for v in versions), json.dumps(result)))
+        await db.commit()
+        _job.update(map_id=cursor.lastrowid)
+    finally:
+        await db.close()
 
 
 @router.get("/map/{tmdb_id}", dependencies=[Depends(require("audiosync"))])
@@ -642,7 +501,8 @@ async def get_map(tmdb_id: int) -> dict | None:
 
 class ApplyBody(BaseModel):
     map_id: int
-    picks: list[dict] = []         # [{version_id, track}] — the dubs to add, from where
+    picks: list[dict] = []         # [{version_id, track}] — tracks of other versions to add
+    fix_tracks: list[int] = []     # target tracks to replace by their copy moved onto the reference
     drop_tracks: list[int] = []    # target tracks to leave out
     mode: str = "replace"          # replace the target | keep it and add a new version
 
@@ -652,8 +512,8 @@ async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync")))
     global _task
     if body.mode not in ("version", "replace"):
         raise HTTPException(400, "Neznámý režim")
-    if not user.can("library.delete" if body.mode == "replace" or body.drop_tracks else "library.edit"):
-        raise HTTPException(403, "Na tohle nemáš oprávnění")
+    if not user.can("library.delete" if body.mode == "replace" else "library.edit"):
+        raise HTTPException(403, "Na tohle nemáš oprávnění (upravit soubor = mazat v knihovně, nová verze = upravovat knihovnu)")
     if busy():
         raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
     db = await get_db()
@@ -666,6 +526,9 @@ async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync")))
         raise HTTPException(404, "Mapa nenalezena")
     fmap = json.loads(row["result"])
     target = await _file(fmap["target_id"])
+    ref_track = fmap.get("ref_track", 0)
+    if ref_track in body.drop_tracks or ref_track in body.fix_tracks:
+        raise HTTPException(400, "Referenční stopa musí zůstat, jak je")
     by_version = {v["id"]: v for v in fmap["versions"]}
     sources: dict[tuple, dict] = {}
     for p in body.picks:
@@ -677,13 +540,20 @@ async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync")))
         track = int(p["track"])
         fit = (v["alignment"].get("tracks") or {}).get(str(track)) or {"delta": 0.0, "ok": True}
         if not fit["ok"]:
-            raise HTTPException(400, f"Stopa {track + 1} verze {v['filename']} k cíli nesedí")
-        # tracks of one version with the same own shift go together (one mapping)
-        key = (v["id"], fit["delta"])
-        sources.setdefault(key, {"version_id": v["id"], "result_id": v["alignment"]["result_id"],
-                                 "delta": fit["delta"], "tracks": []})["tracks"].append(track)
+            raise HTTPException(400, f"Stopa {track + 1} verze {v['filename']} k referenci nesedí")
+        if fit.get("result_id"):       # measured on its own
+            key, src = (v["id"], f"r{fit['result_id']}"), {"result_id": fit["result_id"], "delta": 0.0}
+        else:                          # the version's timing, shifted by the track's own delta
+            key, src = (v["id"], fit["delta"]), {"result_id": v["alignment"]["result_id"], "delta": fit["delta"]}
+        sources.setdefault(key, {"version_id": v["id"], **src, "tracks": []})["tracks"].append(track)
+    checks = fmap.get("target_tracks") or {}
+    for t in body.fix_tracks:
+        c = checks.get(str(t))
+        if not c or not c.get("fixable"):
+            raise HTTPException(400, f"Stopu {t + 1} nejde opravit")
+        sources[("fix", t)] = {"version_id": target["id"], "result_id": c["result_id"], "delta": 0.0, "tracks": [t]}
     if not sources and not body.drop_tracks:
-        raise HTTPException(400, "Nic k přidání ani odebrání")
+        raise HTTPException(400, "Nic k přidání, opravě ani odebrání")
     downloads = await _work_dir(target)
     _job.clear()
     _job.update(running=True, kind="apply", phase="start", done=0, total=0, title=target["title"],
@@ -703,12 +573,8 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, d
         report: dict = {}
         try:
             count = len((await asyncio.to_thread(engine.probe, target["file_path"]))["audio"])
-            keep = [i for i in range(count) if i not in body.drop_tracks]
-            if not keep:
-                raise muxer.TransferError("Aspoň jedna zvuková stopa musí zůstat")
+            keep = [i for i in range(count) if i not in body.drop_tracks and i not in body.fix_tracks]
             ref_track = fmap.get("ref_track", 0)
-            if ref_track not in keep:
-                ref_track = keep[0]
             if sources:
                 srcs = []
                 for src in sources.values():
@@ -723,7 +589,9 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, d
                 out_name = Path(target["filename"]).stem + " [tracks].mkv"
                 out = await asyncio.to_thread(muxer.strip, target["file_path"], keep, workdir, out_name, progress)
             _job.update(report=report)
-            await _hand_over(out, downloads / out_name, target, body.mode, f"map-{target['id']}", progress)
+            payload = await _hand_over(out, downloads / out_name, target, body.mode, f"map-{target['id']}", progress)
+            if body.mode == "replace" and payload.get("imported"):
+                await _follow_reference(target, payload.get("path"), keep.index(ref_track))
         except muxer.TransferError as e:
             _job.update(error=str(e))
         except Exception as e:  # noqa: BLE001 — shown to the user
@@ -732,3 +600,18 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, d
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
             _job.update(running=False, finished_at=time.time())
+
+
+async def _follow_reference(old: dict, new_path: str | None, new_track: int) -> None:
+    """The edited file replaced the reference version: the reference (checked by the user) moves with it."""
+    stored = await _stored_ref(old["tmdb_id"])
+    if not stored or stored.get("movie_id") != old["id"] or not new_path:
+        return
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT id FROM library_movies WHERE file_path = ?", (new_path,))
+        row = await cursor.fetchone()
+    finally:
+        await db.close()
+    if row:
+        await _write_ref(old["tmdb_id"], movie_id=row["id"], track=new_track)

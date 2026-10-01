@@ -41,9 +41,6 @@ import {
 } from "@/lib/api";
 import DownloadPanel from "@/components/DownloadPanel";
 import { useAuth } from "@/components/AuthGate";
-import AudioSyncPanel from "@/components/AudioSyncPanel";
-import AudioTracksPanel from "@/components/AudioTracksPanel";
-import FilmAudioMap from "@/components/FilmAudioMap";
 import RenameChecklist from "@/components/RenameChecklist";
 
 type Tab = "filmy" | "serialy";
@@ -888,12 +885,19 @@ export default function LibraryPage() {
                 </div>
               )}
               {fixingMovie.file_path && (fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
-                can("audiosync") ? <AudioTracksPanel key={fixingMovie.id} movie={fixingMovie} onChanged={loadData} />
-                  : can("player") ? (
+                <div className="flex flex-wrap gap-2">
+                  {can("player") && (
                     <Link href={`/play?id=${fixingMovie.id}`} className="inline-block rounded bg-violet-600 px-3 py-1 text-xs font-medium text-white hover:bg-violet-500">
                       ▶ Přehrát film v prohlížeči
                     </Link>
-                  ) : null
+                  )}
+                  {can("audiosync") && fixingMovie.tmdb_id && (
+                    <Link href={`/library/audio?tmdb=${fixingMovie.tmdb_id}&target=${fixingMovie.id}`}
+                      className="inline-block rounded border border-violet-700 px-3 py-1 text-xs text-violet-200 hover:bg-violet-900/40">
+                      🎚 Editor zvuku
+                    </Link>
+                  )}
+                </div>
               )}
               {can("library.delete") && fixingMovie.file_path && (
                 confirmDelete === null ? (
@@ -1095,8 +1099,12 @@ export default function LibraryPage() {
                 <p className="text-[11px] text-zinc-500 mt-1 break-all">{v.filename}</p>
               </button>
             ))}
-            {can("audiosync") && versionsOf.versions.length >= 2 && <FilmAudioMap key={versionsOf.key} versions={versionsOf.versions} onChanged={loadData} />}
-            {can("audiosync") && versionsOf.versions.length >= 2 && <AudioSyncPanel versions={versionsOf.versions} onChanged={loadData} />}
+            {can("audiosync") && versionsOf.versions[0].tmdb_id && (
+              <Link href={`/library/audio?tmdb=${versionsOf.versions[0].tmdb_id}`}
+                className="block rounded-lg border border-violet-800 bg-violet-950/30 p-3 text-sm text-violet-200 hover:bg-violet-900/40">
+                🎚 Editor zvuku — dabingy všech verzí, přenos a oprava stop
+              </Link>
+            )}
             <button onClick={() => setVersionsOf(null)} className="text-sm text-zinc-500 hover:text-zinc-300">Zavřít</button>
           </div>
         </div>

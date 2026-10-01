@@ -134,16 +134,21 @@ def assemble_audio(other_path: str, other_track: int, pieces: list[dict], speed:
     return str(out), 0, round(ref_start * 1000)
 
 
-def mux(ref_path: str, added: list[dict], out_path: str, progress=None, ref_keep: list[int] | None = None) -> None:
+def mux(ref_path: str, added: list[dict], out_path: str, progress=None, ref_keep: list[int] | None = None,
+        ref_names: dict[int, str] | None = None) -> None:
     """Reference file + the added tracks ({file, tid, delay_ms, language, name}); the first added track
-    becomes the default audio. ``ref_keep``: audio tracks of the reference to keep (None = all)."""
+    becomes the default audio. ``ref_keep``: audio tracks of the reference to keep (None = all);
+    ``ref_names``: new names of the reference's tracks (by audio index)."""
     cmd = ["mkvmerge", "--gui-mode", "-o", out_path]
     ids = audio_track_ids(ref_path)
-    kept = ids if ref_keep is None else [ids[i] for i in ref_keep]
+    keep = list(range(len(ids))) if ref_keep is None else list(ref_keep)
+    kept = [ids[i] for i in keep]
     if ref_keep is not None:
         cmd += ["--audio-tracks", ",".join(str(t) for t in kept)]
-    for tid in kept:
+    for i, tid in zip(keep, kept):
         cmd += ["--default-track-flag", f"{tid}:{0 if added else (1 if tid == kept[0] else 0)}"]
+        if (ref_names or {}).get(i):
+            cmd += ["--track-name", f"{tid}:{ref_names[i]}"]
     cmd.append(ref_path)
     by_file: dict[str, list[dict]] = {}
     for t in added:
@@ -248,11 +253,23 @@ def distinct_tracks(ref_path: str, ref: dict, other_path: str, other: dict, trac
     return keep
 
 
-def track_name(info: dict) -> str:
-    """Readable like in the film map: "CZ", "CZ Nova", "SK" — plus the mark of a moved track."""
-    from app.modules.audiosync.filmmap import dub_name
-    title = (info.get("title") or "").replace("(Lumina sync)", "")
-    return f"{dub_name(engine.lang_code(info.get('language', '')), title)} (Lumina sync)"
+def track_name(info: dict, moved: bool = True) -> str | None:
+    """Readable: "CZ 5.1", "CZ Nova 2.0", "SK 2.0 [L]" (the mark = Lumina moved or fixed the track).
+    A track without a language tag keeps its name (None) unless it was moved."""
+    from app.modules.audiosync.filmmap import MARK, channels_label, dub_name
+    title = re.sub(r"\(lumina sync\)", " ", info.get("title") or "", flags=re.IGNORECASE)
+    moved = moved or MARK in title or title != (info.get("title") or "")
+    lang = engine.lang_code(info.get("language", ""))
+    if not lang and not moved:
+        return None
+    name = dub_name(lang, title) if lang else "?"
+    name = " ".join(x for x in (name, channels_label(info.get("channels")), MARK if moved else "") if x)
+    return name
+
+
+def ref_track_names(ref: dict) -> dict[int, str]:
+    """The reference's own tracks named the same way (a track moved earlier keeps its mark)."""
+    return {a["index"]: n for a in ref["audio"] if (n := track_name(a, moved=False))}
 
 
 def transfer(ref_path: str, ref_track: int, other_path: str, other_tracks: int | list[int], analysis: dict,
@@ -302,13 +319,13 @@ def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: P
                 file, tid, delay_ms = prepare_audio(src["path"], t, analysis["speed"], analysis["offset"], srcdir,
                                                     info.get("channels") or 2, ref["start"], other["start"])
             added.append({"file": file, "tid": tid, "delay_ms": delay_ms, "language": info.get("language") or "",
-                          "name": track_name(info), "source": src["path"]})
+                          "name": track_name(info, moved=True), "source": src["path"]})
             checks.append(analysis.get("pieces") if cut else None)
     if not added:
         raise NothingToAdd("Tyto dabingy už soubor má — není co přidat")
     if report is not None:
         report["added"] = [a["name"] for a in added]
-    mux(ref_path, added, out_path, progress, ref_keep)
+    mux(ref_path, added, out_path, progress, ref_keep, ref_track_names(ref))
     for a in added:
         if a["file"] != a["source"]:
             os.remove(a["file"])
@@ -333,7 +350,7 @@ def strip(ref_path: str, keep: list[int], workdir: Path, out_name: str, progress
         raise TransferError("Neznámá zvuková stopa")
     workdir.mkdir(parents=True, exist_ok=True)
     out_path = str(workdir / out_name)
-    mux(ref_path, [], out_path, progress, keep)
+    mux(ref_path, [], out_path, progress, keep, ref_track_names(ref))
     if len(engine.probe(out_path)["audio"]) != len(keep):
         raise TransferError("Výsledek nemá očekávané stopy — soubor nepoužit")
     return out_path

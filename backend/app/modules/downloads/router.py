@@ -35,8 +35,6 @@ async def download(req: DownloadRequest, user: User = Depends(require("download"
     # replacing a version deletes the old file once the new one is imported
     if (req.library_action or {}).get("mode") == "replace" and not user.can("library.delete"):
         raise HTTPException(403, "Nahradit verzi (smaže starou) může jen uživatel s oprávněním mazat v knihovně")
-    if (req.library_action or {}).get("keep_audio") and not user.can("audiosync"):
-        raise HTTPException(403, "Přenést zvuk ze staré verze může jen uživatel s oprávněním přenášet zvuk")
     # an own target folder writes anywhere the backend can — only for who manages the settings
     if req.target_folder and not user.can("settings"):
         raise HTTPException(403, "Vlastní cílovou složku může zvolit jen správce nastavení")

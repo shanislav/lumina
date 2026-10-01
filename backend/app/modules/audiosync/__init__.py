@@ -1,24 +1,21 @@
-"""Audio track transfer between versions of a film (decisions/0007).
+"""Audio of a film across its versions (decisions/0007): the editor in the library.
 
-Step 1 (this): compare two versions — find how the other version's audio lines up with the
-reference video (offset, speed, cuts) and how sure that is. Later steps mux the track in
-(mkvmerge), stretch for a different speed, split at cuts, preview clips, and the upgrade flow
-"replace, but keep my SK/CZ audio".
-Needs ffmpeg in the backend image.
+The user picks the reference track (the one that fits the picture, checked by watching); every
+other track — of the same file or of another version — is measured against it directly. Tracks
+that fit are moved into the chosen version, shifted, stretched or assembled across cuts, and the
+result is checked before the library takes it over. Downloads only replace or add a version —
+nothing happens to the audio on its own.
+Needs ffmpeg and mkvtoolnix in the backend image.
 """
 
-from app.core.module import Module, Permission, Subscription
-from app.modules.audiosync.keep_audio import PENDING, on_download_completed, resume_pending
-from app.modules.audiosync.router import MAPS, RESULTS, router
+from app.core.module import Module, Permission
+from app.modules.audiosync.router import MAPS, REFS, RESULTS, router
 
 module = Module(
     name="audiosync",
     title="Přenos zvuku",
     order=40,
     routers=[router],
-    migrations=[RESULTS, PENDING, MAPS],
-    on_startup=[resume_pending],
-    permissions=[Permission("audiosync", "Porovnávat a přenášet zvukové stopy mezi verzemi")],
-    # after the renamer (p10), before the library import (p30): holds back "keep my CZ/SK audio" downloads
-    subscriptions=[Subscription("download.completed", on_download_completed, priority=20)],
+    migrations=[RESULTS, MAPS, REFS],
+    permissions=[Permission("audiosync", "Editor zvuku: porovnávat, opravovat a přenášet zvukové stopy")],
 )
