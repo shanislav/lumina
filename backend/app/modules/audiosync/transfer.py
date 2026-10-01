@@ -107,13 +107,15 @@ def assemble_audio(other_path: str, other_track: int, pieces: list[dict], speed:
             args += ["-f", "lavfi", "-t", f"{length:.3f}", "-i", f"anullsrc=r=48000:cl={layout}"]
             filters.append(f"[{n}:a]aformat=sample_rates=48000:channel_layouts={layout}[p{n}]")
         else:
+            # a drifting piece runs at its own speed: t_other = (speed + slope)·t + …
+            local = speed + p.get("slope", 0.0)
             start = speed * p["start"] + p["offset"]
             lead = 0.0
             if start < 0:                      # the other version starts later — silence first
-                lead, start = -start / speed, 0.0
-            args += ["-ss", f"{start:.3f}", "-t", f"{speed * (length - lead):.3f}", "-i", other_path]
+                lead, start = -start / local, 0.0
+            args += ["-ss", f"{start:.3f}", "-t", f"{local * (length - lead):.3f}", "-i", other_path]
             chain = f"[{n}:a:{other_track}]"
-            chain += f"atempo={speed:.8f}," if abs(speed - 1) > 1e-9 else ""
+            chain += f"atempo={local:.8f}," if abs(local - 1) > 1e-9 else ""
             chain += f"aresample=48000,aformat=sample_rates=48000:channel_layouts={layout}"
             if lead:
                 chain += f",adelay={int(lead * 1000)}:all=1"
@@ -179,7 +181,14 @@ def verify(out_path: str, ref_track: int, new_track: int, duration: float,
                     positions.append(a + x)
                     break
                 x -= b - a
-    windows = [engine._measure(out_path, ref_track, out_path, new_track, at, 1.0) for at in positions]
+    windows = []
+    for at in positions:
+        w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0)
+        for alt in (at + 60, at - 60):          # a quiet place cannot be measured — try next to it
+            if w.good or not (0 < alt < duration - engine.WINDOW_S):
+                continue
+            w = engine._measure(out_path, ref_track, out_path, new_track, alt, 1.0)
+        windows.append(w)
     good = [w for w in windows if w.good]
     typical = float(np.median([abs(w.offset) for w in good])) if good else 99.0
     if len(good) < VERIFY_WINDOWS - 1 or typical > VERIFY_TYPICAL or any(abs(w.offset) > VERIFY_MAX for w in good):

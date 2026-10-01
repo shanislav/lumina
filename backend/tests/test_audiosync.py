@@ -159,3 +159,18 @@ def test_dub_names_drop_the_technical_part():
     assert dub_name("en", "English DTS-HD MA 7.1") == "EN"
     assert dub_name("en", "Commentary by director") == "EN Commentary by director"
     assert dub_name("cs", "") == "CZ"
+
+
+def test_a_drifting_stretch_then_a_jump_is_two_segments_with_a_slope():
+    """Measured on National Lampoon's Christmas Vacation (CZ x265 vs SK TV version): the first 37 min
+    drift by ~0.4 s, then the offset jumps back and stays."""
+    from app.modules.audiosync.analyze import segments_from
+    measured = [(175, -2.12), (412, -2.08), (648, -2.01), (885, -1.95), (1121, -1.89), (1358, -1.90),
+                (1595, -1.84), (1831, -1.79), (2068, -1.74), (2304, -2.06), (2778, -2.01), (3014, -2.03),
+                (3251, -2.05), (3487, -2.03), (3724, -2.05), (3961, -2.08), (4197, -2.16), (4671, -2.09),
+                (4907, -1.97), (5144, -2.00), (5380, -2.02), (5617, -2.04)]
+    segs = segments_from([_w(at, off) for at, off in measured])
+    assert len(segs) == 2
+    a, b = segs
+    assert 0.00015 < a.slope < 0.00025 and abs(a.at(2068) - (-1.74)) < 0.05      # follows the drift
+    assert abs(b.at(4000) - (-2.04)) < 0.05

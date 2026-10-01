@@ -39,6 +39,7 @@ WINDOWS = 24
 GOOD_SCORE = 0.04
 GOOD_SHARPNESS = 1.8
 SAME_OFFSET_S = 0.1       # offsets closer than this are the same (lip sync tolerance ~40–80 ms)
+CONTINUES_S = 0.15        # neighbouring windows this close continue one segment (window noise ±0.06)
 
 # frame rate pairs seen in the wild: film 23.976 / 24, PAL 25
 SPEEDS = sorted({1.0, 23.976 / 25, 25 / 23.976, 24 / 25, 25 / 24, 23.976 / 24, 24 / 23.976})
@@ -162,7 +163,11 @@ class Window:
 class Segment:
     start: float         # reference seconds
     end: float
-    offset: float
+    offset: float        # at ``start``
+    slope: float = 0.0   # the offset drifts this much per second (a stretch running a hair faster)
+
+    def at(self, t: float) -> float:
+        return self.offset + self.slope * (t - self.start)
 
 
 @dataclass
@@ -204,16 +209,26 @@ def _positions(duration: float, count: int) -> list[float]:
 
 
 def segments_from(windows: list[Window]) -> list[Segment]:
-    """Consecutive trustworthy windows with the same offset form a segment."""
+    """Consecutive trustworthy windows that continue each other form a segment. Within one, the
+    offset may drift slowly (a TV recording, a stretch at a hair different speed) — then the
+    segment gets a slope; a jump between neighbours is a cut."""
     good = [w for w in windows if w.good]
-    segs: list[list[Window]] = []
+    groups: list[list[Window]] = []
     for w in good:
-        if segs and abs(w.offset - np.median([x.offset for x in segs[-1]])) <= SAME_OFFSET_S:
-            segs[-1].append(w)
+        if groups and abs(w.offset - groups[-1][-1].offset) <= CONTINUES_S:
+            groups[-1].append(w)
         else:
-            segs.append([w])
-    return [Segment(start=s[0].at, end=s[-1].at + WINDOW_S, offset=float(np.median([w.offset for w in s])))
-            for s in segs]
+            groups.append([w])
+    segs = []
+    for g in groups:
+        start, end = g[0].at, g[-1].at + WINDOW_S
+        if len(g) >= 3:
+            slope, intercept = fit_line(g)
+            if abs(slope * (end - start)) > SAME_OFFSET_S / 2:
+                segs.append(Segment(start=start, end=end, offset=intercept + slope * start, slope=slope))
+                continue
+        segs.append(Segment(start=start, end=end, offset=float(np.median([w.offset for w in g]))))
+    return segs
 
 
 def fit_line(windows: list[Window]) -> tuple[float, float]:
@@ -307,13 +322,20 @@ def shifted(analysis: dict, delta: float) -> dict:
     return out
 
 
+def piece_offset(p: dict, at: float) -> float | None:
+    """A piece's offset at reference second ``at`` (pieces may drift: "slope" per second)."""
+    if p.get("offset") is None:
+        return None
+    return p["offset"] + p.get("slope", 0.0) * (at - p["start"])
+
+
 def mapping_at(analysis: dict, at: float) -> float | None:
     """Offset of the other version at reference second ``at`` (None = it has no audio there)."""
     pieces = analysis.get("pieces") or [{"start": 0, "end": 1e12, "offset": analysis.get("offset", 0.0)}]
     for p in pieces:
         if p["start"] <= at < p["end"]:
-            return p["offset"]
-    return pieces[-1]["offset"]
+            return piece_offset(p, at)
+    return piece_offset(pieces[-1], at)
 
 
 # The same dub in two tracks matches closely; different dubs share only music and effects.
@@ -424,12 +446,13 @@ def cut_pieces(ref_path: str, ref_track: int, other_path: str, other_track: int,
     start = 0.0
     for k, (s1, s2) in enumerate(zip(segments, segments[1:])):
         lo, hi = s1.end - WINDOW_S, s2.start
-        t1, t2 = find_cut(ref_path, ref_track, other_path, other_track, speed, lo, hi, s1.offset, s2.offset)
-        pieces.append({"start": start, "end": t1, "offset": s1.offset})
+        t1, t2 = find_cut(ref_path, ref_track, other_path, other_track, speed, lo, hi, s1.at(s1.end), s2.at(s2.start))
+        pieces.append({"start": start, "end": t1, "offset": s1.at(start), "slope": s1.slope})
         if t2 - t1 >= MIN_GAP_S:
             pieces.append({"start": t1, "end": t2, "offset": None})
         start = t2 if t2 - t1 >= MIN_GAP_S else t1
         if progress:
             progress("cuts", k + 1, len(segments) - 1)
-    pieces.append({"start": start, "end": duration, "offset": segments[-1].offset})
+    last = segments[-1]
+    pieces.append({"start": start, "end": duration, "offset": last.at(start), "slope": last.slope})
     return pieces

@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 
 from app.config import get_effective_settings
@@ -184,4 +185,4 @@ async def _keep_audio(payload: dict, pending_id: int | None = None) -> None:
                 r._job.update(imported=bool(done.get("imported")), path=done.get("path"))
         finally:
             await _forget(pending_id)
-            r._job.update(running=False)
+            r._job.update(running=False, finished_at=time.time())

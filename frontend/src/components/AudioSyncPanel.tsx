@@ -376,7 +376,9 @@ function ResultView({ result: r }: { result: AudioSyncResult }) {
             <li key={i} className={s.offset == null ? "text-amber-300/80" : ""}>
               {clock(s.start)} – {clock(s.end)}:{" "}
               {s.offset == null ? "ticho — ve druhé verzi tato část chybí"
-                : `posun ${s.offset >= 0 ? "+" : ""}${s.offset.toFixed(2)} s`}
+                : "slope" in s && s.slope
+                  ? `posun ${s.offset.toFixed(2)} → ${(s.offset + s.slope * (s.end - s.start)).toFixed(2)} s (postupně se rozchází — vyrovná se)`
+                  : `posun ${s.offset >= 0 ? "+" : ""}${s.offset.toFixed(2)} s`}
             </li>
           ))}
         </ul>

@@ -1045,7 +1045,7 @@ export interface AudioSyncResult {
   other: { duration: number; audio: AudioTrackInfo[] };
   note: string;
   drift_s: number;
-  pieces?: { start: number; end: number; offset: number | null }[];
+  pieces?: { start: number; end: number; offset: number | null; slope?: number }[];
   adjust_ms?: number;     // the user's correction (+ = the other audio later)
 }
 
@@ -1053,6 +1053,8 @@ export interface AudioSyncJob {
   running: boolean;
   kind?: "analyze" | "transfer" | "check" | "strip" | "upgrade" | "map" | "apply";
   map_id?: number;
+  title?: string;
+  finished_at?: number;
   result_id?: number;
   imported?: boolean | null;
   path?: string;

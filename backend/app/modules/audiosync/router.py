@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -131,7 +132,7 @@ async def _analysis(body: AnalyzeBody, ref_path: str, other_path: str) -> None:
         logger.exception("audiosync analysis failed")
         _job.update(error=str(e))
     finally:
-        _job.update(running=False)
+        _job.update(running=False, finished_at=time.time())
 
 
 @router.get("/job", dependencies=[Depends(require("audiosync"))])
@@ -227,7 +228,7 @@ async def _transfer(body: TransferBody, row: dict, analysis: dict, ref: dict, ot
         _job.update(error=str(e))
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
-        _job.update(running=False)
+        _job.update(running=False, finished_at=time.time())
 
 
 # ── previews and manual correction (step 4) ──
@@ -379,7 +380,7 @@ async def _run_check(body: CheckBody, f: dict, others: list[int]) -> None:
             logger.exception("audiosync track check failed")
             _job.update(error=str(e))
         finally:
-            _job.update(running=False)
+            _job.update(running=False, finished_at=time.time())
 
 
 def _check_summary(result_id: int, track: int, data: dict) -> dict:
@@ -459,7 +460,7 @@ async def _run_strip(body: StripBody, f: dict, downloads: Path) -> None:
             _job.update(error=str(e))
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
-            _job.update(running=False)
+            _job.update(running=False, finished_at=time.time())
 
 
 class TrackPreviewBody(BaseModel):
@@ -621,7 +622,7 @@ async def _run_map(body: MapBody, versions: list[dict]) -> None:
             logger.exception("audiosync film map failed")
             _job.update(error=str(e))
         finally:
-            _job.update(running=False)
+            _job.update(running=False, finished_at=time.time())
 
 
 @router.get("/map/{tmdb_id}", dependencies=[Depends(require("audiosync"))])
@@ -730,4 +731,4 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, d
             _job.update(error=str(e))
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
-            _job.update(running=False)
+            _job.update(running=False, finished_at=time.time())
