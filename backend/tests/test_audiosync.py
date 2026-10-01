@@ -216,3 +216,11 @@ def test_added_tracks_are_listed_in_the_order_mkvmerge_writes_them():
     # copied tracks of one source file go together by track id; a re-encoded one is its own file
     added = [("sd.mkv", 2), ("x-0", 0), ("sd.mkv", 0), ("uhd.mkv", 1)]
     assert output_order(added, lambda a: a[0], lambda a: a[1]) == [("sd.mkv", 0), ("sd.mkv", 2), ("x-0", 0), ("uhd.mkv", 1)]
+
+
+def test_language_read_from_a_track_title_when_the_tag_is_missing():
+    from app.modules.audiosync.analyze import language_from_title
+    assert language_from_title("CZ 2.0 AAC 128 kbps") == "cze"
+    assert language_from_title("Slovak AC3 2.0ch") == "slo"
+    assert language_from_title("EN+CZ") == ""            # two languages — not a guess
+    assert language_from_title("Stereo") == ""

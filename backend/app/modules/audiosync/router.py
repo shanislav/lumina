@@ -521,6 +521,7 @@ class ApplyBody(BaseModel):
     drop_tracks: list[int] = []    # target tracks to leave out
     default_key: str | None = None  # the default audio track of the result (a key from the plan)
     names: dict[str, str] = {}      # the user's own track names (key from the plan → name)
+    languages: dict[str, str] = {}  # languages set by the user (key from the plan → ISO 639-1 "cs")
     mode: str = "replace"          # replace the target | keep it and add a new version
 
 
@@ -614,6 +615,14 @@ async def _layout(body: ApplyBody, fmap: dict, target: dict, sources: dict) -> d
         name = re.sub(r"[\x00-\x1f]", "", body.names.get(x["key"]) or "").strip()[:120]
         if name and name != x["name"]:
             x.update(name=name, custom=True)
+        # a language read from the title, or chosen by the user, is written into the file
+        chosen = engine.ISO3.get(body.languages.get(x["key"], ""), "")
+        current = x["info"].get("language") or ""
+        if chosen and chosen != current:
+            x["info"] = {**x["info"], "language": chosen}
+            x["set_language"] = chosen
+        elif x["info"].get("language_from_title") and current:
+            x["set_language"] = current
     keys = [x["key"] for x in final]
     # unless chosen: a new track (what the edit is for), else the file's own default if it stays
     current = next((f"t:{a['index']}" for a in tinfo["audio"] if a.get("default")), None)
@@ -637,6 +646,7 @@ async def plan_map(body: ApplyBody) -> dict:
     return {"tracks": [{"key": x["key"], "origin": x["origin"], "track": x["track"], "name": x["name"],
                         "renamed": x.get("renamed", False), "custom": x.get("custom", False), "from": x.get("from"), "reencoded": x.get("reencoded", False),
                         "default": x["default"], "language": x["info"].get("language"), "codec": x["info"].get("codec"),
+                        "set_language": x.get("set_language"), "language_from_title": x["info"].get("language_from_title", False),
                         "channels": x["info"].get("channels"), "bitrate": x["info"].get("bitrate")}
                        for x in lay["final"]],
             "default": lay["default"], "reference_dropped": lay["drop_ref"]}
@@ -654,9 +664,10 @@ async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync")))
     fmap = await _load_map(body.map_id)
     target = await _file(fmap["target_id"])
     sources = _sources(body, fmap, target)
-    if not sources and not body.drop_tracks and not body.default_key and not body.names:
-        raise HTTPException(400, "Nic k přidání, opravě ani odebrání")
     lay = await _layout(body, fmap, target, sources)
+    if (not sources and not body.drop_tracks and not body.default_key and not body.names
+            and not any(x.get("set_language") for x in lay["final"])):
+        raise HTTPException(400, "Nic k přidání, opravě ani odebrání")
     downloads = await _work_dir(target)
     _job.clear()
     _job.update(running=True, kind="apply", phase="start", done=0, total=0, title=target["title"],
@@ -698,7 +709,8 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, l
                                               lay["final_default"])
             # the user's own names, written into the finished file's header
             await asyncio.to_thread(muxer.rename_tracks, out,
-                                    {pos: x["name"] for pos, x in enumerate(lay["final"]) if x.get("custom")})
+                                    {pos: x["name"] for pos, x in enumerate(lay["final"]) if x.get("custom")},
+                                    {pos: x["set_language"] for pos, x in enumerate(lay["final"]) if x.get("set_language")})
             _job.update(report=report)
             payload = await _hand_over(out, downloads / out_name, target, body.mode, f"map-{target['id']}", progress)
             if body.mode == "replace" and payload.get("imported"):

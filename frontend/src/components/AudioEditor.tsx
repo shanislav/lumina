@@ -15,6 +15,9 @@ const LANG: Record<string, string> = {
   es: "ES", spa: "ES", ja: "JA", jpn: "JA",
 };
 const lang = (code: string) => (code ? LANG[code.toLowerCase()] ?? code.toUpperCase() : "?");
+// languages a track can be set to (ISO 639-1)
+const LANG_CHOICES = ["cs", "sk", "en", "de", "fr", "pl", "hu", "ru", "it", "es"];
+const iso1 = (code: string) => LANG_CHOICES.find((c) => lang(c) === lang(code)) ?? "";
 const channels = (n: number) => ({ 1: "1.0", 2: "2.0", 6: "5.1", 8: "7.1" } as Record<number, string>)[n] ?? `${n}ch`;
 const trackLabel = (a: { language: string; codec: string; channels: number; title?: string; bitrate?: number }) =>
   `${lang(a.language)} ${channels(a.channels)} ${(a.codec || "?").toUpperCase()}${a.bitrate ? ` ${Math.round(a.bitrate / 1000)} kbps` : ""}${a.title ? ` „${a.title}“` : ""}`;
@@ -69,6 +72,7 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
   const [confirm, setConfirm] = useState<"replace" | "version" | null>(null);
   const [defaultKey, setDefaultKey] = useState<string | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});   // the user's own track names
+  const [languages, setLanguages] = useState<Record<string, string>>({});   // languages chosen by the user
   const [plan, setPlan] = useState<{ tracks: PlannedTrack[]; reference_dropped: boolean } | null>(null);
   const [planError, setPlanError] = useState("");
 
@@ -114,6 +118,7 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
             setAdd({});
             setDefaultKey(null);
             setNames({});
+            setLanguages({});
             setFix([]);
             setDrop([]);
             setClip(null);
@@ -173,7 +178,8 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
     picks: Object.values(add).filter((m): m is FilmMapMember => !!m).map((m) => ({ version_id: m.version_id, track: m.track })),
     fixTracks: fix, dropTracks: drop, defaultKey,
     names: Object.fromEntries(Object.entries(names).filter(([, v]) => v.trim())),
-  }), [add, fix, drop, defaultKey, names]);
+    languages,
+  }), [add, fix, drop, defaultKey, names, languages]);
   useEffect(() => {
     if (!mapOk || !map) { setPlan(null); return; }
     let alive = true;
@@ -258,7 +264,8 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
   const currentDefault = targetAudio.find((a) => a.default);
   const defaultChanged = !!defaultKey && defaultKey !== (currentDefault ? `t:${currentDefault.index}` : null);
   const renamedByUser = Object.values(names).filter((v) => v.trim()).length;
-  const anyChange = picks.length > 0 || fix.length > 0 || drop.length > 0 || defaultChanged || renamedByUser > 0;
+  const languageTags = plan?.tracks.filter((p) => p.set_language).length ?? 0;
+  const anyChange = picks.length > 0 || fix.length > 0 || drop.length > 0 || defaultChanged || renamedByUser > 0 || languageTags > 0;
   const otherDubs = mapOk ? map!.dubs.filter((d) => !d.members.some((m) => m.version_id === target)) : [];
   const versionName = (id: number) => {
     const v = versions.find((x) => x.id === id);
@@ -278,7 +285,7 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-zinc-400 text-xs">Verze (obraz, který chceš nechat):</span>
           <select value={target ?? ""} disabled={running}
-            onChange={(e) => { setTarget(Number(e.target.value)); setAdd({}); setFix([]); setDrop([]); setDefaultKey(null); setNames({}); setClip(null); }}
+            onChange={(e) => { setTarget(Number(e.target.value)); setAdd({}); setFix([]); setDrop([]); setDefaultKey(null); setNames({}); setLanguages({}); setClip(null); }}
             className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200 max-w-full">
             {versions.map((v) => <option key={v.id} value={v.id}>{versionName(v.id)}</option>)}
           </select>
@@ -524,7 +531,17 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
                       </div>
                     </td>
                     <td className="py-1 pr-3 text-zinc-400 whitespace-nowrap">
-                      {lang(p.language)} {channels(p.channels)} {(p.codec || "?").toUpperCase()}{p.bitrate ? ` ${Math.round(p.bitrate / 1000)} kbps` : ""}
+                      <select value={languages[p.key] ?? iso1(p.language)}
+                        title={p.language_from_title ? "Jazyk chyběl, Lumina ho vzala z názvu stopy a zapíše ho do souboru"
+                          : "Jazyk stopy v souboru — můžeš ho změnit"}
+                        onChange={(e) => setLanguages({ ...languages, [p.key]: e.target.value })}
+                        className={`mr-1 rounded border bg-zinc-900 px-1 py-0.5 ${
+                          p.set_language ? "border-violet-700 text-violet-100" : "border-zinc-800 text-zinc-300"}`}>
+                        {!iso1(p.language) && <option value="">?</option>}
+                        {LANG_CHOICES.map((c) => <option key={c} value={c}>{lang(c)}</option>)}
+                      </select>
+                      {channels(p.channels)} {(p.codec || "?").toUpperCase()}{p.bitrate ? ` ${Math.round(p.bitrate / 1000)} kbps` : ""}
+                      {p.language_from_title && !languages[p.key] && <span className="ml-1 text-xs text-violet-300">z názvu</span>}
                     </td>
                     <td className="py-1 pr-3 text-zinc-400">
                       {p.origin === "keep" ? (p.renamed ? "ponechaná, nový název" : "ponechaná")
@@ -543,7 +560,8 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
           {anyChange ? (
             <p className="text-zinc-300">
               {[picks.length && `přidat ${picks.length}`, fix.length && `opravit ${fix.length}`, drop.length && `odebrat ${drop.length}`,
-                defaultChanged && "změnit výchozí stopu", renamedByUser && `přejmenovat ${renamedByUser}`].filter(Boolean).join(" · ")}.
+                defaultChanged && "změnit výchozí stopu", renamedByUser && `přejmenovat ${renamedByUser}`,
+                languageTags && `doplnit jazyk ${languageTags}`].filter(Boolean).join(" · ")}.
               Nové a opravené stopy se před použitím zkontrolují proti referenci.
             </p>
           ) : <p className="text-zinc-500">Zatím beze změn — přidej, oprav nebo odeber stopy výš, nebo zvol jinou výchozí stopu.</p>}

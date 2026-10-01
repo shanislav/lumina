@@ -282,13 +282,18 @@ def track_name(info: dict, moved: bool = True) -> str | None:
     return " ".join(x for x in parts if x)
 
 
-def rename_tracks(path: str, names: dict[int, str]) -> None:
-    """Names chosen by the user, written into the header in place (``names``: audio position → name)."""
-    if not names:
+def rename_tracks(path: str, names: dict[int, str], languages: dict[int, str] | None = None) -> None:
+    """Names and language tags, written into the header in place (audio position → name / ISO 639-2)."""
+    languages = languages or {}
+    if not names and not languages:
         return
     cmd = ["mkvpropedit", path]
-    for pos, name in sorted(names.items()):
-        cmd += ["--edit", f"track:a{pos + 1}", "--set", f"name={name}"]
+    for pos in sorted(set(names) | set(languages)):
+        cmd += ["--edit", f"track:a{pos + 1}"]
+        if pos in names:
+            cmd += ["--set", f"name={names[pos]}"]
+        if pos in languages:
+            cmd += ["--set", f"language={languages[pos]}"]
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if out.returncode >= 2:
         raise TransferError("Přejmenování stop selhalo: " + (out.stdout or out.stderr).strip()[-200:])

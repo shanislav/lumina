@@ -67,7 +67,12 @@ def probe(path: str) -> dict:
             bitrate = int(s.get("bit_rate") or tags.get("BPS") or tags.get("BPS-eng") or 0)
         except ValueError:
             bitrate = 0
-        audio.append({"index": len(audio), "language": (tags.get("language") or "").lower(),
+        language = (tags.get("language") or "").lower()
+        guessed = ""
+        if language in ("", "und", "unk", "mis", "zxx"):
+            # no language tag, but the title tells ("CZ 2.0 AAC", "Slovensky") — written in on the next save
+            language = guessed = language_from_title(tags.get("title") or "")
+        audio.append({"index": len(audio), "language": language, "language_from_title": bool(guessed),
                       "title": tags.get("title") or "", "codec": s.get("codec_name") or "",
                       "channels": s.get("channels") or 0, "bitrate": bitrate, "profile": s.get("profile") or "",
                       "default": bool((s.get("disposition") or {}).get("default"))})
@@ -352,6 +357,17 @@ SAME_DUB_SCORE = 0.45
 
 _LANG = {"cze": "cs", "ces": "cs", "slo": "sk", "slk": "sk", "eng": "en", "ger": "de", "deu": "de",
          "fre": "fr", "fra": "fr", "pol": "pl", "hun": "hu", "rus": "ru", "ita": "it", "spa": "es"}
+
+
+# ISO 639-2 (what MKV keeps) for an ISO 639-1 code
+ISO3 = {v: k for k, v in reversed(list(_LANG.items()))}
+
+
+def language_from_title(title: str) -> str:
+    """The one language a track title names ("CZ 2.0 AAC 128 kbps" → "cze"); "" when none or several."""
+    from app.core.release_langs import parse_languages
+    langs = parse_languages(title)["audio"]
+    return ISO3.get(langs[0], "") if len(set(langs)) == 1 else ""
 
 
 def lang_code(language: str) -> str:

@@ -1198,6 +1198,8 @@ export interface PlannedTrack {
   reencoded: boolean;
   default: boolean;
   language: string;
+  set_language: string | null;      // a language tag written into the file (read from the title, or chosen)
+  language_from_title: boolean;
   codec: string;
   channels: number;
   bitrate: number;
@@ -1208,9 +1210,10 @@ export interface FilmMapEdit {
   dropTracks: number[];
   defaultKey: string | null;
   names: Record<string, string>;
+  languages: Record<string, string>;
 }
 const editBody = (mapId: number, e: FilmMapEdit) =>
-  ({ map_id: mapId, picks: e.picks, fix_tracks: e.fixTracks, drop_tracks: e.dropTracks, default_key: e.defaultKey, names: e.names });
+  ({ map_id: mapId, picks: e.picks, fix_tracks: e.fixTracks, drop_tracks: e.dropTracks, default_key: e.defaultKey, names: e.names, languages: e.languages });
 /** How the result would look: order, names written into the file, origin, default track. */
 export const planFilmMap = (mapId: number, e: FilmMapEdit) =>
   audioSyncCall<{ tracks: PlannedTrack[]; default: string; reference_dropped: boolean }>("/map/plan", jsonBody("POST", editBody(mapId, e)));
