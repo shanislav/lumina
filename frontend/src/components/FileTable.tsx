@@ -229,7 +229,11 @@ export default function FileTable({
 
   // What the chosen profile would download now — asked again as verification refines the offers
   const [pick, setPick] = useState<ProfilePick | null>(null);
+  // answers may come back out of order while verification goes on — only the last asked one counts
+  const pickAsked = useRef(0);
   useEffect(() => {
+    const asked = ++pickAsked.current;
+    const take = (p: ProfilePick | null) => { if (asked === pickAsked.current) setPick(p); };
     if (profileId === undefined) { setPick(null); return; }
     // looking for a better version: only what beats the owned one (the "Jen lepší" rule)
     const better = (f: ScoredFile) => !upgrade || (!ownedSizes.has(f.size) && f.quality_score > (upgrade.quality_score ?? 0)
@@ -237,7 +241,7 @@ export default function FileTable({
     const offers = rows.map((r) => r.file).filter((f) => (f.film === "yes" || f.film === "unsure") && better(f));
     if (!offers.length) { setPick(null); return; }
     const t = setTimeout(() => {
-      pickForProfile(profileId === "" ? null : profileId, offers).then(setPick).catch(() => setPick(null));
+      pickForProfile(profileId === "" ? null : profileId, offers).then(take).catch(() => take(null));
     }, 500);
     return () => clearTimeout(t);
   }, [rows, profileId, upgrade, ownedSizes, canMoveDub, moveDub]);
