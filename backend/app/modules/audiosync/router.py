@@ -353,6 +353,8 @@ class MapBody(BaseModel):
     tmdb_id: int
     target_id: int
     ref_track: int | None = None     # None = the chosen reference / the default
+    # which tracks to measure, per version id (None = all; a film with 20 tracks needs only a few)
+    tracks: dict[int, list[int]] | None = None
 
 
 @router.post("/map", dependencies=[Depends(require("audiosync"))])
@@ -373,9 +375,16 @@ async def start_map(body: MapBody) -> dict:
         body.ref_track = chosen["track"] if chosen and chosen["movie_id"] == target["id"] else ref["defaults"][target["id"]]
     if not 0 <= body.ref_track < len(audio):
         raise HTTPException(400, "Neznámá referenční stopa")
+    if body.tracks is not None:
+        body.tracks = {int(k): sorted(set(v)) for k, v in body.tracks.items()}
+        if not any(body.tracks.get(v["id"]) for v in versions if v["id"] != target["id"])                 and not [t for t in body.tracks.get(target["id"], []) if t != body.ref_track]:
+            raise HTTPException(400, "Vyber aspoň jednu stopu k měření")
+    sel = body.tracks
+    steps = sum(1 for a in audio if a["index"] != body.ref_track and (sel is None or a["index"] in sel.get(target["id"], [])))
+    steps += sum(1 for v in versions if v["id"] != target["id"] and (sel is None or sel.get(v["id"])))
     _job.clear()
-    _job.update(running=True, kind="map", phase="target", done=0, total=len(audio) - 1 + len(versions) - 1,
-                title=target["title"], request=body.model_dump(), error=None)
+    _job.update(running=True, kind="map", phase="target", done=0, total=steps,
+                title=target["title"], tmdb_id=body.tmdb_id, request=body.model_dump(), error=None)
     _task = asyncio.create_task(_run_map(body, versions))
     return _job
 
@@ -405,13 +414,17 @@ async def _map(body: MapBody, versions: list[dict], progress) -> None:
     ref_lang = engine.lang_code(tinfo["audio"][ref_track].get("language", ""))
     step = 0
 
+    def chosen(version_id: int) -> set[int] | None:
+        return None if body.tracks is None else set(body.tracks.get(version_id, []))
+
     # 1) the target's own tracks: does each line up with the reference track? (uploaders mux in dubs
     #    from other releases — shifted, drifting, another cut). One that does not can be fixed.
     target_tracks: dict[int, dict] = {}
     own_fits: dict[int, dict] = {}
+    pick = chosen(target["id"])
     for a in tinfo["audio"]:
-        if a["index"] == ref_track:
-            continue
+        if a["index"] == ref_track or (pick is not None and a["index"] not in pick):
+            continue                  # a track not chosen stays in the file, unmeasured
         _job.update(phase="target", done=step, current=f"stopa {a['index'] + 1}")
         data = (await asyncio.to_thread(engine.analyze, target["file_path"], ref_track, target["file_path"],
                                         a["index"])).to_dict()
@@ -433,7 +446,8 @@ async def _map(body: MapBody, versions: list[dict], progress) -> None:
         if v["id"] == target["id"]:
             continue
         audio = infos[v["id"]]["audio"]
-        if not audio:
+        pick = chosen(v["id"])
+        if not audio or pick == set():
             continue
         other_track = next((a["index"] for a in audio if ref_lang and engine.lang_code(a.get("language", "")) == ref_lang), 0)
         _job.update(phase="align", done=step, current=v["filename"])
@@ -442,8 +456,9 @@ async def _map(body: MapBody, versions: list[dict], progress) -> None:
         rid = await _save_result(target["id"], ref_track, v["id"], other_track, data)
         usable = data["verdict"] != "no_match"
         fits: dict[int, dict] = {}
+        measured = [a for a in audio if pick is None or a["index"] in pick]
         if usable:
-            for a in audio:
+            for a in measured:
                 _job.update(phase="tracks", current=f"{v['filename']} · stopa {a['index'] + 1}")
                 delta, ok = await asyncio.to_thread(filmmap.track_delta, target["file_path"], ref_track,
                                                     v["file_path"], a["index"], data, duration)
@@ -461,14 +476,14 @@ async def _map(body: MapBody, versions: list[dict], progress) -> None:
         alignments[v["id"]] = {"result_id": rid, "verdict": data["verdict"], "speed": data["speed"],
                                "offset": data["offset"], "pieces": data.get("pieces") or [],
                                "tracks": {i: {k: x for k, x in f.items() if k != "own"} for i, f in fits.items()}}
-        placed.append({"id": v["id"], "path": v["file_path"], "audio": audio, "usable": usable, "tracks": fits,
+        placed.append({"id": v["id"], "path": v["file_path"], "audio": measured, "usable": usable, "tracks": fits,
                        # a version whose audio does not fit cannot be compared on the timeline
                        "analysis": data if usable else {"speed": 1.0, "offset": 0.0}})
         step += 1
 
     dubs = await asyncio.to_thread(filmmap.cluster, placed, duration, progress)
     result = {"target_id": target["id"], "ref_track": ref_track, "duration": duration,
-              "target_tracks": target_tracks,
+              "target_tracks": target_tracks, "selection": body.tracks,
               "versions": [{"id": v["id"], "filename": v["filename"], "quality": v["quality"],
                             "file_size": v["file_size"], "audio": infos[v["id"]]["audio"],
                             "alignment": alignments.get(v["id"])} for v in versions],
@@ -557,7 +572,7 @@ async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync")))
     downloads = await _work_dir(target)
     _job.clear()
     _job.update(running=True, kind="apply", phase="start", done=0, total=0, title=target["title"],
-                request=body.model_dump(), error=None, imported=None)
+                tmdb_id=target["tmdb_id"], request=body.model_dump(), error=None, imported=None)
     _task = asyncio.create_task(_run_apply(body, fmap, target, sources, downloads))
     return _job
 

@@ -22,6 +22,17 @@ Hook = Callable[[], Awaitable[None] | None]
 
 
 @dataclass
+class TaskSource:
+    """Background work a module shows in the task list (the spinning button in the navigation).
+
+    ``read`` returns the module's tasks right now: [{id, title, detail, done, total, running,
+    error, finished_at (unix s), link}] — running ones, and finished ones worth a look (a result,
+    an error) for a while. Only users with ``permission`` see them."""
+    read: Callable[[], Awaitable[list[dict]]]
+    permission: str | None = None
+
+
+@dataclass
 class Subscription:
     event: str
     handler: EventHandler
@@ -58,3 +69,5 @@ class Module:
     permissions: list[Permission] = field(default_factory=list)
     # Every route of the module needs a signed-in user; only the auth module itself opts out.
     requires_login: bool = True
+    # What runs in the background, for the task list.
+    tasks: list[TaskSource] = field(default_factory=list)

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getModules } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
+import TasksButton from "@/components/TasksButton";
 
 /** Top navigation — a page is shown only when the backend module behind it runs
  *  and the user may use it. */
@@ -32,6 +33,7 @@ export default function NavLinks() {
           {l.label}
         </Link>
       ))}
+      <TasksButton />
       <Link href="/account" title={`Účet: ${user.username}`}
         className="flex items-center gap-1 text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
         <span aria-hidden>👤</span>

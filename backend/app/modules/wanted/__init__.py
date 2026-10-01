@@ -6,7 +6,8 @@ the ones the profile allows and remembers the best. When the film shows up in th
 so a notification module can pick them up later.
 """
 
-from app.core.module import Module, Permission, Subscription
+from app.core.module import Module, Permission, Subscription, TaskSource
+from app.modules.wanted import tasks
 from app.modules.wanted.router import router
 from app.modules.wanted.store import WANTED, on_movie_updated, on_scheduler_run
 
@@ -19,4 +20,5 @@ module = Module(
     migrations=[WANTED],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=80),
                    Subscription("scheduler.run", on_scheduler_run)],
+    tasks=[TaskSource(tasks.read, "wanted")],
 )

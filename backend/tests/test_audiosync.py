@@ -166,3 +166,26 @@ def test_a_third_offset_between_two_segments_is_another_stretch():
     assert [w.at for w in run] == [2180, 2195, 2225]
     # a lone odd window is noise
     assert middle_run([ws[0], ws[2], ws[-1]], 0.79, 0.28) == []
+
+
+async def test_tasks_of_the_audio_editor_show_running_and_recent_work():
+    import importlib
+    import time
+
+    from app.modules.audiosync import tasks
+    r = importlib.import_module("app.modules.audiosync.router")
+    saved = dict(r._job)
+    try:
+        r._job.clear()
+        assert await tasks.read() == []
+        r._job.update(running=True, kind="map", phase="tracks", current="x.mkv", done=1, total=3, title="Film", tmdb_id=5)
+        [t] = await tasks.read()
+        assert t["running"] and t["link"] == "/library/audio?tmdb=5" and "měřím" in t["detail"]
+        r._job.update(running=False, finished_at=time.time(), error="nesedí")
+        [t] = await tasks.read()
+        assert not t["running"] and t["error"] == "nesedí"
+        r._job.update(finished_at=time.time() - 7200)
+        assert await tasks.read() == []
+    finally:
+        r._job.clear()
+        r._job.update(saved)

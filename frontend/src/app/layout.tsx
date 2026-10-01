@@ -4,7 +4,6 @@ import Link from "next/link";
 import "./globals.css";
 import NavLinks from "@/components/NavLinks";
 import AuthGate from "@/components/AuthGate";
-import AudioJobBanner from "@/components/AudioJobBanner";
 
 export const metadata: Metadata = {
   title: "Lumina",
@@ -35,7 +34,6 @@ export default function RootLayout({
               <NavLinks />
             </div>
           </nav>
-          <AudioJobBanner />
           {children}
         </AuthGate>
       </body>

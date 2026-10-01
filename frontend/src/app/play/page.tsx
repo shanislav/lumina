@@ -109,7 +109,7 @@ function Player() {
   return (
     <main className="flex flex-col gap-3 px-4 py-6 max-w-6xl mx-auto">
       <div className="flex flex-wrap items-center gap-3">
-        <button onClick={() => router.back()} className="text-zinc-500 hover:text-zinc-300 text-sm whitespace-nowrap">&larr; Zpět</button>
+        <button onClick={() => (window.history.length > 1 ? router.back() : router.push("/library"))} className="text-zinc-500 hover:text-zinc-300 text-sm whitespace-nowrap">&larr; Zpět</button>
         <h1 className="text-lg font-semibold text-zinc-100">
           {info?.title} {info?.year && <span className="text-zinc-500 font-normal">({info.year})</span>}
         </h1>

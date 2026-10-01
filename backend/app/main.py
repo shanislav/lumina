@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core import registry
-from app.core.auth import register_permissions, require
+from app.core.auth import User, register_permissions, require
 from app.db import init_db
 from app.sources.registry import SourceRegistry
 
@@ -63,6 +63,21 @@ for _module in ACTIVE_MODULES:
 @app.get("/api/health")
 async def health() -> dict:
     return {"status": "ok", "sources": len(SourceRegistry.get().sources)}
+
+
+@app.get("/api/tasks")
+async def tasks(user: User = Depends(require())) -> list[dict]:
+    """Background work of all active modules the user may see (the task button in the navigation)."""
+    out: list[dict] = []
+    for module in ACTIVE_MODULES:
+        for source in module.tasks:
+            if source.permission and not user.can(source.permission):
+                continue
+            try:
+                out += [{"module": module.name, **t} for t in await source.read()]
+            except Exception:  # noqa: BLE001 — one module's trouble must not hide the others
+                logger.debug("tasks of module '%s' failed", module.name, exc_info=True)
+    return out
 
 
 @app.get("/api/modules", dependencies=[Depends(require())])

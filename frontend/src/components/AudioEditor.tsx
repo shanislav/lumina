@@ -27,7 +27,7 @@ const PHASE: Record<string, string> = {
 };
 
 function checkBadge(c: TargetTrackCheck | undefined): { text: string; cls: string; tip?: string } {
-  if (!c) return { text: "…", cls: "text-zinc-500" };
+  if (!c) return { text: "neměřeno", cls: "text-zinc-500" };
   if (c.ok) return { text: "✓ sedí", cls: "bg-emerald-900/60 text-emerald-200" };
   if (c.verdict === "constant") return { text: `posun ${c.offset > 0 ? "+" : ""}${c.offset.toFixed(2)} s`, cls: "bg-amber-900/50 text-amber-200", tip: c.note };
   if (c.verdict === "speed") return { text: "jiná rychlost", cls: "bg-amber-900/50 text-amber-200", tip: c.note };
@@ -45,6 +45,8 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
   const [ref, setRef] = useState<AudioReference | null>(null);
   const [target, setTarget] = useState<number | null>(initialTarget);
   const [refTrack, setRefTrack] = useState<number | null>(null);
+  const [audioOf, setAudioOf] = useState<Record<number, AudioTrackInfo[]>>({});   // tracks of every version
+  const [sel, setSel] = useState<Record<number, number[]> | null>(null);         // tracks to measure (null = all)
   const [map, setMap] = useState<FilmMap | null>(null);
   const [job, setJob] = useState<AudioSyncJob | null>(null);
   const [add, setAdd] = useState<Record<number, FilmMapMember | null>>({});   // dub id → source
@@ -60,6 +62,8 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
     const [all, r, m] = await Promise.all([getLibraryMovies(), getAudioReference(tmdbId), getFilmMap(tmdbId)]);
     const vs = all.filter((v) => v.tmdb_id === tmdbId && v.file_path && (v.status === "matched" || v.status === "manual"));
     setVersions(vs);
+    Promise.all(vs.map((v) => getAudioTracks(v.id).then((t) => [v.id, t.audio] as const).catch(() => [v.id, []] as const)))
+      .then((pairs) => setAudioOf(Object.fromEntries(pairs)));
     setRef(r);
     setMap(m);
     return { vs, r };
@@ -108,7 +112,15 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
   }, [job, loadVersions]);
 
   const tv = versions.find((v) => v.id === target);
-  const mapOk = !!map && !map.stale && map.target_id === target && map.ref_track === refTrack;
+  // the chosen tracks in one comparable form ("all" when nothing is left out)
+  const selKey = (x: Record<string, number[]> | null | undefined) => {
+    if (!x) return "all";
+    const ids = versions.map((v) => v.id);
+    const full = ids.every((id) => (x[id] ?? []).length === (audioOf[id] ?? []).length);
+    return full ? "all" : JSON.stringify(ids.map((id) => [...(x[id] ?? [])].sort((a, b) => a - b)));
+  };
+  const sameRun = !!map && map.target_id === target && map.ref_track === refTrack;
+  const mapOk = sameRun && !map!.stale && selKey(map!.selection) === selKey(sel);
   const targetAudio: AudioTrackInfo[] = useMemo(
     () => (mapOk ? map!.versions.find((v) => v.id === target)?.audio : null) ?? [], [map, mapOk, target]);
   const chosen = ref?.chosen;
@@ -135,10 +147,24 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
     }
   }
 
+  // a finished measurement of this version + reference shows what it measured
+  useEffect(() => {
+    if (map && map.target_id === target && map.ref_track === refTrack) setSel(map.selection ?? null);
+  }, [map, target, refTrack]);
+
+  const selected = (vid: number, t: number) => !sel || (sel[vid] ?? []).includes(t);
+  function toggle(vid: number, t: number, on: boolean) {
+    const base: Record<number, number[]> = sel ?? Object.fromEntries(versions.map((v) => [v.id, (audioOf[v.id] ?? []).map((a) => a.index)]));
+    const cur = base[vid] ?? [];
+    setSel({ ...base, [vid]: on ? [...cur, t] : cur.filter((x) => x !== t) });
+  }
+  const selCount = versions.reduce((n, v) => n + (audioOf[v.id] ?? []).filter((a) => selected(v.id, a.index)).length, 0);
+  const allCount = versions.reduce((n, v) => n + (audioOf[v.id] ?? []).length, 0);
+
   async function measure() {
     if (!target || refTrack === null) return;
     if (!isStored) await saveReference(false);
-    run(() => startFilmMap(tmdbId, target, refTrack));
+    run(() => startFilmMap(tmdbId, target, refTrack, selKey(sel) === "all" ? null : sel));
   }
 
   const fitOf = (m: FilmMapMember) =>
@@ -227,8 +253,8 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
             ? <span className="rounded bg-emerald-900/60 px-2 py-0.5 text-emerald-200">✓ ověřeno{chosen?.verified_by ? ` (${chosen.verified_by})` : ""}</span>
             : <span className="rounded bg-amber-900/50 px-2 py-0.5 text-amber-200">neověřeno</span>}
           {can("player") && refTrack !== null && (
-            <a href={`/play?id=${tv.id}&audio=${refTrack}&t=${Math.round(at0())}`} target="_blank" rel="noreferrer"
-              className="rounded bg-violet-600 px-3 py-1 font-medium text-white hover:bg-violet-500">▶ Pustit film s touto stopou</a>
+            <Link href={`/play?id=${tv.id}&audio=${refTrack}&t=${Math.round(at0())}`}
+              className="rounded bg-violet-600 px-3 py-1 font-medium text-white hover:bg-violet-500">▶ Pustit film s touto stopou</Link>
           )}
           {!verified && <button onClick={() => saveReference(true)} className="rounded border border-emerald-700 px-3 py-1 text-emerald-200 hover:bg-emerald-900/40">Sedí na obraz — ověřeno</button>}
           {verified && <button onClick={() => saveReference(false)} className="text-zinc-500 hover:text-zinc-300">zrušit ověření</button>}
@@ -253,7 +279,41 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
             <button onClick={measure} className="text-xs text-zinc-500 hover:text-zinc-300">změřit znovu</button>
           )}
         </div>
-        {!mapOk && !running && <p className="text-xs text-zinc-500">Změří každou stopu této verze i všech ostatních verzí přímo proti referenci (asi minuta na stopu / verzi).</p>}
+        {!running && allCount > 0 && (
+          <details className="rounded border border-zinc-800" open={!mapOk || undefined}>
+            <summary className="cursor-pointer select-none px-2 py-1.5 text-xs text-zinc-400 hover:text-zinc-200">
+              Které stopy měřit: {selCount === allCount ? "všechny" : `${selCount} z ${allCount}`}
+            </summary>
+            <div className="space-y-2 px-2 pb-2 text-xs">
+              <div className="flex gap-3">
+                <button onClick={() => setSel(null)} className="text-violet-300 hover:text-violet-200">vše</button>
+                <button onClick={() => setSel(Object.fromEntries(versions.map((v) => [v.id, v.id === target && refTrack !== null ? [refTrack] : []])))}
+                  className="text-violet-300 hover:text-violet-200">nic</button>
+                <button onClick={() => setSel(Object.fromEntries(versions.map((v) => [v.id, (audioOf[v.id] ?? [])
+                  .filter((a) => (v.id === target && a.index === refTrack) || ["cs", "cze", "ces", "sk", "slo", "slk"].includes(a.language.toLowerCase()))
+                  .map((a) => a.index)])))} className="text-violet-300 hover:text-violet-200">jen CZ/SK</button>
+              </div>
+              {versions.map((v) => (
+                <div key={v.id}>
+                  <p className={v.id === target ? "text-violet-200" : "text-zinc-400"}>{v.id === target ? "Tato verze" : versionName(v.id)}</p>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 pl-2">
+                    {(audioOf[v.id] ?? []).map((a) => {
+                      const isRef = v.id === target && a.index === refTrack;
+                      return (
+                        <label key={a.index} className="flex items-center gap-1 text-zinc-300">
+                          <input type="checkbox" disabled={isRef} checked={isRef || selected(v.id, a.index)}
+                            onChange={(e) => toggle(v.id, a.index, e.target.checked)} />
+                          {a.index + 1}. {trackLabel(a)}{isRef && " ★"}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <p className="text-[11px] text-zinc-500">Měří se jen vybrané stopy (asi minuta na stopu a na verzi). Nevybrané stopy této verze v souboru zůstanou.</p>
+            </div>
+          </details>
+        )}
         {running && (
           <div className="space-y-1">
             <p className="text-xs text-violet-300">{PHASE[job?.phase ?? ""] ?? job?.phase}{job?.current ? ` — ${job.current}` : ""}</p>

@@ -1017,6 +1017,28 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+// ── background work of all modules (the task button in the navigation) ──
+
+export interface BackgroundTask {
+  id: string;
+  module: string;
+  title: string;
+  detail?: string;
+  done?: number | null;
+  total?: number | null;
+  unit?: "bytes";
+  running: boolean;
+  error?: string | null;
+  finished_at?: number;
+  link?: string | null;
+}
+
+export async function getTasks(): Promise<BackgroundTask[]> {
+  const res = await apiFetch(`${API_BASE}/api/tasks`);
+  if (!res.ok) throw new Error(`Chyba ${res.status}`);
+  return res.json();
+}
+
 // ── audio editor: the reference track, every track measured against it, edits ──
 
 export interface AudioTrackInfo {
@@ -1126,12 +1148,13 @@ export interface FilmMap {
   ref_track: number;
   duration: number;
   target_tracks?: Record<string, TargetTrackCheck>;
+  selection?: Record<string, number[]> | null;     // measured tracks per version (null = all)
   versions: FilmMapVersion[];
   dubs: { id: number; lang: string; name: string; members: FilmMapMember[] }[];
 }
 
-export const startFilmMap = (tmdbId: number, targetId: number, refTrack: number) =>
-  audioSyncCall<AudioSyncJob>("/map", jsonBody("POST", { tmdb_id: tmdbId, target_id: targetId, ref_track: refTrack }));
+export const startFilmMap = (tmdbId: number, targetId: number, refTrack: number, tracks: Record<number, number[]> | null) =>
+  audioSyncCall<AudioSyncJob>("/map", jsonBody("POST", { tmdb_id: tmdbId, target_id: targetId, ref_track: refTrack, tracks }));
 export const getFilmMap = (tmdbId: number) => audioSyncCall<FilmMap | null>(`/map/${tmdbId}`);
 export const applyFilmMap = (mapId: number, picks: { version_id: number; track: number }[], fixTracks: number[],
                              dropTracks: number[], mode: "replace" | "version") =>

@@ -8,7 +8,8 @@ nothing happens to the audio on its own.
 Needs ffmpeg and mkvtoolnix in the backend image.
 """
 
-from app.core.module import Module, Permission
+from app.core.module import Module, Permission, TaskSource
+from app.modules.audiosync import tasks
 from app.modules.audiosync.router import MAPS, REFS, RESULTS, router
 
 # migration 2 of a removed feature (keep-audio on download) — migrations are numbered by position
@@ -27,4 +28,5 @@ module = Module(
     routers=[router],
     migrations=[RESULTS, PENDING, MAPS, REFS],
     permissions=[Permission("audiosync", "Editor zvuku: porovnávat, opravovat a přenášet zvukové stopy")],
+    tasks=[TaskSource(tasks.read, "audiosync")],
 )

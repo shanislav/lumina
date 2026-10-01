@@ -2,7 +2,8 @@
 imports finished downloads (replaces Radarr/Sonarr)."""
 
 from app.core.migrations import add_column
-from app.core.module import Module, Permission, Subscription
+from app.core.module import Module, Permission, Subscription, TaskSource
+from app.modules.library import tasks
 from app.modules.library.imports import on_download_completed
 from app.modules.library.organize import FILE_OPERATIONS
 from app.modules.library.router import router
@@ -98,4 +99,5 @@ module = Module(
         LIBRARY_FILMS,
         add_column("upgrade_checks", "note", "TEXT DEFAULT ''"),
     ],
+    tasks=[TaskSource(tasks.read, "library.view")],
 )
