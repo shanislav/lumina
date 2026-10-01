@@ -41,7 +41,6 @@ import {
   UpgradeJob,
   formatSize,
 } from "@/lib/api";
-import DownloadPanel from "@/components/DownloadPanel";
 import { useAuth } from "@/components/AuthGate";
 import RenameChecklist from "@/components/RenameChecklist";
 import { ON_BETTER } from "@/components/WatchedList";
@@ -324,6 +323,22 @@ export default function LibraryPage() {
       setPlanBusy(false);
     }
   }
+
+  // a link to a film (the download list): /library?tmdb=603 — opened once the library is loaded
+  const [openTmdb, setOpenTmdb] = useState<number | null>(null);
+  useEffect(() => {
+    const t = parseInt(new URLSearchParams(window.location.search).get("tmdb") || "");
+    if (Number.isFinite(t)) setOpenTmdb(t);
+  }, []);
+  useEffect(() => {
+    if (!openTmdb || !groups.length) return;
+    const g = groups.find((x) => x.main.tmdb_id === openTmdb);
+    if (g) {
+      if (g.versions.length > 1) setVersionsOf(g); else openMovie(g.main);
+    }
+    setOpenTmdb(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTmdb, groups]);
 
   // the task list links here after a Plex check: /library?rename=1
   useEffect(() => {
@@ -1239,7 +1254,6 @@ export default function LibraryPage() {
         </div>
       )}
 
-      <DownloadPanel />
     </main>
   );
 }

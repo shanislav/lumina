@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import WatchedList from "@/components/WatchedList";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import DownloadPanel from "@/components/DownloadPanel";
 import { useAuth } from "@/components/AuthGate";
 import {
   QualityProfile,
@@ -193,7 +192,6 @@ export default function WantedPage() {
           ))}
         </div>
       )}
-      <DownloadPanel />
       </>)}
     </main>
   );

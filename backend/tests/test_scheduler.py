@@ -59,7 +59,7 @@ async def setup(monkeypatch):
     started = []
     downloads = importlib.import_module("app.modules.downloads.router")
 
-    async def fake_start(req):
+    async def fake_start(req, requested_by=""):
         started.append(req)
         return {"gid": "g1", "status": "active"}
     monkeypatch.setattr(downloads, "start_download", fake_start)

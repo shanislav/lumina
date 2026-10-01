@@ -18,17 +18,37 @@ CREATE TABLE IF NOT EXISTS download_tracker (
 
 
 async def track_download(id: str, tmdb_id: int, title: str, year: int, backend: str, target_dir: str,
-                         content_type: str = "movie", intent: dict | None = None, source_label: str = ""):
+                         content_type: str = "movie", intent: dict | None = None, source_label: str = "",
+                         requested_by: str = ""):
     """Record a new download for background monitoring."""
+    from datetime import datetime
     db = await get_db()
     try:
         await db.execute(
             "INSERT OR REPLACE INTO download_tracker (id, tmdb_id, title, year, backend, status, target_dir, "
-            "content_type, intent, source_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "content_type, intent, source_label, requested_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (id, tmdb_id, title, year, backend, "active", target_dir, content_type,
-             json.dumps(intent) if intent else "", source_label)
+             json.dumps(intent) if intent else "", source_label, requested_by,
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         )
         await db.commit()
+    finally:
+        await db.close()
+
+
+async def tracked() -> dict[str, dict]:
+    """gid / torrent hash -> what Lumina knows of the downloads it started (source, film, who, when)."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT id, source_label, tmdb_id, title, intent, requested_by, created_at, "
+                                  "content_type FROM download_tracker")
+        out = {}
+        for r in await cursor.fetchall():
+            intent = json.loads(r["intent"]) if r["intent"] else {}
+            out[r["id"]] = {"source_label": r["source_label"] or "", "tmdb_id": r["tmdb_id"], "film": r["title"] or "",
+                            "requested_by": r["requested_by"] or "", "created_at": r["created_at"] or "",
+                            "mode": intent.get("mode") or "", "content_type": r["content_type"] or "movie"}
+        return out
     finally:
         await db.close()
 

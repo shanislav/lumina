@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { DownloadItem, getDownloads, removeDownload, formatSize } from "@/lib/api";
 
@@ -122,9 +123,22 @@ export default function DownloadPanel() {
               <div key={id} className="px-4 py-2.5 space-y-1.5">
                 <div className="flex items-center gap-3">
                   <span className={`text-sm ${color}`}>{icon}</span>
-                  <span className="text-sm text-zinc-200 truncate flex-1" title={name}>
-                    {name}
-                  </span>
+                  {dl.tmdb_id && dl.content_type !== "tv" ? (
+                    <Link href={`/library?tmdb=${dl.tmdb_id}`} title={`${name}\nOtevřít v knihovně`}
+                      className="text-sm text-zinc-200 truncate flex-1 hover:text-violet-300">
+                      {name}
+                    </Link>
+                  ) : (
+                    <span className="text-sm text-zinc-200 truncate flex-1" title={name}>{name}</span>
+                  )}
+                  {(dl.requested_by || dl.created_at) && (
+                    <span className="cursor-default text-xs text-zinc-500 hover:text-zinc-300"
+                      title={[dl.requested_by && `Přidal: ${dl.requested_by}`, dl.created_at && `Kdy: ${dl.created_at}`,
+                        dl.mode === "replace" ? "Po stažení nahradí verzi v knihovně" : dl.mode === "version" ? "Přidá se jako další verze" : "",
+                        dl.film && `Film: ${dl.film}`].filter(Boolean).join("\n")}>
+                      ⓘ
+                    </span>
+                  )}
                   {dl.source_label ? (
                     <span className={`text-xs font-medium ${
                       dl.source_label === "FastShare" ? "text-cyan-400" :

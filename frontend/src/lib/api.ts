@@ -307,6 +307,13 @@ export interface DownloadItem {
   backend: "aria2" | "qbittorrent";
   progress?: number;
   source_label?: string;
+  // what Lumina knows of a download it started
+  tmdb_id?: number | null;
+  film?: string;
+  requested_by?: string;      // a user name, "Chci (plánovač)" …
+  created_at?: string;
+  mode?: string;              // "version" | "replace" | ""
+  content_type?: string;
 }
 
 export async function getDownloads(): Promise<DownloadItem[]> {

@@ -24,6 +24,9 @@ module = Module(
         add_column("download_tracker", "intent", "TEXT DEFAULT ''"),
         # source label (WebShare / FastShare / Torrent) survives a restart
         add_column("download_tracker", "source_label", "TEXT DEFAULT ''"),
+        # who asked for it (a user, "Chci (plánovač)" …) and when — the download list shows it
+        add_column("download_tracker", "requested_by", "TEXT DEFAULT ''"),
+        add_column("download_tracker", "created_at", "TEXT DEFAULT ''"),
     ],
     subscriptions=[Subscription("download.request", on_download_request)],
     on_startup=[ensure_monitor_running],

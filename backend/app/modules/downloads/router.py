@@ -39,10 +39,10 @@ async def download(req: DownloadRequest, user: User = Depends(require("download"
     # an own target folder writes anywhere the backend can — only for who manages the settings
     if req.target_folder and not user.can("settings"):
         raise HTTPException(403, "Vlastní cílovou složku může zvolit jen správce nastavení")
-    return await start_download(req)
+    return await start_download(req, requested_by=user.username)
 
 
-async def start_download(req: DownloadRequest) -> dict:
+async def start_download(req: DownloadRequest, requested_by: str = "") -> dict:
     """Starts a download — from the UI (above) or from other modules via event download.request."""
     cfg = await get_effective_settings()
     target_dir = _resolve_target_dir(cfg, req)
@@ -63,7 +63,7 @@ async def start_download(req: DownloadRequest) -> dict:
             )
             from app.modules.downloads.store import track_download
             from app.modules.downloads.monitor import ensure_monitor_running
-            await track_download(gid, req.tmdb_id, req.title, req.year, "aria2", target_dir, req.content_type or "movie", req.library_action, source_label)
+            await track_download(gid, req.tmdb_id, req.title, req.year, "aria2", target_dir, req.content_type or "movie", req.library_action, source_label, requested_by)
             ensure_monitor_running()
             return {
                 "gid": gid,
@@ -91,7 +91,7 @@ async def start_download(req: DownloadRequest) -> dict:
             torrent_hash = await qbt.add_torrent(req.magnet_url, save_path="")
             from app.modules.downloads.store import track_download
             from app.modules.downloads.monitor import ensure_monitor_running
-            await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie", req.library_action, source_label)
+            await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie", req.library_action, source_label, requested_by)
             ensure_monitor_running()
             return {
                 "hash": torrent_hash,
@@ -110,7 +110,7 @@ async def on_download_request(payload: dict) -> None:
     a download; started exactly like the UI does it. payload: DownloadRequest fields."""
     fields = {k: payload[k] for k in DownloadRequest.model_fields if k in payload}
     try:
-        payload["started"] = await start_download(DownloadRequest(**fields))
+        payload["started"] = await start_download(DownloadRequest(**fields), requested_by=payload.get("requested_by") or "")
         logger.info("Download requested by %s: %s", payload.get("requested_by", "?"), fields.get("title"))
     except Exception as e:
         payload["error"] = str(e)
@@ -120,11 +120,12 @@ async def on_download_request(payload: dict) -> None:
 @router.get("/downloads")
 async def list_downloads() -> dict:
     """List all active + recent downloads from Aria2 and qBittorrent."""
-    from app.modules.downloads.store import source_labels
+    from app.modules.downloads.store import tracked
 
     cfg = await get_effective_settings()
     downloads: list[dict] = []
-    labels = await source_labels()
+    known = await tracked()
+    labels = {k: v["source_label"] for k, v in known.items() if v["source_label"]}
 
     # Aria2
     try:
@@ -180,6 +181,11 @@ async def list_downloads() -> dict:
         except Exception as e:
             logger.debug("qBittorrent unavailable for the download list: %s", e)
 
+    # what Lumina knows of each (film, who asked, when); the newest first
+    for d in downloads:
+        info = known.get(d.get("gid") or d.get("hash") or "") or {}
+        d.update({k: info.get(k) for k in ("tmdb_id", "film", "requested_by", "created_at", "mode", "content_type")})
+    downloads.sort(key=lambda d: d.get("created_at") or "", reverse=True)
     return {"downloads": downloads}
 
 

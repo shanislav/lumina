@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { TMDBMovie, getTrending, getRecentlyDigital, getRecentlyDigitalTV, getOwned, OwnedVersion, versionLabel } from "@/lib/api";
-import DownloadPanel from "@/components/DownloadPanel";
 
 interface Section {
   title: string;
@@ -173,7 +172,6 @@ export default function DiscoverPage() {
         })
       )}
 
-      <DownloadPanel />
     </main>
   );
 }
