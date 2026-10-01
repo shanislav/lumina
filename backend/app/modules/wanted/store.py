@@ -8,7 +8,8 @@ from datetime import datetime
 from app.config import get_effective_settings
 from app.core import events
 from app.core.offers.search import find_offers, verify_offers
-from app.core.profiles import block, get_profile
+from app.core.profiles import get_profile
+from app.core.profiles import suitable as pick_suitable
 from app.db import get_db
 
 logger = logging.getLogger(__name__)
@@ -102,9 +103,7 @@ async def check(wanted_id: int) -> dict | None:
                                tmdb_id=item["tmdb_id"] or None, media_type="movie",
                                wikidata_id=item["wikidata_id"] or None)
     await verify_offers(offers, limit=VERIFY_PER_FILM)
-    suitable = [r for r in offers.rows if r["film"] in ("yes", "unsure") and block(r, profile) is None]
-    # verified first (an unverified name can promise too much), then the score
-    suitable.sort(key=lambda r: (not r.get("verified"), -r["quality_score"]))
+    suitable = pick_suitable(offers.rows, profile)
     best = {k: suitable[0].get(k) for k in BEST_FIELDS} if suitable else {}
     status = "found" if suitable else "wanted"
     db = await get_db()

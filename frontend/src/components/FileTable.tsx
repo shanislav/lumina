@@ -11,6 +11,8 @@ import {
   versionLabel,
   getFileDetails,
   getActiveSources,
+  pickForProfile,
+  ProfilePick,
 } from "@/lib/api";
 
 const TORRENT = ["jackett", "prowlarr"];
@@ -30,6 +32,8 @@ interface Props {
   preferLocalAudio?: boolean;
   /** Upgrade mode (library "Hledat lepší verzi"): the owned version an offer has to beat. */
   upgradeFrom?: OwnedVersion | null;
+  /** The quality profile chosen above ("" = the default one): its pick is offered for download right away. */
+  profileId?: number | "";
 }
 
 /** An offer is an upgrade when its score is higher than the owned version's and it does not
@@ -82,7 +86,7 @@ interface Row {
 
 export default function FileTable({
   files, loading, onDownloadStarted, tmdb_id, title, year, mediaType, owned = [], movie, preferLocalAudio = true,
-  upgradeFrom = null,
+  upgradeFrom = null, profileId,
 }: Props) {
   const { can } = useAuth();
   const [onlyBetter, setOnlyBetter] = useState(true);
@@ -212,6 +216,19 @@ export default function FileTable({
 
   const best = view.find((r) => r.file.film === "yes");
 
+  // What the chosen profile would download now — asked again as verification refines the offers
+  const [pick, setPick] = useState<ProfilePick | null>(null);
+  useEffect(() => {
+    if (profileId === undefined || upgrade) { setPick(null); return; }
+    const offers = rows.map((r) => r.file).filter((f) => f.film === "yes" || f.film === "unsure");
+    if (!offers.length) { setPick(null); return; }
+    const t = setTimeout(() => {
+      pickForProfile(profileId === "" ? null : profileId, offers).then(setPick).catch(() => setPick(null));
+    }, 500);
+    return () => clearTimeout(t);
+  }, [rows, profileId, upgrade]);
+  const pickRow = pick?.key ? rows.find((r) => r.copies.some((c) => keyOf(c) === pick.key)) : undefined;
+
   function handleDownload(file: ScoredFile) {
     // Movie already in the library → ask: another version, or replace one?
     if (owned.length > 0 && (mediaType || "movie") === "movie") {
@@ -328,6 +345,41 @@ export default function FileTable({
         </div>
       )}
 
+      {pick && (
+        <div className="mb-3 rounded-lg border border-violet-800 bg-violet-950/20 px-3 py-2 text-sm">
+          {pickRow ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-violet-300">🎯 Podle profilu „{pick.profile}“:</span>
+              <SourceBadge file={pickRow.file} />
+              <span className="text-zinc-100 break-all">{pickRow.file.name}</span>
+              <span className="text-zinc-400 text-xs">
+                {pickRow.file.quality_summary || "?"} · {formatSize(pickRow.file.size)}
+                {!pickRow.file.verified && " · neověřeno"}
+              </span>
+              <span className="text-zinc-500 text-xs">({pick.suitable} {pick.suitable === 1 ? "vyhovuje" : "vyhovuje profilu"})</span>
+              {can("download") && (
+                downloading[pickRow.file.ident] ? (
+                  <span className="ml-auto text-xs text-green-400">
+                    {downloading[pickRow.file.ident] === "starting" ? "Odesílám…" : downloading[pickRow.file.ident] === "error" ? "Chyba" : "Stahuje se"}
+                  </span>
+                ) : (
+                  <button onClick={() => handleDownload(pickRow.file)}
+                    className="ml-auto rounded bg-violet-600 px-3 py-1 text-xs font-medium text-white hover:bg-violet-500">
+                    Stáhnout teď
+                  </button>
+                )
+              )}
+            </div>
+          ) : (
+            <p className="text-zinc-400">
+              🎯 Profilu „{pick.profile}“ teď nic nevyhovuje
+              {pick.reasons.length > 0 && <> — {pick.reasons.map(([why, n]) => `${why} (${n}×)`).join(", ")}</>}.
+              {" "}Přidej film do Chci a Lumina ho bude hledat dál.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-3 text-xs">
         <FilterGroup label="Zvuk" value={filters.audio} onChange={(v) => updateFilters({ audio: v as AudioFilter })}
           options={[["all", "Vše"], ["local", "CZ/SK zvuk"], ["local_or_subs", "CZ/SK zvuk nebo titulky"]]} />
@@ -361,6 +413,7 @@ export default function FileTable({
                 <td className="py-2 px-3 text-zinc-200 max-w-0 min-w-[12rem] w-full" title={file.name}>
                   <div className="truncate">
                     {row === best && <span title="Doporučená volba" className="mr-1 text-yellow-400">★</span>}
+                    {row === pickRow && <span title={`Vybráno podle profilu „${pick?.profile}“`} className="mr-1">🎯</span>}
                     {file.name}
                   </div>
                   {canMoveDub && moveDub && file.lang_tier < 2 && (

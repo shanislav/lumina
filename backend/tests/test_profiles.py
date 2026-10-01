@@ -74,3 +74,16 @@ async def test_old_profiles_keep_their_czech_requirement(db):
     standard = next(p for p in await load_profiles() if p.name == "Standard")
     assert standard.audio_langs == ["cs", "sk"] and standard.audio_mode == "any"
 
+
+
+def test_suitable_offers_verified_first_then_score():
+    from app.core.profiles import Profile, suitable
+    p = Profile(min_resolution="1080p", audio_langs=["cs"])
+    rows = [
+        {"ident": "a", "film": "yes", "resolution": "2160p", "audio_langs": ["cs"], "quality_score": 90, "verified": False},
+        {"ident": "b", "film": "yes", "resolution": "1080p", "audio_langs": ["cs"], "quality_score": 70, "verified": True},
+        {"ident": "c", "film": "yes", "resolution": "720p", "audio_langs": ["cs"], "quality_score": 99, "verified": True},
+        {"ident": "d", "film": "no", "resolution": "2160p", "audio_langs": ["cs"], "quality_score": 99, "verified": True},
+        {"ident": "e", "film": "yes", "resolution": "2160p", "audio_langs": ["en"], "quality_score": 95, "verified": True},
+    ]
+    assert [r["ident"] for r in suitable(rows, p)] == ["b", "a"]

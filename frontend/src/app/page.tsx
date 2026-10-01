@@ -6,7 +6,7 @@ import SearchBar from "@/components/SearchBar";
 import MovieGrid from "@/components/MovieGrid";
 import FileTable from "@/components/FileTable";
 import DownloadPanel from "@/components/DownloadPanel";
-import WantButton from "@/components/WantButton";
+import WantButton, { ProfileSelect } from "@/components/WantButton";
 import { useAuth } from "@/components/AuthGate";
 import Link from "next/link";
 import {
@@ -45,6 +45,7 @@ function HomeContent() {
   const [movies, setMovies] = useState<TMDBMovie[]>([]);
   const [files, setFiles] = useState<ScoredFile[]>([]);
   const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
+  const [profileId, setProfileId] = useState<number | "">("");   // for "+ Chci" and the offer picked now
   const [moviesLoading, setMoviesLoading] = useState(false);
   const [filesLoading, setFilesLoading] = useState(false);
   const [resultsCollapsed, setResultsCollapsed] = useState(false);
@@ -262,7 +263,8 @@ function HomeContent() {
                 </span>
               )}
             </h2>
-            <WantButton movie={selectedMovie} />
+            {selectedMovie.media_type !== "tv" && <ProfileSelect value={profileId} onChange={setProfileId} />}
+            <WantButton movie={selectedMovie} profileId={profileId} onProfileChange={setProfileId} />
             {resultsCollapsed && files.length > 0 && (
               <button
                 onClick={() => setResultsCollapsed(false)}
@@ -287,7 +289,7 @@ function HomeContent() {
           {!filesLoading && files.length === 0 && selectedMovie.media_type !== "tv" && (selectedMovie.tmdb_id || selectedMovie.wikidata_id) ? (
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-300 flex flex-wrap items-center gap-3">
               <span>Zatím nic ke stažení. Přidej si ho do Chci — Lumina ho bude hledat, až se objeví:</span>
-              <WantButton movie={selectedMovie} />
+              <WantButton movie={selectedMovie} profileId={profileId} onProfileChange={setProfileId} />
             </div>
           ) : null}
           {selectedOwned.length > 0 && (
@@ -316,6 +318,7 @@ function HomeContent() {
               files={files}
               loading={filesLoading}
               onDownloadStarted={() => setResultsCollapsed(true)}
+              profileId={selectedMovie?.media_type === "tv" ? undefined : profileId}
             />
           )}
         </div>

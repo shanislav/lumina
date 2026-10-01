@@ -330,6 +330,24 @@ export async function removeDownload(
 
 // --- Source Management ---
 
+export interface ProfilePick {
+  profile: string;
+  key: string | null;              // "<source_id>:<ident>" of the offer the profile would take now
+  suitable: number;
+  reasons: [string, number][];     // why the others do not suit (most common first)
+}
+
+/** What a quality profile would download now from these offers (the rule "Chci" uses). */
+export async function pickForProfile(profileId: number | null, files: ScoredFile[]): Promise<ProfilePick> {
+  const res = await apiFetch(`${API_BASE}/api/search/pick`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profile_id: profileId, files }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 /** The sources switched on (no settings needed) */
 export async function getActiveSources(): Promise<{ type: string; name: string }[]> {
   const res = await apiFetch(`${API_BASE}/api/sources/active`);

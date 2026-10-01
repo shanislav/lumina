@@ -9,6 +9,7 @@ from app.clients.wikidata import WikidataClient
 from app.core.offers.details import get_details
 from app.core.offers.evaluate import MovieContext, evaluate
 from app.core.offers.search import find_offers
+from app.core.profiles import block, get_profile, suitable
 from app.core.quality import prefs_from_settings
 from app.models.schemas import TMDBMovie, ScoredFile
 from pydantic import BaseModel
@@ -179,3 +180,26 @@ async def search_details(body: DetailsRequest) -> dict:
         d = details.get(key)
         out[key] = {"details": d, **evaluate(f.name, f.size, ctx, prefs, d)} if d else None
     return out
+
+
+class PickRequest(BaseModel):
+    profile_id: int | None = None
+    files: list[dict]             # the offers as the file table has them (verified ones re-evaluated)
+
+
+@router.post("/search/pick", dependencies=[Depends(require("search"))])
+async def search_pick(body: PickRequest) -> dict:
+    """The offer a quality profile would take now (what "Chci" would download), and why the others not."""
+    profile = await get_profile(body.profile_id)
+    ok = suitable(body.files, profile)
+    reasons: dict[str, int] = {}
+    for r in body.files:
+        if r.get("film") in ("yes", "unsure") and (why := block(r, profile)):
+            reasons[why] = reasons.get(why, 0) + 1
+    best = ok[0] if ok else None
+    return {
+        "profile": profile.name,
+        "key": f"{best['source_id']}:{best['ident']}" if best else None,
+        "suitable": len(ok),
+        "reasons": sorted(reasons.items(), key=lambda x: -x[1])[:3],
+    }

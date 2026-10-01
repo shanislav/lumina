@@ -125,6 +125,13 @@ def block(row: dict, p: Profile) -> str | None:
     return None
 
 
+def suitable(rows: list[dict], p: Profile) -> list[dict]:
+    """Offers of the right film the profile allows, best first: verified ones first (an unverified
+    name can promise too much), then the score."""
+    ok = [r for r in rows if r.get("film") in ("yes", "unsure") and block(r, p) is None]
+    return sorted(ok, key=lambda r: (not r.get("verified"), -(r.get("quality_score") or 0)))
+
+
 def reached_cutoff(owned: dict, p: Profile) -> bool:
     """The owned version is good enough — stop looking for a better one."""
     return bool(p.cutoff) and block(owned, p) is None and (owned.get("quality_score") or 0) >= p.cutoff
