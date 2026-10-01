@@ -343,6 +343,8 @@ async def _process_movie_file(client: TMDBClient, db, path: str, videos_in_folde
         placeholders = ", ".join("?" for _ in values)
         cursor = await db.execute(f"INSERT INTO library_movies ({columns}) VALUES ({placeholders})", tuple(values.values()))
         movie_id = cursor.lastrowid
+    # Commit first: other modules react on their own connections (an open write here locks them out)
+    await db.commit()
     await emit_movie_updated(db, movie_id)
 
 
