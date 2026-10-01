@@ -36,20 +36,6 @@ def _clean_query(query: str) -> str:
     return clean
 
 
-def _build_alt_queries(query: str, original_title: str = "") -> list[str]:
-    """Build alternative queries for torrent search fallback."""
-    alts: list[str] = []
-    cleaned = _clean_query(query)
-    if cleaned and cleaned.lower() != query.lower():
-        alts.append(cleaned)
-    if original_title and original_title.lower() != query.lower():
-        alts.append(original_title)
-        cleaned_orig = _clean_query(original_title)
-        if cleaned_orig and cleaned_orig.lower() != original_title.lower():
-            alts.append(cleaned_orig)
-    return alts
-
-
 def is_video_name(name: str) -> bool:
     if "." not in name:
         return True  # no extension → cannot tell, keep
@@ -98,6 +84,16 @@ def ddl_queries(query: str, original_title: str = "", en_title: str = "",
             seen.add(key)
             queries.append(cleaned)
     return queries[:MAX_DDL_QUERIES] or [query]
+
+
+def torrent_query_list(query: str, en_title: str = "", original_title: str = "") -> list[str]:
+    """The typed title without a year, and the English (or original, when in Latin letters) title."""
+    out: list[str] = []
+    for q in (re.sub(r"\s*\b(19|20)\d{2}\b", "", query).strip(), en_title, original_title):
+        q = (q or "").strip()
+        if q and re.search(r"[A-Za-z]", q) and _norm(q) not in {_norm(x) for x in out}:
+            out.append(q)
+    return out[:2]
 
 
 def _unique_names(names: list[str]) -> list[str]:
@@ -157,7 +153,6 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     if not sources:
         return Offers(ctx, prefs)
 
-    all_queries = [query, *_build_alt_queries(query, original_title)]
 
     # Everything TMDB knows about the film's names, its year and runtime (one call). Files are named
     # in any language, and the runtime lets verified durations expose wrong/incomplete files.
@@ -185,8 +180,6 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
             logger.warning("TMDB details for tmdb=%s failed: %s", tmdb_id, e)
         finally:
             await client.close()
-        if en_title and en_title.lower() not in [q.lower() for q in all_queries]:
-            all_queries.append(en_title)
     elif wikidata_id:
         # not in TMDB: names, year and runtime from Wikidata
         from app.clients.wikidata import WikidataClient
@@ -206,10 +199,6 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     ctx.titles = _unique_names([re.sub(r"\b(19|20)\d{2}\b", "", query).strip(), original_title,
                                 en_title, *ctx.titles])
 
-    unique_queries: list[str] = []
-    for q in all_queries:
-        if q.lower() not in {u.lower() for u in unique_queries}:
-            unique_queries.append(q)
 
     async def _safe_search(source, q: str) -> list[SearchResult]:
         try:
@@ -222,12 +211,14 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
             return []
 
     # DDL sources get a few cleaned variants (short local title, full local title, English title);
-    # Jackett gets ALL query variants (EN title, stripped diacritics, etc.)
+    # torrent indexers at most two: Prowlarr asks its trackers one query after another (~1.5 s each),
+    # a year in the query only narrows what the plain title finds, the film check sorts the rest out
     ddl = ddl_queries(query, original_title, en_title, local_titles, ctx.year)
+    torrent_queries = torrent_query_list(query, en_title, original_title)
     tasks = [
         _safe_search(source, q)
         for source in sources
-        for q in (unique_queries if source.source_type.value in TORRENT_SOURCES else ddl)
+        for q in (torrent_queries if source.source_type.value in TORRENT_SOURCES else ddl)
     ]
     results_per_task = await asyncio.gather(*tasks)
 
