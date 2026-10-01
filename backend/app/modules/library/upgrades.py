@@ -227,6 +227,20 @@ async def on_scheduler_run(payload: dict) -> None:
         enqueue(ids)
 
 
+async def apply_film_choices(tmdb_ids: list[int]) -> None:
+    """The films' own "when a better one turns up" (version / replace) for a check started by hand."""
+    if not tmdb_ids:
+        return
+    db = await get_db()
+    try:
+        marks = ",".join("?" * len(tmdb_ids))
+        cursor = await db.execute(f"SELECT tmdb_id, on_better FROM library_films WHERE tmdb_id IN ({marks}) "
+                                  "AND watch_upgrades = 1 AND on_better IN ('version', 'replace')", tmdb_ids)
+        _auto_download.update({r[0]: r[1] for r in await cursor.fetchall()})
+    finally:
+        await db.close()
+
+
 async def watched() -> list[dict]:
     """Films watched for a better version: what is owned, the film's settings, the last check."""
     cfg = await get_effective_settings()

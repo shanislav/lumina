@@ -129,3 +129,18 @@ async def test_a_films_own_choice_decides_the_automatic_upgrade(monkeypatch):
     await upgrades.on_scheduler_run({"upgrades": True, "auto_download_upgrades": "version"})
     assert upgrades._auto_download == {1: "version", 2: "replace"}
     upgrades._auto_download.clear()
+
+
+async def test_a_check_by_hand_follows_the_films_choice():
+    import sqlite3
+    from app.core import registry
+    from app.db import DB_PATH, init_db
+    from app.modules.library import upgrades
+    await init_db(registry.discover())
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.executemany("INSERT INTO library_films (tmdb_id, profile_id, watch_upgrades, on_better) VALUES (?, NULL, ?, ?)",
+                         [(1, 1, "replace"), (2, 1, "notify"), (3, 0, "version"), (4, 1, "")])
+    upgrades._auto_download.clear()
+    await upgrades.apply_film_choices([1, 2, 3, 4])
+    assert upgrades._auto_download == {1: "replace"}
+    upgrades._auto_download.clear()

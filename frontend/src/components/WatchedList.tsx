@@ -78,7 +78,8 @@ export default function WatchedList({ profiles }: { profiles: QualityProfile[] }
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-xs text-zinc-500 flex-1">
           Plánovač u těchto filmů hledá verzi lepší než tu, kterou máš, a jen takovou, kterou dovolí profil filmu.
-          Hlídání zapneš v Knihovně v detailu filmu. Co se stane s nalezenou verzí, nastavíš u každého filmu.
+          Hlídání zapneš v Knihovně v detailu filmu. Co se stane s nalezenou verzí („když najde lepší“), platí pro noční
+          plánovač i pro „Zkontrolovat“.
         </p>
         {edit && films.length > 0 && (checking ? (
           <span className="text-sm text-violet-300 animate-pulse">Kontroluji…</span>

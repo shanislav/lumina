@@ -462,7 +462,9 @@ class UpgradeCheckRequest(BaseModel):
 
 @router.post("/upgrades/check", dependencies=[Depends(require("library.edit"))])
 async def check_upgrades(body: UpgradeCheckRequest):
-    """Look for better versions of these movies in the background (one by one, politely)."""
+    """Look for better versions of these movies in the background (one by one, politely). A film whose
+    own choice is to download a better version gets it right away, as in the nightly run."""
+    await upgrades.apply_film_choices(body.tmdb_ids)
     return upgrades.enqueue(body.tmdb_ids)
 
 
