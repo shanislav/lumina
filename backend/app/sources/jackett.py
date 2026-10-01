@@ -30,7 +30,7 @@ class JackettSource(BaseSource):
             )
         return results
 
-    async def get_download_info(self, ident: str) -> dict:
+    async def get_download_info(self, ident: str, name: str = "") -> dict:
         raise NotImplementedError(
             "Jackett downloads use magnet_url from the search result"
         )

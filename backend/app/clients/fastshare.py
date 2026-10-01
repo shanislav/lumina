@@ -200,7 +200,7 @@ class FastShareClient:
         filename = item.get("filename", "unknown")
         return str(abs(hash(filename)) % 10**10)
 
-    async def get_download_url(self, file_id: str) -> str:
+    async def get_download_url(self, file_id: str, name: str = "") -> str:
         """Get download URL for a file.
 
         For premium: uses cached URL from search results.
@@ -213,6 +213,15 @@ class FastShareClient:
         if cached:
             logger.info("FastShare: download URL from cache for %s", file_id)
             return cached
+
+        # the link comes only with search results: search for the file again by its name
+        if name:
+            query = re.sub(r"[._\-\[\]()]+", " ", name.rsplit(".", 1)[0]).strip()
+            await self.search(query, limit=50)
+            cached = self._download_cache.get(file_id)
+            if cached:
+                logger.info("FastShare: download URL for %s found again by its name", file_id)
+                return cached
 
         # If not cached, we can't easily get it from the KODI API
         # (no file_info endpoint). Fall back to constructing a URL

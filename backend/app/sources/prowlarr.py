@@ -28,7 +28,7 @@ class ProwlarrSource(BaseSource):
     async def get_details(self, ident: str, name: str) -> dict | None:
         return await self._client.details(self._info_urls.get(ident, ""))
 
-    async def get_download_info(self, ident: str) -> dict:
+    async def get_download_info(self, ident: str, name: str = "") -> dict:
         raise NotImplementedError("Prowlarr downloads use the link from the search result")
 
     async def test_connection(self) -> bool:

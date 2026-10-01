@@ -197,7 +197,7 @@ async def request_download(tmdb_id: int, mode: str, requested_by: str = "upgrade
         "file_ident": best["ident"], "source": best.get("source"), "source_id": best.get("source_id") or 0,
         "magnet_url": best.get("magnet_url"), "tmdb_id": tmdb_id, "title": owned["title"],
         "year": int((owned["year"] or "0")[:4] or 0), "content_type": "movie", "library_action": action,
-        "requested_by": requested_by,
+        "requested_by": requested_by, "file_name": best.get("name") or "",
     })
     if payload.get("started"):
         db = await get_db()

@@ -128,3 +128,6 @@ async def drain() -> int:
             logger.info("Download queue: started %s", title)
         except Exception as e:  # a dead link must not block the rest
             logger.warning("Download queue: %s could not start: %s", title, e)
+            from app.core import events
+            if first["request"].get("tmdb_id"):
+                await events.emit("download.cancelled", {"tmdb_ids": [first["request"]["tmdb_id"]], "stop_all": False})

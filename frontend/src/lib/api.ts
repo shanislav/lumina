@@ -291,6 +291,7 @@ export async function startDownload(
       magnet_url: file.magnet_url,
       content_type: contentType,
       library_action: libraryAction,
+      file_name: file.name,
     }),
   });
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);

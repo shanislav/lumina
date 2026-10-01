@@ -98,6 +98,9 @@ class DownloadRequest(BaseModel):
     # What to do with an already owned movie once the download finishes:
     # {"mode": "replace", "file_id": <library file id>} or {"mode": "version"}
     library_action: dict | None = None
+    # the file's name at the source — FastShare finds its download link again by it (after a restart,
+    # or when a download waited in the queue)
+    file_name: str | None = ""
 
 
 # --- Source CRUD models ---

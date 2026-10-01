@@ -25,7 +25,7 @@ class WebShareSource(BaseSource):
             for f in files
         ]
 
-    async def get_download_info(self, ident: str) -> dict:
+    async def get_download_info(self, ident: str, name: str = "") -> dict:
         url = await self._client.get_download_link(ident)
         return {"url": url}
 

@@ -62,7 +62,7 @@ async def start_download(req: DownloadRequest, requested_by: str = "", queued: b
     source_label = SOURCE_LABELS.get(req.source, req.source)
 
     if source and source.download_backend == DownloadBackend.ARIA2:
-        download_info = await source.get_download_info(req.file_ident)
+        download_info = await source.get_download_info(req.file_ident, req.file_name or "")
         aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
         try:
             gid = await aria2.add_uri(

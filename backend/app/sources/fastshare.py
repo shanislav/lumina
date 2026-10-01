@@ -38,8 +38,8 @@ class FastShareSource(BaseSource):
             for f in files
         ]
 
-    async def get_download_info(self, ident: str) -> dict:
-        url = await self._client.get_download_url(ident)
+    async def get_download_info(self, ident: str, name: str = "") -> dict:
+        url = await self._client.get_download_url(ident, name)
         return {
             "url": url,
             "headers": {"Cookie": self._client.auth_cookie},

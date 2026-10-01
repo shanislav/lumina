@@ -49,7 +49,7 @@ class BaseSource(ABC):
     async def search(self, query: str, limit: int = 30) -> list[SearchResult]: ...
 
     @abstractmethod
-    async def get_download_info(self, ident: str) -> dict:
+    async def get_download_info(self, ident: str, name: str = "") -> dict:
         """Return backend-specific download info.
 
         For Aria2 sources: {"url": "https://..."}
