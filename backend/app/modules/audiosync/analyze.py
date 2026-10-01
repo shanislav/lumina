@@ -396,7 +396,8 @@ def _agreement(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.convolve(v, np.ones(k) / k, mode="same")
 
 
-def cut_point(c1: np.ndarray, c2: np.ndarray, gap: int, guard: int) -> int:
+def cut_point(c1: np.ndarray, c2: np.ndarray, gap: int, guard: int, lo: int | None = None,
+              hi: int | None = None) -> int:
     """Frame t of the cut: o1 fits before t, o2 from t + gap (gap = frames the other version lacks,
     0 when it has extra material instead). Each curve is measured against half of its typical level
     (read at the ends, where the windows are known to fit); both curves decide together."""
@@ -406,7 +407,8 @@ def cut_point(c1: np.ndarray, c2: np.ndarray, gap: int, guard: int) -> int:
     l2 = max(float(np.mean(c2[-guard:])), 1e-3)
     pre = np.concatenate([[0.0], np.cumsum(c1 - l1 / 2)])                # pre[t] = frames before t
     suf = np.concatenate([np.cumsum((c2 - l2 / 2)[::-1])[::-1], [0.0]])  # suf[t] = frames from t
-    lo, hi = guard, n - guard - gap
+    lo = guard if lo is None else max(0, lo)
+    hi = n - guard - gap if hi is None else min(n - gap, hi)
     if hi < lo:
         return max(0, (n - gap) // 2)
     t = np.arange(lo, hi + 1)
@@ -433,29 +435,42 @@ def find_cut(ref_path: str, ref_track: int, other_path: str, other_track: int, s
             s1 = max(s1, float(at))
         elif abs(w.offset - o2) <= SAME_OFFSET_S:
             s2 = min(s2, float(at))
-    # 2) short windows narrow it down: the last one that still fits o1, the first that fits o2
-    last_o1, first_o2 = s1, s2 + WINDOW_S - FINE_WINDOW_S
+    # 2) short windows: the last one that still fits o1, the first one that fits o2
+    fine_o1: float | None = None
+    fine_o2: float | None = None
     for at in np.arange(s1, s2 + WINDOW_S - FINE_WINDOW_S + 0.01, FINE_STEP_S):
         w = _measure(ref_path, ref_track, other_path, other_track, float(at), speed, (o1 + o2) / 2, margin,
                      window=FINE_WINDOW_S)
         if not w.good:
             continue
         if abs(w.offset - o1) <= SAME_OFFSET_S:
-            last_o1 = max(last_o1, float(at))
+            fine_o1 = float(at) if fine_o1 is None else max(fine_o1, float(at))
         elif abs(w.offset - o2) <= SAME_OFFSET_S:
-            first_o2 = min(first_o2, float(at))
-    if first_o2 + FINE_WINDOW_S <= last_o1:      # contradicting short windows — keep the coarse bounds
-        last_o1, first_o2 = s1, s2 + WINDOW_S - FINE_WINDOW_S
-    # 3) the exact point from the per-frame agreement over that short stretch
+            fine_o2 = float(at) if fine_o2 is None else min(fine_o2, float(at))
+    if fine_o1 is not None and fine_o2 is not None and fine_o2 + FINE_WINDOW_S <= fine_o1:
+        fine_o1 = fine_o2 = None                 # contradicting short windows — trust the long ones
+    # where the o1 side may end: a window that fits o1 lies mostly before the cut, one that fits o2
+    # mostly after it (a long window still fits with ~half of it on the other side, a short one less)
     gap_s = max(0.0, (o1 - o2) / speed)
-    a, b = last_o1, max(first_o2 + FINE_WINDOW_S, last_o1 + FINE_WINDOW_S + gap_s + 1)
+    earliest = s1 + 0.4 * WINDOW_S
+    latest = s2 + 0.6 * WINDOW_S - gap_s
+    if fine_o1 is not None:
+        earliest = max(earliest, fine_o1 + 0.75 * FINE_WINDOW_S)
+    if fine_o2 is not None:
+        latest = min(latest, fine_o2 + 0.25 * FINE_WINDOW_S - gap_s)
+    if latest < earliest:
+        earliest = latest = (earliest + latest) / 2
+    # 3) the point from the per-frame agreement of both sides within those bounds
+    a = max(0.0, earliest - FINE_WINDOW_S / 2)
+    b = latest + gap_s + FINE_WINDOW_S / 2
     ref = onsets(extract(ref_path, ref_track, a, b - a))
     c1 = _agreement(ref, _aligned_other(other_path, other_track, speed, o1, a, b - a))
     c2 = _agreement(ref, _aligned_other(other_path, other_track, speed, o2, a, b - a))
-    t = cut_point(c1, c2, int(round(gap_s * FPS)), int(FINE_WINDOW_S / 2 * FPS))
+    t = cut_point(c1, c2, int(round(gap_s * FPS)), int(FINE_WINDOW_S / 2 * FPS),
+                  int((earliest - a) * FPS), int((latest - a) * FPS))
     t1 = a + t / FPS
-    logger.info("audiosync cut %.2f→%.2f: windows %.0f/%.0f, short windows %.0f/%.0f, cut at %.2f (+%.2f s gap)",
-                o1, o2, s1, s2, last_o1, first_o2, t1, gap_s)
+    logger.info("audiosync cut %.2f→%.2f: long windows %.0f/%.0f, short %s/%s → between %.1f and %.1f, at %.2f (+%.2f s gap)",
+                o1, o2, s1, s2, fine_o1, fine_o2, earliest, latest, t1, gap_s)
     return t1, t1 + gap_s
 
 
