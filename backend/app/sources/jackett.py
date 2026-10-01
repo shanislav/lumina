@@ -16,7 +16,7 @@ class JackettSource(BaseSource):
         torrents = await self._client.search(query, limit)
         results: list[SearchResult] = []
         for t in torrents:
-            ident = hashlib.sha1(t.magnet_url.encode()).hexdigest()[:16]
+            ident = hashlib.sha1((t.guid or t.magnet_url).encode()).hexdigest()[:16]
             results.append(
                 SearchResult(
                     source_id=self.source_id,

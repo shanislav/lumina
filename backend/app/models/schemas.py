@@ -21,6 +21,7 @@ class TorrentResult(BaseModel):
     description: str = ""
     grabs: int | None = None
     published_date: str = ""
+    guid: str = ""   # the torrent's own id at the tracker — the download link differs per search
 
 
 class TMDBMovie(BaseModel):

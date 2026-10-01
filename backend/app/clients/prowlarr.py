@@ -38,7 +38,7 @@ class ProwlarrClient:
                 leechers=int(item.get("leechers") or 0), magnet_url=link, link=item.get("infoUrl") or "",
                 category=", ".join(c.get("name", "") for c in item.get("categories", [])),
                 grabs=item.get("grabs"), published_date=(item.get("publishDate") or "")[:10],
-                description=item.get("indexer") or "",
+                description=item.get("indexer") or "", guid=item.get("guid") or "",
             ))
         return results
 

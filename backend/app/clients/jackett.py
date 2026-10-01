@@ -63,6 +63,7 @@ class JackettClient:
                     description=description,
                     grabs=grabs,
                     published_date=published,
+                    guid=item.get("Guid") or "",
                 )
             )
 

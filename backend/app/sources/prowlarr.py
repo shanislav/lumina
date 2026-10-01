@@ -13,10 +13,12 @@ class ProwlarrSource(BaseSource):
         self._client = ProwlarrClient(config["url"], config["api_key"])
         self._info_urls: dict[str, str] = {}   # ident → the tracker's detail page (for get_details)
 
-    async def search(self, query: str, limit: int = 30) -> list[SearchResult]:
+    async def search(self, query: str, limit: int = 100) -> list[SearchResult]:
+        # all of them: the most seeded ones are often other parts of a series (the film check sorts them out)
         results = []
         for t in await self._client.search(query, limit):
-            ident = hashlib.sha1(t.magnet_url.encode()).hexdigest()[:16]
+            # one torrent = one ident, whichever query found it (the download link differs per search)
+            ident = hashlib.sha1((t.guid or t.magnet_url).encode()).hexdigest()[:16]
             if t.link:
                 self._info_urls[ident] = t.link
             results.append(SearchResult(source_id=self.source_id, source_type=self.source_type, ident=ident,
