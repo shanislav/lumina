@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 from app.clients.plex import PlexClient
 from app.config import get_effective_settings, movies_library_dir
-from app.modules.plex import migration
+from app.modules.plex import friends, migration
 from app.modules.plex.library import PlexError
 from app.modules.plex.paths import section_for, suggest_rule, to_plex
 from app.core.auth import require
@@ -81,3 +81,21 @@ async def migration_finish(body: FinishBody) -> dict:
         return await migration.finish(body.empty_trash, body.repair)
     except PlexError as e:
         _fail(e)
+
+
+# ─── Friends' shared libraries ───
+
+@router.get("/friends/movie", dependencies=[Depends(require("search"))])
+async def friends_movie(tmdb_id: int = 0, imdb_id: str = "") -> list[dict]:
+    """Who of your friends has this film in a library shared with you (last known state)."""
+    return await friends.who_has(tmdb_id or None, imdb_id or None)
+
+
+@router.get("/friends", dependencies=[Depends(require("settings"))])
+async def friends_servers() -> list[dict]:
+    return await friends.servers()
+
+
+@router.post("/friends/refresh", dependencies=[Depends(require("settings"))])
+async def friends_refresh() -> dict:
+    return await friends.refresh()

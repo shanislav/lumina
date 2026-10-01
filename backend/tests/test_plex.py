@@ -300,3 +300,18 @@ async def test_a_removed_movie_folder_scans_the_year_folder(plex, tmp_path, monk
     assert handler._pending == {os.path.normpath(str(root / "2014"))}
     await asyncio.wait_for(handler._task, 30)
     assert FakePlex.scans == [("3", "/share/Video/Movies/2014")]
+
+
+async def test_which_friend_has_a_film(plex):
+    from app.modules.plex import friends
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT INTO plex_friend_servers (id, name, owner, owner_title, movies, last_ok, error) "
+                     "VALUES ('abc', 'chuwi', 'milanle7', 'Milan', 1, '2026-09-18 17:05:00', 'nedostupný')")
+        conn.execute("INSERT INTO plex_friend_movies (server_id, rating_key, tmdb_id, imdb_id, title, year, resolution) "
+                     "VALUES ('abc', '77', 603, 'tt0133093', 'Matrix', 1999, '1080')")
+    has = await friends.who_has(603, None)
+    assert has == [{"owner": "Milan", "server": "chuwi", "resolution": "1080", "online": False,
+                    "seen_at": "2026-09-18 17:05:00",
+                    "url": "https://app.plex.tv/desktop/#!/server/abc/details?key=%2Flibrary%2Fmetadata%2F77"}]
+    assert await friends.who_has(None, "tt0133093") == has
+    assert await friends.who_has(604, None) == []

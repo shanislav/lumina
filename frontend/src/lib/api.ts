@@ -330,6 +330,21 @@ export async function removeDownload(
 
 // --- Source Management ---
 
+export interface FriendCopy {
+  owner: string;
+  server: string;
+  resolution: string;
+  online: boolean;        // the friend's server answered at the last check
+  seen_at: string | null;
+  url: string;            // opens the film in Plex
+}
+
+/** Friends who have the film in a Plex library shared with you ([] when the plex module is off). */
+export async function getFriendCopies(tmdbId: number): Promise<FriendCopy[]> {
+  const res = await apiFetch(`${API_BASE}/api/plex/friends/movie?tmdb_id=${tmdbId}`);
+  return res.ok ? res.json() : [];
+}
+
 export interface MovieInfo {
   genres: string[];
   runtime: number;
