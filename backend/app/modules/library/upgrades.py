@@ -227,6 +227,24 @@ async def on_scheduler_run(payload: dict) -> None:
         enqueue(ids)
 
 
+async def after_import(tmdb_id: int | None) -> None:
+    """A version of a film came into the library (a better one being downloaded, or any other):
+    the last check no longer holds — check again against what is owned now."""
+    if not tmdb_id:
+        return
+    db = await get_db()
+    try:
+        row = await (await db.execute("SELECT status FROM upgrade_checks WHERE tmdb_id = ?", (tmdb_id,))).fetchone()
+        if row:
+            await db.execute("UPDATE upgrade_checks SET status = 'none', note = 'nová verze v knihovně — kontroluji znovu' "
+                             "WHERE tmdb_id = ?", (tmdb_id,))
+            await db.commit()
+    finally:
+        await db.close()
+    if row:
+        enqueue([tmdb_id])
+
+
 async def apply_film_choices(tmdb_ids: list[int]) -> None:
     """The films' own "when a better one turns up" (version / replace) for a check started by hand."""
     if not tmdb_ids:

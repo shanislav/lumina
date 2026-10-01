@@ -279,6 +279,7 @@ async def import_movie(payload: dict) -> None:
     tmdb_id = payload["tmdb_id"]
     db = await get_db()
     client = TMDBClient(cfg.get("tmdb_api_key", ""))
+    imported = None
     try:
         cursor = await db.execute(
             "SELECT * FROM library_movies WHERE tmdb_id = ? AND status IN ('matched', 'manual') ORDER BY id", (tmdb_id,)
@@ -371,6 +372,11 @@ async def import_movie(payload: dict) -> None:
                                old["file_path"], media.get("duration_s"), old.get("duration_s"))
 
         await emit_movie_updated(db, new_id)
+        cursor = await db.execute("SELECT tmdb_id FROM library_movies WHERE id = ?", (new_id,))
+        imported = await cursor.fetchone()
     finally:
         await client.close()
         await db.close()
+    # a better version that was being downloaded is here now: what does the film look like now?
+    from app.modules.library.upgrades import after_import
+    await after_import(imported[0] if imported else None)
