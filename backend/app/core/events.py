@@ -21,6 +21,9 @@ Known events:
     download.request       {file_ident, source, source_id, magnet_url, tmdb_id, title, year, content_type,
                             library_action, requested_by} — start a download (the downloads module does it,
                            sets "started" or "error")
+    download.cancelled     {tmdb_ids: [...], stop_all: bool} — downloads Lumina started were cancelled or taken
+                           out of the queue; stop_all = "Zastavit vše": background checks must not start new
+                           ones (library upgrades, wanted stop their jobs)
     scheduler.run          {wanted, upgrades, auto_download_wanted, auto_download_upgrades} — the nightly
                            run; wanted / library enqueue their checks
 """

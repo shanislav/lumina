@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
-import { DownloadItem, getDownloads, removeDownload, formatSize } from "@/lib/api";
+import { DownloadItem, getDownloads, removeDownload, formatSize, startQueuedNow, stopAllDownloads } from "@/lib/api";
 
 function speedText(bytesPerSec: number): string {
   if (bytesPerSec < 1024) return `${bytesPerSec} B/s`;
@@ -67,6 +67,15 @@ export default function DownloadPanel() {
   const activeCount = downloads.filter((d) => isActive(d.status) && d.status !== "queued").length;
   const queuedCount = downloads.filter((d) => d.status === "queued").length;
 
+  async function stopAll(cancelRunning: boolean) {
+    const q = cancelRunning
+      ? `Zrušit ${activeCount} běžících stahování (rozstažené soubory se smažou), vyprázdnit frontu (${queuedCount}) a zastavit hledání lepších verzí?`
+      : `Vyprázdnit frontu (${queuedCount}) a zastavit hledání lepších verzí? Běžící stahování doběhnou.`;
+    if (!confirm(q)) return;
+    await stopAllDownloads(cancelRunning).catch(() => {});
+    refresh();
+  }
+
   // Don't show at all if no downloads ever
   if (!loading && downloads.length === 0) return null;
 
@@ -109,6 +118,20 @@ export default function DownloadPanel() {
       {/* Download list */}
       {expanded && (
         <div className="border border-t-0 border-zinc-800 rounded-b-lg divide-y divide-zinc-800/50 bg-zinc-950/50">
+          {(queuedCount > 0 || activeCount > 0) && (
+            <div className="flex flex-wrap items-center justify-end gap-3 px-4 py-1.5 text-xs">
+              {queuedCount > 0 && (
+                <button onClick={() => stopAll(false)} className="text-zinc-400 hover:text-zinc-200"
+                  title="Vyprázdní frontu a zastaví hledání lepších verzí / Chci; běžící stahování doběhnou">
+                  Vyprázdnit frontu
+                </button>
+              )}
+              <button onClick={() => stopAll(true)} className="text-red-400/80 hover:text-red-300"
+                title="Zruší i běžící stahování Lumina">
+                Zastavit vše
+              </button>
+            </div>
+          )}
           {loading && downloads.length === 0 && (
             <div className="px-4 py-3 text-sm text-zinc-500 animate-pulse">Loading...</div>
           )}
@@ -159,6 +182,15 @@ export default function DownloadPanel() {
                     <span className="text-xs text-zinc-500 uppercase">
                       {dl.backend === "qbittorrent" ? "Torrent" : "DDL"}
                     </span>
+                  )}
+                  {queued && dl.queue_id && (
+                    <button onClick={async () => {
+                        try { await startQueuedNow(dl.queue_id!); } catch (e) { alert(e instanceof Error ? e.message : "Chyba"); }
+                        refresh();
+                      }}
+                      className="text-xs text-violet-300 hover:text-violet-200" title="Přeskočit frontu — spustit hned">
+                      ▶ hned
+                    </button>
                   )}
                   {(dl.gid || dl.hash || dl.queue_id) && (
                     <button

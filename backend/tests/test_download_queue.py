@@ -120,3 +120,28 @@ async def test_the_preferred_version_is_never_replaced(monkeypatch):
     assert await upgrades.request_download(10, "replace")
     assert await upgrades.request_download(20, "replace")
     assert asked == [{"mode": "version"}, {"mode": "replace", "file_id": 2}]
+
+
+async def test_stop_all_empties_the_queue_and_stops_the_upgrade_job(monkeypatch):
+    import importlib
+    from app.core import events
+    from app.modules.downloads import queue
+    from app.modules.library import upgrades
+    router = importlib.import_module("app.modules.downloads.router")
+
+    await _setup("1")
+    for module in registry.discover():
+        for sub in module.subscriptions:
+            events.subscribe(sub.event, sub.handler, sub.priority, module.name)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT INTO upgrade_checks (tmdb_id, status) VALUES (7, 'downloading')")
+    await queue.add({"title": "A", "tmdb_id": 7}, "")
+    await queue.add({"title": "B", "tmdb_id": 8}, "")
+    monkeypatch.setattr(upgrades, "_queue", [1, 2, 3])
+    monkeypatch.setattr(upgrades, "_auto_download", {1: "replace"})
+
+    out = await router.stop_all(router.StopAll())
+    assert out == {"dropped": 2, "cancelled": 0}
+    assert await queue.pending() == 0
+    assert upgrades._queue == [] and upgrades._auto_download == {}
+    assert (await upgrades.results())["7"]["status"] == "better"

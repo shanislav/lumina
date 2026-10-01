@@ -338,6 +338,21 @@ export async function removeDownload(
   await apiFetch(`${API_BASE}/api/download/${identifier}${qs}`, { method: "DELETE" });
 }
 
+/** "Zastavit vše": empty the queue, stop background checks; cancelRunning also cancels running downloads. */
+export async function stopAllDownloads(cancelRunning: boolean): Promise<{ dropped: number; cancelled: number }> {
+  const res = await apiFetch(`${API_BASE}/api/downloads/stop-all`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cancel_running: cancelRunning }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Skip the queue: start a waiting download right away. */
+export async function startQueuedNow(queueId: number): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/download/queue/${queueId}/start`, { method: "POST" });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+}
+
 // --- Source Management ---
 
 export interface FriendCopy {

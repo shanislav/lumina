@@ -233,6 +233,24 @@ async def on_scheduler_run(payload: dict) -> None:
         enqueue(ids)
 
 
+async def on_download_cancelled(payload: dict) -> None:
+    """Downloads were cancelled / taken out of the queue: the better version was not downloaded.
+    "Zastavit vše" also stops the running check — it must not start new downloads."""
+    if payload.get("stop_all"):
+        _queue.clear()
+        _auto_download.clear()
+    ids = [t for t in payload.get("tmdb_ids") or [] if t]
+    if not ids:
+        return
+    db = await get_db()
+    try:
+        await db.execute(f"UPDATE upgrade_checks SET status = 'better' WHERE status = 'downloading' "
+                         f"AND tmdb_id IN ({','.join('?' * len(ids))})", ids)
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def after_import(tmdb_id: int | None) -> None:
     """A version of a film came into the library (a better one being downloaded, or any other):
     the last check no longer holds — check again against what is owned now."""

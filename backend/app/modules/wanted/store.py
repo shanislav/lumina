@@ -80,6 +80,23 @@ async def _run() -> None:
         _state.update(running=False, current="")
 
 
+async def on_download_cancelled(payload: dict) -> None:
+    """Downloads cancelled: those films are found but not downloading; "Zastavit vše" stops the check job."""
+    if payload.get("stop_all"):
+        _queue.clear()
+        _auto_download.clear()
+    ids = [t for t in payload.get("tmdb_ids") or [] if t]
+    if not ids:
+        return
+    db = await get_db()
+    try:
+        await db.execute(f"UPDATE wanted SET status = 'found' WHERE status = 'downloading' "
+                         f"AND tmdb_id IN ({','.join('?' * len(ids))})", ids)
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def get(wanted_id: int) -> dict | None:
     db = await get_db()
     try:

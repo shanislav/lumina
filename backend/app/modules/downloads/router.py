@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from app.clients.aria2 import Aria2Client
 from app.clients.qbittorrent import QBittorrentClient
@@ -219,11 +220,15 @@ async def remove_download(
     cfg = await get_effective_settings()
 
     if backend == "queue":
+        from app.core import events
         from app.modules.downloads import queue
         try:
-            return {"ok": await queue.remove(int(identifier))}
+            item = await queue.take(int(identifier))
         except ValueError:
             raise HTTPException(400, "Neplatné id fronty")
+        if item and item["request"].get("tmdb_id"):
+            await events.emit("download.cancelled", {"tmdb_ids": [item["request"]["tmdb_id"]], "stop_all": False})
+        return {"ok": bool(item)}
     if backend == "qbittorrent":
         if not cfg.get("qbittorrent_url"):
             raise HTTPException(503, "qBittorrent is not configured")
@@ -249,6 +254,66 @@ async def remove_download(
                 return {"ok": ok}
         finally:
             await aria2.close()
+
+
+@router.post("/download/queue/{queue_id}/start")
+async def start_queued_now(queue_id: int, user: User = Depends(require("download"))) -> dict:
+    """Skip the queue: start this waiting download right away (over the limit)."""
+    from app.modules.downloads import queue
+    item = await queue.take(queue_id)
+    if not item:
+        raise HTTPException(404, "Ve frontě už není")
+    if (item["request"].get("library_action") or {}).get("mode") == "replace" and not user.can("library.delete"):
+        await queue.add(item["request"], item["requested_by"])
+        raise HTTPException(403, "Nahradit verzi (smaže starou) může jen uživatel s oprávněním mazat v knihovně")
+    return await start_download(DownloadRequest(**item["request"]), requested_by=item["requested_by"], queued=False)
+
+
+class StopAll(BaseModel):
+    cancel_running: bool = False     # also cancel what downloads now (else it finishes)
+
+
+@router.post("/downloads/stop-all", dependencies=[Depends(require("download"))])
+async def stop_all(body: StopAll) -> dict:
+    """"Zastavit vše": empty the queue, stop background checks from adding more, optionally cancel
+    the running downloads Lumina started (their unfinished files are deleted)."""
+    import sqlite3
+
+    from app.core import events
+    from app.db import DB_PATH
+    from app.modules.downloads import queue
+
+    tmdb_ids = [q["request"].get("tmdb_id") for q in await queue.clear()]
+    dropped = len(tmdb_ids)
+    cancelled = 0
+    if body.cancel_running:
+        cfg = await get_effective_settings()
+        with sqlite3.connect(DB_PATH) as conn:
+            running = conn.execute("SELECT id, backend, tmdb_id FROM download_tracker WHERE processed = 0").fetchall()
+        for did, backend, tmdb_id in running:
+            try:
+                if backend == "qbittorrent":
+                    qbt = QBittorrentClient(cfg["qbittorrent_url"], cfg["qbittorrent_username"], cfg["qbittorrent_password"])
+                    try:
+                        await qbt.delete_torrent(did, delete_files=True)
+                    finally:
+                        await qbt.close()
+                else:
+                    aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
+                    try:
+                        await aria2.force_remove(did)
+                        await aria2.remove_result(did)
+                    finally:
+                        await aria2.close()
+            except Exception as e:
+                logger.warning("Stop all: cancelling %s failed: %s", did, e)
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute("UPDATE download_tracker SET processed = 1, status = 'cancelled' WHERE id = ?", (did,))
+            tmdb_ids.append(tmdb_id)
+            cancelled += 1
+    await events.emit("download.cancelled", {"tmdb_ids": [t for t in tmdb_ids if t], "stop_all": True})
+    logger.info("Stop all: %d taken out of the queue, %d running cancelled", dropped, cancelled)
+    return {"dropped": dropped, "cancelled": cancelled}
 
 
 @router.get("/download/{gid}/status")

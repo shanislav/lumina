@@ -9,7 +9,7 @@ so a notification module can pick them up later.
 from app.core.module import Module, Permission, Subscription, TaskSource
 from app.modules.wanted import tasks
 from app.modules.wanted.router import router
-from app.modules.wanted.store import WANTED, on_movie_updated, on_scheduler_run
+from app.modules.wanted.store import WANTED, on_download_cancelled, on_movie_updated, on_scheduler_run
 
 module = Module(
     name="wanted",
@@ -19,6 +19,7 @@ module = Module(
     permissions=[Permission("wanted", "Přidávat a spravovat filmy v Chci", default=True)],
     migrations=[WANTED],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=80),
-                   Subscription("scheduler.run", on_scheduler_run)],
+                   Subscription("scheduler.run", on_scheduler_run),
+                   Subscription("download.cancelled", on_download_cancelled)],
     tasks=[TaskSource(tasks.read, "wanted")],
 )

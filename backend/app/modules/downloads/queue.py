@@ -84,6 +84,26 @@ async def remove(queue_id: int) -> bool:
         await db.close()
 
 
+async def clear() -> list[dict]:
+    """Empty the queue; returns what waited."""
+    waiting = await items()
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM download_queue")
+        await db.commit()
+    finally:
+        await db.close()
+    return waiting
+
+
+async def take(queue_id: int) -> dict | None:
+    """Take one waiting download out of the queue (to start it now)."""
+    item = next((q for q in await items() if q["id"] == queue_id), None)
+    if item:
+        await remove(queue_id)
+    return item
+
+
 async def pending() -> int:
     return (await _counts())[1]
 
