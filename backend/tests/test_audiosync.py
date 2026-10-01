@@ -67,21 +67,25 @@ def test_judge_cut_and_no_match():
     assert judge(bad, 1.0, 7200)[0] == "no_match"
 
 
-def test_tracks_get_telling_names_moved_ones_marked():
+def test_tracks_get_telling_names():
     from app.modules.audiosync.transfer import ref_track_names, track_name
     assert track_name({"language": "cze", "title": "CZ dabing Nova", "channels": 6, "codec": "ac3",
-                       "bitrate": 448000}) == "CZ Nova 5.1 AC3 448 kbps [L]"
-    assert track_name({"language": "slo", "title": "Slovak AC3 2.0 @ 192 kbps", "channels": 2, "codec": "ac3"}) == "SK 2.0 AC3 [L]"
-    # the file's own tracks: a telling name stays, a dull one gets the details
+                       "bitrate": 448000}) == "CZ Nova 5.1 AC3 448 kbps"
+    assert track_name({"language": "slo", "title": "Slovak AC3 2.0 @ 192 kbps", "channels": 2, "codec": "ac3"}) == "SK 2.0 AC3"
+    # the file's own tracks: a title naming codec and channels stays, a poor one gets the details
     assert track_name({"language": "eng", "title": "Eng DTS 6ch 48kHz - 1510 kbps - 24bit", "channels": 6,
                        "codec": "dts"}, moved=False) is None
+    assert track_name({"language": "cze", "title": "DD 5.1 CZ", "channels": 6, "codec": "ac3"}, moved=False) is None
+    assert track_name({"language": "cze", "title": "cze 2.0", "channels": 2, "codec": "ac3", "bitrate": 192000},
+                      moved=False) == "CZ 2.0 AC3 192 kbps"
     assert track_name({"language": "cze", "title": "Stereo", "channels": 2, "codec": "aac", "bitrate": 192000},
                       moved=False) == "CZ 2.0 AAC 192 kbps"
     assert track_name({"language": "eng", "title": "", "channels": 8, "codec": "dts", "profile": "DTS-HD MA"},
                       moved=False) == "EN 7.1 DTS-HD MA"
-    # moved by Lumina before: keeps the mark
-    assert track_name({"language": "slo", "title": "SLO (Lumina sync)", "channels": 2, "codec": "ac3"}, moved=False) == "SK 2.0 AC3 [L]"
-    assert track_name({"language": "cze", "title": "CZ 2.0 [L]", "channels": 2, "codec": "ac3"}, moved=False) == "CZ 2.0 AC3 [L]"
+    # marks of older Lumina versions disappear
+    assert track_name({"language": "slo", "title": "SLO (Lumina sync)", "channels": 2, "codec": "ac3"}, moved=False) == "SK 2.0 AC3"
+    assert track_name({"language": "slo", "title": "SK 2.0 AC3 224 kbps [L]", "channels": 2, "codec": "ac3",
+                       "bitrate": 224000}, moved=False) == "SK 2.0 AC3 224 kbps"
     # an untagged track keeps its name
     assert track_name({"language": "", "title": "Stereo", "channels": 2}, moved=False) is None
     ref = {"audio": [{"index": 0, "language": "", "title": "x", "channels": 6},

@@ -256,25 +256,46 @@ def distinct_tracks(ref_path: str, ref: dict, other_path: str, other: dict, trac
     return keep
 
 
+# a title that names the codec and the channels says enough ("DD 5.1 CZ", "Eng DTS 6ch 48kHz - 1510 kbps")
+_CODEC_WORD = re.compile(r"\b(e-?ac-?3|ac-?3|dd\+?|dts(-hd)?|truehd|atmos|aac|flac|opus|mp3|pcm|lpcm)\b", re.IGNORECASE)
+_CHANNEL_WORD = re.compile(r"\b(\d\.\d|\d\s*ch|stereo|mono)\b", re.IGNORECASE)
+
+
+def telling(title: str) -> bool:
+    return bool(_CODEC_WORD.search(title) and _CHANNEL_WORD.search(title))
+
+
 def track_name(info: dict, moved: bool = True) -> str | None:
-    """A telling name: "CZ Nova 5.1 AC3 448 kbps", "SK 2.0 AC3 224 kbps [L]" (the mark = Lumina moved
-    or fixed the track). A track of the file that already has a telling name ("Eng DTS 6ch 48kHz -
-    1510 kbps - 24bit") keeps it (None); so does one without a language tag."""
-    from app.modules.audiosync.filmmap import MARK, channels_label, codec_label, dub_name
+    """A telling name: "CZ Nova 5.1 AC3 448 kbps" — always for a moved or fixed track (``moved``).
+    A track of the file keeps a telling title ("Eng DTS 6ch 48kHz - 1510 kbps - 24bit") — None;
+    a poor one ("cze 2.0", "Stereo", empty, an old Lumina mark) gets the details. A track without a
+    language tag keeps its name."""
+    from app.modules.audiosync.filmmap import OLD_MARKS, channels_label, codec_label, dub_name
     original = info.get("title") or ""
-    title = re.sub(r"\(lumina sync\)", " ", original, flags=re.IGNORECASE)
-    moved = moved or MARK in title or title != original
+    title = OLD_MARKS.sub(" ", original).strip()
     lang = engine.lang_code(info.get("language", ""))
-    if not moved and (not lang or re.search(r"\d", original)):
+    if not moved and (not lang or (telling(title) and title == original)):
         return None
     kbps = round((info.get("bitrate") or 0) / 1000)
     parts = (dub_name(lang, title) if lang else "?", channels_label(info.get("channels")),
-             codec_label(info.get("codec"), info.get("profile")), f"{kbps} kbps" if kbps else "", MARK if moved else "")
+             codec_label(info.get("codec"), info.get("profile")), f"{kbps} kbps" if kbps else "")
     return " ".join(x for x in parts if x)
 
 
+def rename_tracks(path: str, names: dict[int, str]) -> None:
+    """Names chosen by the user, written into the header in place (``names``: audio position → name)."""
+    if not names:
+        return
+    cmd = ["mkvpropedit", path]
+    for pos, name in sorted(names.items()):
+        cmd += ["--edit", f"track:a{pos + 1}", "--set", f"name={name}"]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if out.returncode >= 2:
+        raise TransferError("Přejmenování stop selhalo: " + (out.stdout or out.stderr).strip()[-200:])
+
+
 def ref_track_names(ref: dict) -> dict[int, str]:
-    """The reference's own tracks named the same way (a track moved earlier keeps its mark)."""
+    """New names for the reference's own tracks whose title says too little."""
     return {a["index"]: n for a in ref["audio"] if (n := track_name(a, moved=False))}
 
 

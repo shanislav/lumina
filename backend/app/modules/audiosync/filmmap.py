@@ -51,7 +51,8 @@ _TECH = re.compile(
     re.IGNORECASE)
 
 
-MARK = "[L]"   # a track Lumina moved or fixed
+# marks older Lumina versions put into names of moved tracks — dropped from names now
+OLD_MARKS = re.compile(r"\[L\]|\(lumina sync\)", re.IGNORECASE)
 
 
 _CODEC_NAME = {"ac3": "AC3", "eac3": "EAC3", "dts": "DTS", "truehd": "TrueHD", "aac": "AAC", "flac": "FLAC",
@@ -73,7 +74,7 @@ def channels_label(channels: int | None) -> str:
 
 def dub_name(lang: str, title: str) -> str:
     """"CZ" or "CZ Nova" — the language plus whatever in the title is not codec/channels/language."""
-    rest = _TECH.sub(" ", (title or "").replace(MARK, " "))
+    rest = _TECH.sub(" ", OLD_MARKS.sub(" ", title or ""))
     rest = re.sub(r"[\s\-_,.;:/|()\[\]]+", " ", rest).strip()
     code = {"cs": "CZ"}.get(lang, (lang or "?").upper())
     return f"{code} {rest}" if len(rest) >= 2 else code

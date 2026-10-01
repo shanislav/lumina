@@ -68,6 +68,7 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
   const [done, setDone] = useState("");
   const [confirm, setConfirm] = useState<"replace" | "version" | null>(null);
   const [defaultKey, setDefaultKey] = useState<string | null>(null);
+  const [names, setNames] = useState<Record<string, string>>({});   // the user's own track names
   const [plan, setPlan] = useState<{ tracks: PlannedTrack[]; reference_dropped: boolean } | null>(null);
   const [planError, setPlanError] = useState("");
 
@@ -112,6 +113,7 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
             setDone((j.imported ? "✓ Hotovo — soubor je v knihovně." : `Hotovo, ale knihovna soubor nepřevzala (${j.path ?? ""}).`) + added);
             setAdd({});
             setDefaultKey(null);
+            setNames({});
             setFix([]);
             setDrop([]);
             setClip(null);
@@ -170,7 +172,8 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
   const edits = useMemo(() => ({
     picks: Object.values(add).filter((m): m is FilmMapMember => !!m).map((m) => ({ version_id: m.version_id, track: m.track })),
     fixTracks: fix, dropTracks: drop, defaultKey,
-  }), [add, fix, drop, defaultKey]);
+    names: Object.fromEntries(Object.entries(names).filter(([, v]) => v.trim())),
+  }), [add, fix, drop, defaultKey, names]);
   useEffect(() => {
     if (!mapOk || !map) { setPlan(null); return; }
     let alive = true;
@@ -254,7 +257,8 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
   const picks = Object.values(add).filter((m): m is FilmMapMember => !!m);
   const currentDefault = targetAudio.find((a) => a.default);
   const defaultChanged = !!defaultKey && defaultKey !== (currentDefault ? `t:${currentDefault.index}` : null);
-  const anyChange = picks.length > 0 || fix.length > 0 || drop.length > 0 || defaultChanged;
+  const renamedByUser = Object.values(names).filter((v) => v.trim()).length;
+  const anyChange = picks.length > 0 || fix.length > 0 || drop.length > 0 || defaultChanged || renamedByUser > 0;
   const otherDubs = mapOk ? map!.dubs.filter((d) => !d.members.some((m) => m.version_id === target)) : [];
   const versionName = (id: number) => {
     const v = versions.find((x) => x.id === id);
@@ -274,7 +278,7 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-zinc-400 text-xs">Verze (obraz, který chceš nechat):</span>
           <select value={target ?? ""} disabled={running}
-            onChange={(e) => { setTarget(Number(e.target.value)); setAdd({}); setFix([]); setDrop([]); setDefaultKey(null); setClip(null); }}
+            onChange={(e) => { setTarget(Number(e.target.value)); setAdd({}); setFix([]); setDrop([]); setDefaultKey(null); setNames({}); setClip(null); }}
             className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200 max-w-full">
             {versions.map((v) => <option key={v.id} value={v.id}>{versionName(v.id)}</option>)}
           </select>
@@ -506,8 +510,18 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
                 {plan.tracks.map((p, i) => (
                   <tr key={p.key} className="border-b border-zinc-800/50">
                     <td className="py-1 pr-2 text-zinc-500">{i + 1}</td>
-                    <td className={`py-1 pr-3 ${p.origin === "keep" && !p.renamed ? "text-zinc-300" : "text-zinc-100"}`}>
-                      {p.name || <span className="text-zinc-600">(bez názvu)</span>}
+                    <td className="py-1 pr-3">
+                      <div className="flex items-center gap-1">
+                        <input value={names[p.key] ?? p.name} placeholder="(bez názvu)" maxLength={120}
+                          title="Název stopy v souboru — můžeš ho přepsat"
+                          onChange={(e) => setNames({ ...names, [p.key]: e.target.value })}
+                          className={`w-full min-w-[10rem] rounded border bg-zinc-900 px-1.5 py-0.5 ${
+                            p.custom ? "border-violet-700 text-violet-100" : "border-zinc-800 text-zinc-100"}`} />
+                        {names[p.key] !== undefined && (
+                          <button title="Vrátit automatický název" className="text-zinc-500 hover:text-zinc-300"
+                            onClick={() => { const n = { ...names }; delete n[p.key]; setNames(n); }}>↺</button>
+                        )}
+                      </div>
                     </td>
                     <td className="py-1 pr-3 text-zinc-400 whitespace-nowrap">
                       {lang(p.language)} {channels(p.channels)} {(p.codec || "?").toUpperCase()}{p.bitrate ? ` ${Math.round(p.bitrate / 1000)} kbps` : ""}
@@ -529,7 +543,7 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
           {anyChange ? (
             <p className="text-zinc-300">
               {[picks.length && `přidat ${picks.length}`, fix.length && `opravit ${fix.length}`, drop.length && `odebrat ${drop.length}`,
-                defaultChanged && "změnit výchozí stopu"].filter(Boolean).join(" · ")}.
+                defaultChanged && "změnit výchozí stopu", renamedByUser && `přejmenovat ${renamedByUser}`].filter(Boolean).join(" · ")}.
               Nové a opravené stopy se před použitím zkontrolují proti referenci.
             </p>
           ) : <p className="text-zinc-500">Zatím beze změn — přidej, oprav nebo odeber stopy výš, nebo zvol jinou výchozí stopu.</p>}

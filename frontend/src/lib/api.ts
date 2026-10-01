@@ -1166,6 +1166,7 @@ export interface PlannedTrack {
   track: number;
   name: string;
   renamed: boolean;
+  custom: boolean;
   from: string | null;
   reencoded: boolean;
   default: boolean;
@@ -1179,9 +1180,10 @@ export interface FilmMapEdit {
   fixTracks: number[];
   dropTracks: number[];
   defaultKey: string | null;
+  names: Record<string, string>;
 }
 const editBody = (mapId: number, e: FilmMapEdit) =>
-  ({ map_id: mapId, picks: e.picks, fix_tracks: e.fixTracks, drop_tracks: e.dropTracks, default_key: e.defaultKey });
+  ({ map_id: mapId, picks: e.picks, fix_tracks: e.fixTracks, drop_tracks: e.dropTracks, default_key: e.defaultKey, names: e.names });
 /** How the result would look: order, names written into the file, origin, default track. */
 export const planFilmMap = (mapId: number, e: FilmMapEdit) =>
   audioSyncCall<{ tracks: PlannedTrack[]; default: string; reference_dropped: boolean }>("/map/plan", jsonBody("POST", editBody(mapId, e)));

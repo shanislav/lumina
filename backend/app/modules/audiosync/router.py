@@ -520,6 +520,7 @@ class ApplyBody(BaseModel):
     fix_tracks: list[int] = []     # target tracks to replace by their copy moved onto the reference
     drop_tracks: list[int] = []    # target tracks to leave out
     default_key: str | None = None  # the default audio track of the result (a key from the plan)
+    names: dict[str, str] = {}      # the user's own track names (key from the plan → name)
     mode: str = "replace"          # replace the target | keep it and add a new version
 
 
@@ -609,6 +610,10 @@ async def _layout(body: ApplyBody, fmap: dict, target: dict, sources: dict) -> d
     final = [x for x in build if not (drop_ref and x["key"] == f"t:{ref_track}")]
     if not final:
         raise HTTPException(400, "Aspoň jedna zvuková stopa musí zůstat")
+    for x in build:
+        name = re.sub(r"[\x00-\x1f]", "", body.names.get(x["key"]) or "").strip()[:120]
+        if name and name != x["name"]:
+            x.update(name=name, custom=True)
     keys = [x["key"] for x in final]
     # unless chosen: a new track (what the edit is for), else the file's own default if it stays
     current = next((f"t:{a['index']}" for a in tinfo["audio"] if a.get("default")), None)
@@ -630,7 +635,7 @@ async def plan_map(body: ApplyBody) -> dict:
     target = await _file(fmap["target_id"])
     lay = await _layout(body, fmap, target, _sources(body, fmap, target))
     return {"tracks": [{"key": x["key"], "origin": x["origin"], "track": x["track"], "name": x["name"],
-                        "renamed": x.get("renamed", False), "from": x.get("from"), "reencoded": x.get("reencoded", False),
+                        "renamed": x.get("renamed", False), "custom": x.get("custom", False), "from": x.get("from"), "reencoded": x.get("reencoded", False),
                         "default": x["default"], "language": x["info"].get("language"), "codec": x["info"].get("codec"),
                         "channels": x["info"].get("channels"), "bitrate": x["info"].get("bitrate")}
                        for x in lay["final"]],
@@ -649,7 +654,7 @@ async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync")))
     fmap = await _load_map(body.map_id)
     target = await _file(fmap["target_id"])
     sources = _sources(body, fmap, target)
-    if not sources and not body.drop_tracks and not body.default_key:
+    if not sources and not body.drop_tracks and not body.default_key and not body.names:
         raise HTTPException(400, "Nic k přidání, opravě ani odebrání")
     lay = await _layout(body, fmap, target, sources)
     downloads = await _work_dir(target)
@@ -691,6 +696,9 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, l
                 out_name = Path(target["filename"]).stem + " [tracks].mkv"
                 out = await asyncio.to_thread(muxer.strip, target["file_path"], keep, workdir, out_name, progress,
                                               lay["final_default"])
+            # the user's own names, written into the finished file's header
+            await asyncio.to_thread(muxer.rename_tracks, out,
+                                    {pos: x["name"] for pos, x in enumerate(lay["final"]) if x.get("custom")})
             _job.update(report=report)
             payload = await _hand_over(out, downloads / out_name, target, body.mode, f"map-{target['id']}", progress)
             if body.mode == "replace" and payload.get("imported"):
