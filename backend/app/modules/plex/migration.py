@@ -153,7 +153,7 @@ async def _check_job() -> None:
 async def _wait_for_scan(client, key: str) -> None:
     began, seen = time.monotonic(), False
     while time.monotonic() - began < SCAN_MAX_S:
-        await asyncio.sleep(2)
+        await asyncio.sleep(0.5)
         section = next((s for s in await client.sections() if s["key"] == key), None)
         if section and section["refreshing"]:
             seen = True
@@ -251,8 +251,11 @@ async def finish(empty_trash: bool, repair: bool) -> dict:
     repaired = 0
     try:
         if repair:
-            for r in (current["report"] or {}).get("readded", []):
-                if r["watched"]:
+            readded = (current["report"] or {}).get("readded", [])
+            # Plex often brings the watched state back itself (by the film's id) — mark only what it did not
+            viewed = {m["rating_key"]: m["view_count"] for m in await movies(client, current["section_key"])} if readded else {}
+            for r in readded:
+                if r["watched"] and not viewed.get(r["new_key"]):
                     await client.mark_watched(r["new_key"])
                 if r["added_at"]:
                     await client.set_added_at(current["section_key"], r["new_key"], r["added_at"])

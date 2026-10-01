@@ -207,6 +207,15 @@ async def test_a_movie_plex_added_anew_is_reported_and_repaired(server):
     assert ("watched", "9") in FakeServer.calls and ("added", "9", 777) in FakeServer.calls
 
 
+async def test_repair_leaves_the_watched_state_plex_brought_back(server):
+    migration = server
+    await migration.start()
+    FakeServer.after_scan = [FakeServer.items_now[0], meta("9", 22, ["/share/Video/Movies/2000/B2/b.mkv"], viewed=1)]
+    await migration.check()
+    await migration.finish(empty_trash=True, repair=True)
+    assert not any(c[0] == "watched" for c in FakeServer.calls) and ("added", "9", 777) in FakeServer.calls
+
+
 async def test_cancel_deletes_nothing(server):
     migration = server
     await migration.start()
