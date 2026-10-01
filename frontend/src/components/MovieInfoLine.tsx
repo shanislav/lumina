@@ -14,17 +14,19 @@ export function FriendCopies({ movie }: { movie: TMDBMovie }) {
   }, [movie]);
   if (!friends.length) return null;
   return (
-    <div className="rounded-lg border border-amber-900/70 bg-amber-950/20 px-4 py-3 text-sm">
-      <p className="text-amber-300 font-medium">👥 Mají ho i kamarádi v Plexu</p>
-      {friends.map((f) => (
-        <p key={f.url} className="text-amber-200/80 text-xs mt-1">
-          {f.owner}{f.resolution && ` · ${res(f.resolution)}`}
-          <span className="text-zinc-500 ml-2">
-            server {f.server}{!f.online && ` · teď nedostupný (naposledy ${f.seen_at ?? "?"})`}
+    <p className="text-xs text-zinc-500">
+      👥 Má i{" "}
+      {friends.map((f, k) => (
+        <span key={f.url} title={`server ${f.server}${f.online ? "" : ` — teď nedostupný (naposledy ${f.seen_at ?? "?"})`}`}
+          className={f.online ? "text-zinc-300" : "text-zinc-500"}>
+          {k > 0 && ", "}{f.owner}
+          <span className="text-zinc-500">
+            {[res(f.resolution), f.audio.map((l) => l.toUpperCase()).join("+")].filter(Boolean).length > 0 &&
+              ` (${[res(f.resolution), f.audio.map((l) => l.toUpperCase()).join("+")].filter(Boolean).join(" · ")}${f.online ? "" : ", offline"})`}
           </span>
-        </p>
+        </span>
       ))}
-    </div>
+    </p>
   );
 }
 

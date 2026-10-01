@@ -279,6 +279,7 @@ function HomeContent() {
             )}
           </div>
           <MovieInfoLine movie={selectedMovie} />
+          <FriendCopies movie={selectedMovie} />
           {(selectedMovie.overview || selectedMovie.poster_url) && (
             <div className="flex gap-3 text-sm text-zinc-400">
               {selectedMovie.poster_url && (
@@ -307,7 +308,6 @@ function HomeContent() {
               ))}
             </div>
           )}
-          <FriendCopies movie={selectedMovie} />
           {!resultsCollapsed && (
             <FileTable
             owned={selectedOwned}

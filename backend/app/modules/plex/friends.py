@@ -3,12 +3,14 @@ download it. Lumina keeps the last known list of every shared server (a friend's
 on) and refreshes it every few hours; nothing goes into Lumina's own library."""
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from urllib.parse import quote
 
 import httpx
 
+from app.core.mediainfo import normalize_language
 from app.db import get_automation, get_db
 from app.modules.plex.library import movie
 
@@ -69,7 +71,7 @@ async def _shared_servers(http: httpx.AsyncClient, token: str) -> list[dict]:
             for s in resp.json() if "server" in (s.get("provides") or "") and not s.get("owned")]
 
 
-async def _movies_of(http: httpx.AsyncClient, server: dict) -> list[dict]:
+async def _movies_of(http: httpx.AsyncClient, server: dict) -> tuple[str, list[dict]]:
     """All films of a friend's server — over its public address, else Plex's relay (local addresses are
     the friend's home network)."""
     headers = {**HEADERS, "X-Plex-Token": server["accessToken"]}
@@ -89,7 +91,7 @@ async def _movies_of(http: httpx.AsyncClient, server: dict) -> list[dict]:
                 for m in resp.json()["MediaContainer"].get("Metadata", []):
                     films.append({**movie(m), "resolution": next(
                         (md.get("videoResolution") for md in m.get("Media", []) if md.get("videoResolution")), "")})
-            return films
+            return conn["uri"], films
         except Exception as e:  # noqa: BLE001
             errors.append(f"{type(e).__name__}")
     raise RuntimeError("nedostupný (" + ", ".join(errors or ["žádná veřejná adresa"]) + ")")
@@ -122,7 +124,7 @@ async def refresh() -> dict:
                         "owner_title = excluded.owner_title, last_try = excluded.last_try",
                         (sid, s.get("name"), s.get("sourceTitle"), s["owner_title"], _now()))
                     try:
-                        films = await _movies_of(http, s)
+                        uri, films = await _movies_of(http, s)
                     except Exception as e:  # noqa: BLE001
                         await db.execute("UPDATE plex_friend_servers SET error = ? WHERE id = ?", (str(e), sid))
                         logger.info("Plex friend %s (%s): %s", s.get("name"), s.get("sourceTitle"), e)
@@ -132,8 +134,8 @@ async def refresh() -> dict:
                         "INSERT OR REPLACE INTO plex_friend_movies (server_id, rating_key, tmdb_id, imdb_id, title, year, resolution) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?)",
                         [(sid, f["rating_key"], f["tmdb_id"], f["imdb_id"], f["title"], f["year"], f["resolution"]) for f in films])
-                    await db.execute("UPDATE plex_friend_servers SET movies = ?, last_ok = ?, error = NULL WHERE id = ?",
-                                     (len(films), _now(), sid))
+                    await db.execute("UPDATE plex_friend_servers SET movies = ?, last_ok = ?, error = NULL, uri = ?, "
+                                     "token = ? WHERE id = ?", (len(films), _now(), uri, s["accessToken"], sid))
                     ok += 1
                     logger.info("Plex friend %s (%s): %d films", s.get("name"), s.get("sourceTitle"), len(films))
                 await db.commit()
@@ -151,18 +153,49 @@ async def who_has(tmdb_id: int | None, imdb_id: str | None) -> list[dict]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT m.*, s.name AS server, s.owner, s.owner_title, s.last_ok, s.error FROM plex_friend_movies m "
+            "SELECT m.*, s.name AS server, s.owner, s.owner_title, s.last_ok, s.error, s.uri, s.token FROM plex_friend_movies m "
             "JOIN plex_friend_servers s ON s.id = m.server_id WHERE m.tmdb_id = ? OR (? != '' AND m.imdb_id = ?)",
             (tmdb_id or -1, imdb_id or "", imdb_id or ""))
         rows = [dict(r) for r in await cursor.fetchall()]
+        # audio languages are not in the film list — read once from the film's detail, while the server is on
+        for r in rows:
+            if r["audio"] is None and not r["error"] and r["uri"] and r["token"]:
+                langs = await _audio_of(r)
+                if langs is not None:
+                    r["audio"] = json.dumps(langs)
+                    await db.execute("UPDATE plex_friend_movies SET audio = ? WHERE server_id = ? AND rating_key = ?",
+                                     (r["audio"], r["server_id"], r["rating_key"]))
+        await db.commit()
     finally:
         await db.close()
     return [{
         "owner": r["owner_title"] or r["owner"], "server": r["server"], "resolution": r["resolution"],
+        "audio": json.loads(r["audio"]) if r["audio"] else [],
         "online": not r["error"], "seen_at": r["last_ok"],
         "url": f"https://app.plex.tv/desktop/#!/server/{r['server_id']}/details?key="
                + quote(f"/library/metadata/{r['rating_key']}", safe=""),
     } for r in rows]
+
+
+async def _audio_of(row: dict) -> list[str] | None:
+    """Audio languages of a film on a friend's server (ISO 639-1, in track order); None = not reachable."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            resp = await http.get(f"{row['uri']}/library/metadata/{row['rating_key']}",
+                                  headers={**HEADERS, "X-Plex-Token": row["token"]})
+            resp.raise_for_status()
+        meta = resp.json()["MediaContainer"]["Metadata"][0]
+    except Exception as e:  # noqa: BLE001
+        logger.info("Plex friend %s: film %s not read: %s", row.get("server"), row["rating_key"], e)
+        return None
+    langs: list[str] = []
+    for media in meta.get("Media", [])[:1]:
+        for part in media.get("Part", []):
+            for st in part.get("Stream", []):
+                lang = normalize_language(st.get("languageTag") or st.get("languageCode") or st.get("language"))
+                if st.get("streamType") == 2 and lang and lang not in langs:
+                    langs.append(lang)
+    return langs
 
 
 async def servers() -> list[dict]:

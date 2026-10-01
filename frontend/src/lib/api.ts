@@ -334,6 +334,7 @@ export interface FriendCopy {
   owner: string;
   server: string;
   resolution: string;
+  audio: string[];        // audio languages (ISO 639-1), [] = not known yet
   online: boolean;        // the friend's server answered at the last check
   seen_at: string | null;
   url: string;            // opens the film in Plex
