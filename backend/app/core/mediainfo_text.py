@@ -5,9 +5,20 @@ import html
 import re
 
 from app.core.mediainfo import normalize_language
+from app.core.release_langs import _LANG_TOKENS
 
-_SECTION = re.compile(r"^(General|Video|Audio|Text)(?:\s*#\s*\d+)?\s*$", re.I)
-_FIELD = re.compile(r"^([A-Za-z][A-Za-z ()/'-]*?)\s*:\s*(.+)$")
+_SECTION = re.compile(r"^(General|Obecné|Obecne|Video|Audio|Zvuk|Text|Titulky)(?:\s*#\s*\d+)?\s*$", re.I)
+_SECTION_KIND = {"obecné": "general", "obecne": "general", "zvuk": "audio", "titulky": "text"}
+_FIELD = re.compile(r"^([^\W\d][\w ()/,.'-]*?)\s*:\s*(.+)$")
+# MediaInfo localized to Czech / Slovak — field names as in English
+_FIELD_NAMES = {
+    "formát": "format", "jazyk": "language", "šířka": "width", "šírka": "width", "výška": "height",
+    "kanál(y)": "channel(s)", "kanály": "channel(s)", "počet kanálů": "channel(s)", "počet kanálov": "channel(s)",
+    "datový tok": "bit rate", "dátový tok": "bit rate", "délka": "duration", "dĺžka": "duration", "stopáž": "duration",
+    "titul": "title", "název": "title", "obchodní název": "commercial name", "hdr formát": "hdr format",
+}
+# the uploader's own template: "Jazyk: CZ, SK, RUS"
+_TEMPLATE_LANGS = re.compile(r"^(?:Jazyk|Jazyky|Audio|Zvuk)\s*:\s*([A-Za-z]{2,3}(?:\s*[,/+]\s*[A-Za-z]{2,3})*)\s*$", re.I)
 
 
 def page_text(page: str) -> str:
@@ -51,20 +62,32 @@ def _hdr(value: str) -> str:
 
 def parse(text: str) -> dict | None:
     """The first MediaInfo report in ``text``; None when there is none."""
-    sections: list[tuple[str, dict]] = []
+    # a report may start without its "General" heading: what comes before the first section is general
+    sections: list[tuple[str, dict]] = [("general", {})]
+    template: list[str] = []
     for line in text.splitlines():
         line = line.strip()
         if m := _SECTION.match(line):
-            if m.group(1).lower() == "general" and any(k == "general" for k, _ in sections):
-                break                                    # a second report (another file) — the first one counts
-            sections.append((m.group(1).lower(), {}))
-        elif sections and (f := _FIELD.match(line)):
-            sections[-1][1].setdefault(f.group(1).strip().lower(), f.group(2).strip())
+            kind = _SECTION_KIND.get(m.group(1).lower(), m.group(1).lower())
+            if kind == "general":
+                if len(sections) > 1:
+                    break                                # a second report (another file) — the first one counts
+                continue
+            sections.append((kind, {}))
+        elif t := _TEMPLATE_LANGS.match(line):
+            template = template or [x for x in re.split(r"\s*[,/+]\s*", t.group(1)) if x]
+        elif f := _FIELD.match(line):
+            name = f.group(1).strip().lower()
+            sections[-1][1].setdefault(_FIELD_NAMES.get(name, name), f.group(2).strip())
     videos = [f for k, f in sections if k == "video" and "jpeg" not in f.get("format", "").lower()
               and "png" not in f.get("format", "").lower()]
     audios = [f for k, f in sections if k == "audio"]
     if not videos and not audios:
         return None
+    # tracks without a language tag, but the uploader listed them: take those (in the same order)
+    langs = [normalize_language(a.get("language")) for a in audios]
+    if template and not any(langs) and len(template) == len(audios):
+        langs = [_LANG_TOKENS.get(x.lower(), normalize_language(x)) for x in template]
     general = next((f for k, f in sections if k == "general"), {})
     video = videos[0] if videos else {}
     return {
@@ -74,7 +97,7 @@ def parse(text: str) -> dict | None:
         "video_codec": video.get("format", ""),
         "hdr": _hdr(" ".join(video.get(k, "") for k in ("hdr format", "transfer characteristics"))) if video else "",
         "bitrate": _bitrate(video.get("bit rate", "") or video.get("nominal bit rate", "")),
-        "audio": [{"lang": normalize_language(a.get("language")), "codec": a.get("commercial name") or a.get("format", ""),
-                   "channels": int(_number(a.get("channel(s)", "")))} for a in audios],
+        "audio": [{"lang": lang, "codec": a.get("commercial name") or a.get("format", ""),
+                   "channels": int(_number(a.get("channel(s)", "")))} for a, lang in zip(audios, langs)],
         "subtitles": [s for s in (normalize_language(f.get("language")) for k, f in sections if k == "text") if s],
     }
