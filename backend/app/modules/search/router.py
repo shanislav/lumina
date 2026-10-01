@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from urllib.parse import urlencode
 
 from fastapi import Depends, APIRouter
 
@@ -203,3 +204,46 @@ async def search_pick(body: PickRequest) -> dict:
         "suitable": len(ok),
         "reasons": sorted(reasons.items(), key=lambda x: -x[1])[:3],
     }
+
+
+_info_cache: dict[tuple[int, str], dict] = {}
+
+
+@router.get("/search/movie-info", dependencies=[Depends(require("search"))])
+async def movie_info(tmdb_id: int = 0, wikidata_id: str = "", title: str = "", year: str = "") -> dict:
+    """Genres, length, rating, director, cast and links (ČSFD, IMDb) for the film's page.
+    ČSFD has no API: the exact page comes from Wikidata (property P2529), else a ČSFD search."""
+    key = (tmdb_id, wikidata_id)
+    if key in _info_cache:
+        return _info_cache[key]
+    out: dict = {"genres": [], "runtime": 0, "rating": 0, "votes": 0, "directors": [], "cast": [],
+                 "imdb_url": None, "csfd_url": None, "csfd_exact": False}
+    cfg = await get_effective_settings()
+    if tmdb_id:
+        client = TMDBClient(cfg["tmdb_api_key"])
+        try:
+            full = await client.get_movie_full(tmdb_id, language=_locale(cfg, None)[1])
+            out.update({k: full.get(k) for k in ("genres", "runtime", "rating", "votes", "directors", "cast")})
+            if full.get("imdb_id"):
+                out["imdb_url"] = f"https://www.imdb.com/title/{full['imdb_id']}/"
+            wikidata_id = wikidata_id or full.get("wikidata_id") or ""
+            title = title or full.get("title") or ""
+            year = year or str(full.get("year") or "")
+        except Exception as e:  # noqa: BLE001 — the page works without it
+            logger.info("Movie info of tmdb %s failed: %s", tmdb_id, e)
+        finally:
+            await client.close()
+    if wikidata_id:
+        wd = WikidataClient()
+        try:
+            film = await wd.get_film(wikidata_id)
+            if film and film.get("csfd_id"):
+                out.update(csfd_url=f"https://www.csfd.cz/film/{film['csfd_id']}/", csfd_exact=True)
+        except Exception as e:  # noqa: BLE001
+            logger.info("Wikidata %s failed: %s", wikidata_id, e)
+        finally:
+            await wd.close()
+    if not out["csfd_url"] and title:
+        out["csfd_url"] = "https://www.csfd.cz/hledat/?" + urlencode({"q": f"{title} {year}".strip()})
+    _info_cache[key] = out
+    return out

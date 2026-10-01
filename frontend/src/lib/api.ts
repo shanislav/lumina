@@ -330,6 +330,24 @@ export async function removeDownload(
 
 // --- Source Management ---
 
+export interface MovieInfo {
+  genres: string[];
+  runtime: number;
+  rating: number;
+  votes: number;
+  directors: string[];
+  cast: string[];
+  imdb_url: string | null;
+  csfd_url: string | null;
+  csfd_exact: boolean;      // the film's own ČSFD page (via Wikidata), else a ČSFD search
+}
+
+export async function getMovieInfo(m: { tmdb_id?: number | null; wikidata_id?: string | null; title: string; year?: string }): Promise<MovieInfo | null> {
+  const q = new URLSearchParams({ tmdb_id: String(m.tmdb_id || 0), wikidata_id: m.wikidata_id || "", title: m.title, year: m.year || "" });
+  const res = await apiFetch(`${API_BASE}/api/search/movie-info?${q}`);
+  return res.ok ? res.json() : null;
+}
+
 export interface ProfilePick {
   profile: string;
   key: string | null;              // "<source_id>:<ident>" of the offer the profile would take now

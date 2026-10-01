@@ -7,6 +7,7 @@ import MovieGrid from "@/components/MovieGrid";
 import FileTable from "@/components/FileTable";
 import DownloadPanel from "@/components/DownloadPanel";
 import WantButton, { ProfileSelect } from "@/components/WantButton";
+import MovieInfoLine from "@/components/MovieInfoLine";
 import { useAuth } from "@/components/AuthGate";
 import Link from "next/link";
 import {
@@ -277,6 +278,7 @@ function HomeContent() {
               </button>
             )}
           </div>
+          <MovieInfoLine movie={selectedMovie} />
           {(selectedMovie.overview || selectedMovie.poster_url) && (
             <div className="flex gap-3 text-sm text-zinc-400">
               {selectedMovie.poster_url && (

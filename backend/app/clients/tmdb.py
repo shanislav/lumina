@@ -238,7 +238,7 @@ class TMDBClient:
         resp = await self._http.get(
             f"{API_BASE}/movie/{tmdb_id}",
             params={"api_key": self._api_key, "language": language,
-                    "append_to_response": "translations,alternative_titles,credits"},
+                    "append_to_response": "translations,alternative_titles,credits,external_ids"},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -295,6 +295,13 @@ class TMDBClient:
             "titles_by_lang": titles_by_lang,
             "people": sorted({p for p in people if p}),
             "other_parts": sorted({t for t in other_parts if t} - titles),
+            # for the film's page in Lumina
+            "genres": [g.get("name", "") for g in data.get("genres") or [] if g.get("name")],
+            "rating": round(float(data.get("vote_average") or 0), 1),
+            "votes": int(data.get("vote_count") or 0),
+            "directors": [c.get("name", "") for c in (credits.get("crew") or []) if c.get("job") == "Director"][:2],
+            "cast": [c.get("name", "") for c in (credits.get("cast") or [])[:4]],
+            "wikidata_id": (data.get("external_ids") or {}).get("wikidata_id") or "",
         }
 
     async def close(self) -> None:
