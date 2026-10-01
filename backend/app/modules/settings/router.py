@@ -26,6 +26,7 @@ DEFAULTS = {
     "qbittorrent_username": "admin",
     "qbittorrent_password": "",
     "qbittorrent_path_map": "",
+    "max_concurrent_downloads": "3",  # Lumina's downloads at once (DDL + torrents), the rest queue; 0 = no limit
     "min_relevance_score": "70",
     # quality of found files (app/core/quality.py)
     "quality_prefer_local": "true",   # CZ/SK audio first in "Doporučené"

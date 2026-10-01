@@ -10,6 +10,7 @@ from app.core.module import Module, Permission, Subscription, TaskSource
 from app.modules.downloads import tasks
 from app.modules.downloads.monitor import ensure_monitor_running
 from app.modules.downloads.router import on_download_request, router
+from app.modules.downloads.queue import DOWNLOAD_QUEUE
 from app.modules.downloads.store import DOWNLOAD_TRACKER_V1
 
 module = Module(
@@ -27,6 +28,8 @@ module = Module(
         # who asked for it (a user, "Chci (plánovač)" …) and when — the download list shows it
         add_column("download_tracker", "requested_by", "TEXT DEFAULT ''"),
         add_column("download_tracker", "created_at", "TEXT DEFAULT ''"),
+        # downloads over the limit of concurrent ones wait here
+        DOWNLOAD_QUEUE,
     ],
     subscriptions=[Subscription("download.request", on_download_request)],
     on_startup=[ensure_monitor_running],

@@ -42,10 +42,19 @@ async def download(req: DownloadRequest, user: User = Depends(require("download"
     return await start_download(req, requested_by=user.username)
 
 
-async def start_download(req: DownloadRequest, requested_by: str = "") -> dict:
-    """Starts a download — from the UI (above) or from other modules via event download.request."""
+async def start_download(req: DownloadRequest, requested_by: str = "", queued: bool = True) -> dict:
+    """Starts a download — from the UI (above) or from other modules via event download.request.
+    Over the limit of concurrent downloads it waits in the queue (queued=False: the queue starting it)."""
+    from app.modules.downloads import queue
+    from app.modules.downloads.monitor import ensure_monitor_running
+
     cfg = await get_effective_settings()
     target_dir = _resolve_target_dir(cfg, req)
+
+    if queued and await queue.must_wait():
+        queue_id = await queue.add(req.model_dump(), requested_by)
+        ensure_monitor_running()
+        return {"queued": queue_id, "status": "queued", "target_dir": target_dir, "source": req.source}
 
     registry = SourceRegistry.get()
     source = registry.get_source_by_id(req.source_id) if req.source_id else None
@@ -62,7 +71,6 @@ async def start_download(req: DownloadRequest, requested_by: str = "") -> dict:
                 headers=download_info.get("headers"),
             )
             from app.modules.downloads.store import track_download
-            from app.modules.downloads.monitor import ensure_monitor_running
             await track_download(gid, req.tmdb_id, req.title, req.year, "aria2", target_dir, req.content_type or "movie", req.library_action, source_label, requested_by)
             ensure_monitor_running()
             return {
@@ -90,7 +98,6 @@ async def start_download(req: DownloadRequest, requested_by: str = "") -> dict:
             # the finished file is found by its path and imported from there
             torrent_hash = await qbt.add_torrent(req.magnet_url, save_path="")
             from app.modules.downloads.store import track_download
-            from app.modules.downloads.monitor import ensure_monitor_running
             await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie", req.library_action, source_label, requested_by)
             ensure_monitor_running()
             return {
@@ -186,7 +193,22 @@ async def list_downloads() -> dict:
         info = known.get(d.get("gid") or d.get("hash") or "") or {}
         d.update({k: info.get(k) for k in ("tmdb_id", "film", "requested_by", "created_at", "mode", "content_type")})
     downloads.sort(key=lambda d: d.get("created_at") or "", reverse=True)
-    return {"downloads": downloads}
+
+    # waiting for a free slot — on top, in the order they will start
+    from app.modules.downloads import queue
+    waiting = []
+    for i, q in enumerate(await queue.items()):
+        r = q["request"]
+        title = r.get("title") or "?"
+        waiting.append({
+            "queue_id": q["id"], "queue_pos": i + 1, "status": "queued", "backend": "queue",
+            "filename": f"{title} ({r['year']})" if r.get("year") else title,
+            "source_label": SOURCE_LABELS.get(r.get("source") or "", r.get("source") or ""),
+            "total_length": 0, "completed_length": 0, "download_speed": 0,
+            "tmdb_id": r.get("tmdb_id"), "film": title, "requested_by": q["requested_by"], "created_at": q["created_at"],
+            "mode": (r.get("library_action") or {}).get("mode") or "", "content_type": r.get("content_type") or "movie",
+        })
+    return {"downloads": waiting + downloads, "limit": await queue.limit()}
 
 
 @router.delete("/download/{identifier}", dependencies=[Depends(require("download"))])
@@ -196,6 +218,12 @@ async def remove_download(
     """Remove/cancel a download. Use active=true to cancel an in-progress download."""
     cfg = await get_effective_settings()
 
+    if backend == "queue":
+        from app.modules.downloads import queue
+        try:
+            return {"ok": await queue.remove(int(identifier))}
+        except ValueError:
+            raise HTTPException(400, "Neplatné id fronty")
     if backend == "qbittorrent":
         if not cfg.get("qbittorrent_url"):
             raise HTTPException(503, "qBittorrent is not configured")

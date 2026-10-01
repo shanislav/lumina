@@ -22,7 +22,7 @@ export default function PickOfferView({ offer, canDownload }: { offer: PickOffer
       {!file.verified && <span className="text-zinc-500">· neověřeno</span>}
       {canDownload && (downloading ? (
         <span className="text-green-400">
-          {downloading === "starting" ? "Odesílám…" : downloading === "error" ? "Chyba" : "Stahuje se"}
+          {downloading === "starting" ? "Odesílám…" : downloading === "error" ? "Chyba" : downloading === "queued" ? "Ve frontě" : "Stahuje se"}
         </span>
       ) : (
         <button onClick={offer.download} className="rounded bg-violet-600 px-2.5 py-1 font-medium text-white hover:bg-violet-500">

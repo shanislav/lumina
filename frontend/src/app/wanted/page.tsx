@@ -74,8 +74,8 @@ export default function WantedPage() {
     try {
       const file = { ident: b.ident, name: b.name ?? "", size: b.size ?? 0, source: b.source, source_id: b.source_id ?? 0,
         magnet_url: b.magnet_url ?? null } as ScoredFile;
-      await startDownload(file, undefined, item.tmdb_id ?? 0, item.title, parseInt(item.year || "0"), "movie");
-      setDownloading((prev) => ({ ...prev, [item.id]: "stahuje se" }));
+      const r = await startDownload(file, undefined, item.tmdb_id ?? 0, item.title, parseInt(item.year || "0"), "movie");
+      setDownloading((prev) => ({ ...prev, [item.id]: r.queued ? "ve frontě" : "stahuje se" }));
     } catch {
       setDownloading((prev) => ({ ...prev, [item.id]: "chyba" }));
     }

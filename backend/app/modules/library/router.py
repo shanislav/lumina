@@ -472,6 +472,9 @@ class FilmSettings(BaseModel):
     profile_id: int | None = None
     watch_upgrades: bool = False
     on_better: str = ""          # '' = as the scheduler says | notify | version | replace
+    upgrade_once: bool = False   # stop watching once a better version is in the library
+
+ON_BETTER = ("", "notify", "version", "replace")
 
 
 @router.get("/films", dependencies=[Depends(require("library.view"))])
@@ -479,8 +482,9 @@ async def film_settings_all():
     """{tmdb_id: {profile_id, watch_upgrades}} for films that have their own settings."""
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT tmdb_id, profile_id, watch_upgrades, on_better FROM library_films")
-        return {str(r[0]): {"profile_id": r[1], "watch_upgrades": bool(r[2]), "on_better": r[3] or ""}
+        cursor = await db.execute("SELECT tmdb_id, profile_id, watch_upgrades, on_better, upgrade_once FROM library_films")
+        return {str(r[0]): {"profile_id": r[1], "watch_upgrades": bool(r[2]), "on_better": r[3] or "",
+                            "upgrade_once": bool(r[4])}
                 for r in await cursor.fetchall()}
     finally:
         await db.close()
@@ -490,16 +494,58 @@ async def film_settings_all():
 async def set_film_settings(tmdb_id: int, body: FilmSettings):
     db = await get_db()
     try:
-        if body.on_better not in ("", "notify", "version", "replace"):
+        if body.on_better not in ON_BETTER:
             raise HTTPException(400, "Neznámá volba")
-        await db.execute("INSERT INTO library_films (tmdb_id, profile_id, watch_upgrades, on_better) VALUES (?, ?, ?, ?) "
-                         "ON CONFLICT(tmdb_id) DO UPDATE SET profile_id = excluded.profile_id, "
-                         "watch_upgrades = excluded.watch_upgrades, on_better = excluded.on_better",
-                         (tmdb_id, body.profile_id, int(body.watch_upgrades), body.on_better))
+        await _save_film(db, tmdb_id, body)
         await db.commit()
         return {"tmdb_id": tmdb_id, **body.model_dump()}
     finally:
         await db.close()
+
+
+async def _save_film(db, tmdb_id: int, s: FilmSettings) -> None:
+    await db.execute("INSERT INTO library_films (tmdb_id, profile_id, watch_upgrades, on_better, upgrade_once) "
+                     "VALUES (?, ?, ?, ?, ?) ON CONFLICT(tmdb_id) DO UPDATE SET profile_id = excluded.profile_id, "
+                     "watch_upgrades = excluded.watch_upgrades, on_better = excluded.on_better, "
+                     "upgrade_once = excluded.upgrade_once",
+                     (tmdb_id, s.profile_id, int(s.watch_upgrades), s.on_better, int(s.upgrade_once)))
+
+
+class BulkFilmSettings(BaseModel):
+    tmdb_ids: list[int]
+    keep_profile: bool = False   # True = leave each film's own profile
+    profile_id: int | None = None
+    watch_upgrades: bool = True
+    on_better: str = ""
+    upgrade_once: bool = False
+    check_now: bool = False      # look for the better versions right away (not only at night)
+
+
+@router.post("/films/bulk", dependencies=[Depends(require("library.edit"))])
+async def set_film_settings_bulk(body: BulkFilmSettings):
+    """The same settings for many films at once — e.g. all SD films: the default profile, download and
+    replace a better version, once. With check_now the check (and the downloads) start right away."""
+    if body.on_better not in ON_BETTER:
+        raise HTTPException(400, "Neznámá volba")
+    ids = list(dict.fromkeys(t for t in body.tmdb_ids if t))
+    db = await get_db()
+    try:
+        own = {}
+        if body.keep_profile and ids:
+            cursor = await db.execute(f"SELECT tmdb_id, profile_id FROM library_films WHERE tmdb_id IN ({','.join('?' * len(ids))})", ids)
+            own = {r[0]: r[1] for r in await cursor.fetchall()}
+        for t in ids:
+            await _save_film(db, t, FilmSettings(
+                profile_id=own.get(t) if body.keep_profile else body.profile_id, watch_upgrades=body.watch_upgrades,
+                on_better=body.on_better, upgrade_once=body.upgrade_once))
+        await db.commit()
+    finally:
+        await db.close()
+    job = None
+    if body.check_now and body.watch_upgrades and ids:
+        await upgrades.apply_film_choices(ids)
+        job = upgrades.enqueue(ids)
+    return {"saved": len(ids), "job": job}
 
 
 @router.get("/watched", dependencies=[Depends(require("library.view"))])

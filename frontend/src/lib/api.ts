@@ -272,6 +272,7 @@ export async function startDownload(
 ): Promise<{
   gid?: string;
   hash?: string;
+  queued?: number;            // over the limit of concurrent downloads: waits in the queue
   status: string;
   target_dir: string;
   source: string;
@@ -314,6 +315,8 @@ export interface DownloadItem {
   created_at?: string;
   mode?: string;              // "version" | "replace" | ""
   content_type?: string;
+  queue_id?: number;          // waiting for a free slot (status "queued")
+  queue_pos?: number;
 }
 
 export async function getDownloads(): Promise<DownloadItem[]> {
@@ -325,11 +328,11 @@ export async function getDownloads(): Promise<DownloadItem[]> {
 
 export async function removeDownload(
   identifier: string,
-  backend: "aria2" | "qbittorrent" = "aria2",
+  backend: "aria2" | "qbittorrent" | "queue" = "aria2",
   active: boolean = false,
 ): Promise<void> {
   const params = new URLSearchParams();
-  if (backend === "qbittorrent") params.set("backend", "qbittorrent");
+  if (backend !== "aria2") params.set("backend", backend);
   if (active) params.set("active", "true");
   const qs = params.toString() ? `?${params}` : "";
   await apiFetch(`${API_BASE}/api/download/${identifier}${qs}`, { method: "DELETE" });
@@ -918,6 +921,25 @@ export interface FilmSettings {
   profile_id: number | null;
   watch_upgrades: boolean;
   on_better?: string;        // '' = as the scheduler says | notify | version | replace
+  upgrade_once?: boolean;    // stop watching once a better version is in the library
+}
+
+export interface BulkFilmSettings {
+  tmdb_ids: number[];
+  keep_profile: boolean;
+  profile_id: number | null;
+  watch_upgrades: boolean;
+  on_better: string;
+  upgrade_once: boolean;
+  check_now: boolean;
+}
+
+export async function setFilmSettingsBulk(s: BulkFilmSettings): Promise<{ saved: number; job: UpgradeJob | null }> {
+  const res = await apiFetch(`${API_BASE}/api/library/films/bulk`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s),
+  });
+  if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
+  return res.json();
 }
 
 export interface WatchedFilm {
@@ -927,6 +949,7 @@ export interface WatchedFilm {
   poster_url: string | null;
   profile_id: number | null;
   on_better: string;
+  upgrade_once: boolean;
   owned: { id: number; quality: string; score: number; language: string; size: number };
   check: UpgradeCheck | null;
 }

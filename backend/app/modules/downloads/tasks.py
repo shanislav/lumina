@@ -10,7 +10,14 @@ def _speed(bps: float) -> str:
 async def read() -> list[dict]:
     """Running and waiting downloads (aria2 and qBittorrent, as list_downloads gives them)."""
     out = []
-    for d in (await list_downloads())["downloads"]:
+    listed = (await list_downloads())["downloads"]
+    waiting = [d for d in listed if d.get("status") == "queued"]
+    if waiting:
+        out.append({"id": "dl-queue", "title": f"Fronta stahování: {len(waiting)}",
+                    "detail": "další: " + waiting[0]["filename"], "done": 0, "total": 0, "running": True, "unit": ""})
+    for d in listed:
+        if d.get("status") == "queued":
+            continue
         total, done = float(d.get("total_length") or 0), float(d.get("completed_length") or 0)
         if d.get("backend") == "qbittorrent":
             if (d.get("progress") or 0) >= 1:

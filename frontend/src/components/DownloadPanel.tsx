@@ -28,6 +28,7 @@ function statusIcon(status: string): { icon: string; color: string } {
     case "error":
       return { icon: "\u2717", color: "text-red-400" };         // ✗
     case "waiting":
+    case "queued":
     case "queuedDL":
       return { icon: "\u23F3", color: "text-zinc-400" };        // ⏳
     case "removed":
@@ -38,7 +39,7 @@ function statusIcon(status: string): { icon: string; color: string } {
 }
 
 function isActive(status: string): boolean {
-  return ["active", "downloading", "stalledDL", "forcedDL", "waiting", "queuedDL"].includes(status);
+  return ["active", "downloading", "stalledDL", "forcedDL", "waiting", "queuedDL", "queued"].includes(status);
 }
 
 export default function DownloadPanel() {
@@ -63,7 +64,8 @@ export default function DownloadPanel() {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  const activeCount = downloads.filter((d) => isActive(d.status)).length;
+  const activeCount = downloads.filter((d) => isActive(d.status) && d.status !== "queued").length;
+  const queuedCount = downloads.filter((d) => d.status === "queued").length;
 
   // Don't show at all if no downloads ever
   if (!loading && downloads.length === 0) return null;
@@ -85,7 +87,12 @@ export default function DownloadPanel() {
               {activeCount}
             </span>
           )}
-          {activeCount === 0 && downloads.length > 0 && (
+          {queuedCount > 0 && (
+            <span className="text-xs text-zinc-400" title="Čekají na volné místo (max. souběžných stahování v Nastavení)">
+              + {queuedCount} ve frontě
+            </span>
+          )}
+          {activeCount === 0 && queuedCount === 0 && downloads.length > 0 && (
             <span className="text-xs text-zinc-500">{downloads.length} total</span>
           )}
         </div>
@@ -106,7 +113,8 @@ export default function DownloadPanel() {
             <div className="px-4 py-3 text-sm text-zinc-500 animate-pulse">Loading...</div>
           )}
           {downloads.map((dl, i) => {
-            const id = dl.gid || dl.hash || String(i);
+            const id = dl.gid || dl.hash || (dl.queue_id ? `q${dl.queue_id}` : String(i));
+            const queued = dl.status === "queued";
             const total = dl.total_length || 0;
             const done = dl.completed_length || 0;
             const pct =
@@ -152,10 +160,12 @@ export default function DownloadPanel() {
                       {dl.backend === "qbittorrent" ? "Torrent" : "DDL"}
                     </span>
                   )}
-                  {(dl.gid || dl.hash) && (
+                  {(dl.gid || dl.hash || dl.queue_id) && (
                     <button
                       onClick={async () => {
-                        if (dl.hash && dl.backend === "qbittorrent") {
+                        if (dl.queue_id) {
+                          await removeDownload(String(dl.queue_id), "queue");
+                        } else if (dl.hash && dl.backend === "qbittorrent") {
                           await removeDownload(dl.hash, "qbittorrent", active);
                         } else if (dl.gid) {
                           await removeDownload(dl.gid, "aria2", active);
@@ -167,7 +177,7 @@ export default function DownloadPanel() {
                           ? "text-zinc-600 hover:text-red-400"
                           : "text-zinc-600 hover:text-zinc-400"
                       }`}
-                      title={active ? "Zrušit stahování" : "Odstranit"}
+                      title={queued ? "Odebrat z fronty" : active ? "Zrušit stahování" : "Odstranit"}
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -175,6 +185,9 @@ export default function DownloadPanel() {
                     </button>
                   )}
                 </div>
+                {queued ? (
+                  <div className="text-xs text-zinc-500">ve frontě · {dl.queue_pos}. na řadě</div>
+                ) : (
                 <div className="flex items-center gap-3">
                   {/* Progress bar */}
                   <div className="flex-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
@@ -204,6 +217,7 @@ export default function DownloadPanel() {
                     )}
                   </div>
                 </div>
+                )}
               </div>
             );
           })}

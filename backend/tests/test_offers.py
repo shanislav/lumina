@@ -111,7 +111,7 @@ async def test_film_profile_limits_upgrades_and_cutoff_stops_them(library_movie,
     await lib.set_film_settings(603, lib.FilmSettings(profile_id=easy["id"], watch_upgrades=True))
     monkeypatch.setattr(upgrades, "find_offers", None)          # must not be called
     assert await upgrades.check_movie(603) == {"status": "done", "upgrades": 0}
-    assert (await lib.film_settings_all())["603"] == {"profile_id": easy["id"], "watch_upgrades": True, "on_better": ""}
+    assert (await lib.film_settings_all())["603"] == {"profile_id": easy["id"], "watch_upgrades": True, "on_better": "", "upgrade_once": False}
 
 
 async def test_a_films_own_choice_decides_the_automatic_upgrade(monkeypatch):

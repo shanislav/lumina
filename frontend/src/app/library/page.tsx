@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
+import BulkFilmSettings from "@/components/BulkFilmSettings";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -579,8 +580,16 @@ export default function LibraryPage() {
                   title="Prohledá zdroje pro každý zobrazený film (postupně, šetrně k WS/FS) a porovná s tvou verzí"
                   className="rounded bg-violet-600 px-3 py-1 font-medium text-white hover:bg-violet-500 disabled:opacity-40"
                 >
-                  Hledat lepší verze ({Math.min(visibleGroups.filter((g) => identified.includes(g)).length, 200)})
+                  Hledat lepší verze ({Math.min(visibleGroups.filter((g) => identified.includes(g)).length, 1000)})
                 </button>}
+                {canEdit && (
+                  <BulkFilmSettings profiles={profiles}
+                    tmdbIds={visibleGroups.filter((g) => identified.includes(g) && g.main.tmdb_id).map((g) => g.main.tmdb_id)}
+                    onSaved={(job) => {
+                      getFilmSettings().then(setFilmSettingsMap).catch(() => {});
+                      if (job) setUpgradeJob(job);
+                    }} />
+                )}
                 {upgradeJob?.running ? (
                   <span className="text-violet-300 animate-pulse">
                     Hledám {upgradeJob.done}/{upgradeJob.total}{upgradeJob.current ? ` · ${upgradeJob.current}` : ""} · nalezeno {upgradeJob.found}
@@ -931,6 +940,13 @@ export default function LibraryPage() {
                           onChange={(e) => saveFilmSettings(fixingMovie.tmdb_id, { on_better: e.target.value })}>
                           {ON_BETTER.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                         </select>
+                      </label>
+                    )}
+                    {fs.watch_upgrades && (
+                      <label className="flex items-center gap-1.5" title="Jakmile je lepší verze v knihovně, hlídání se vypne">
+                        <input type="checkbox" checked={!!fs.upgrade_once}
+                          onChange={(e) => saveFilmSettings(fixingMovie.tmdb_id, { upgrade_once: e.target.checked })} />
+                        jen jednou
                       </label>
                     )}
                   </div>

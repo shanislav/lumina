@@ -100,6 +100,8 @@ module = Module(
         add_column("upgrade_checks", "note", "TEXT DEFAULT ''"),
         # what to do when a better version turns up: '' = as the scheduler says, notify | version | replace
         add_column("library_films", "on_better", "TEXT DEFAULT ''"),
+        # stop watching once a better version came into the library (a one-off quality update)
+        add_column("library_films", "upgrade_once", "INTEGER DEFAULT 0"),
     ],
     tasks=[TaskSource(tasks.read, "library.view")],
 )

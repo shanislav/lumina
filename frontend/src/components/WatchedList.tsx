@@ -39,11 +39,13 @@ export default function WatchedList({ profiles }: { profiles: QualityProfile[] }
   async function save(f: WatchedFilm, patch: Partial<WatchedFilm>) {
     const next = { ...f, ...patch };
     setFilms((prev) => prev?.map((x) => (x.tmdb_id === f.tmdb_id ? next : x)) ?? null);
-    await setFilmSettings(f.tmdb_id, { profile_id: next.profile_id, watch_upgrades: true, on_better: next.on_better });
+    await setFilmSettings(f.tmdb_id, { profile_id: next.profile_id, watch_upgrades: true, on_better: next.on_better,
+                                       upgrade_once: next.upgrade_once });
   }
 
   async function stop(f: WatchedFilm) {
-    await setFilmSettings(f.tmdb_id, { profile_id: f.profile_id, watch_upgrades: false, on_better: f.on_better });
+    await setFilmSettings(f.tmdb_id, { profile_id: f.profile_id, watch_upgrades: false, on_better: f.on_better,
+                                       upgrade_once: f.upgrade_once });
     setFilms((prev) => prev?.filter((x) => x.tmdb_id !== f.tmdb_id) ?? null);
   }
 
@@ -134,6 +136,10 @@ export default function WatchedList({ profiles }: { profiles: QualityProfile[] }
                       className="rounded bg-zinc-800 border border-zinc-700 px-1 py-0.5 text-zinc-300">
                       {ON_BETTER.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                     </select>
+                  </label>
+                  <label className="flex items-center gap-1" title="Jakmile je lepší verze v knihovně, hlídání se vypne">
+                    <input type="checkbox" checked={f.upgrade_once} onChange={(e) => save(f, { upgrade_once: e.target.checked })} />
+                    jen jednou
                   </label>
                   <button onClick={() => check([f.tmdb_id])} disabled={checking} className="text-violet-300 hover:text-violet-200 disabled:opacity-40">Zkontrolovat</button>
                   <button onClick={() => search(f)} className="text-violet-300 hover:text-violet-200">Hledat ručně</button>

@@ -10,6 +10,7 @@ from app.clients.aria2 import Aria2Client
 from app.clients.qbittorrent import QBittorrentClient
 from app.core import events
 from app.core.paths import map_path
+from app.modules.downloads import queue
 from app.db import DB_PATH
 
 logger = logging.getLogger("app.modules.downloads.monitor")
@@ -52,7 +53,7 @@ async def _monitor_loop():
                 cur.execute("SELECT id, tmdb_id, title, year, backend, content_type, intent FROM download_tracker WHERE processed = 0")
                 tracked = cur.fetchall()
 
-                if not tracked:
+                if not tracked and not await queue.pending():
                     logger.info("No more downloads to process. Stopping monitor.")
                     _monitor_running = False
                     return
@@ -71,6 +72,12 @@ async def _monitor_loop():
                                 if s.get("status") == "complete":
                                     files = s.get("files", [])
                                     if files: completed_path = files[0]["path"]
+                                elif s.get("status") in ("error", "removed"):
+                                    # failed or cancelled — it no longer takes a slot of the queue
+                                    logger.warning("Download %s ended as %s", title, s.get("status"))
+                                    cur.execute("UPDATE download_tracker SET processed = 1, status = ? WHERE id = ?", (s.get("status"), did))
+                                    conn.commit()
+                                    continue
                             except Exception as ae:
                                 if "not found" in str(ae):
                                     logger.warning("GID %s not found in Aria2, marking as processed to unblock", did)
@@ -89,6 +96,12 @@ async def _monitor_loop():
                             )
                             try:
                                 t = await qbt.get_status(did)
+                                if t.get("status") == "not_found":
+                                    # removed from qBittorrent — it no longer takes a slot of the queue
+                                    logger.warning("Torrent %s of %s not in qBittorrent, marking as processed", did[:8], title)
+                                    cur.execute("UPDATE download_tracker SET processed = 1, status = 'not_found' WHERE id = ?", (did,))
+                                    conn.commit()
+                                    continue
                                 state = t.get("state", "")
                                 progress = t.get("progress", 0)
                                 # Completed states or progress == 1.0
@@ -138,6 +151,12 @@ async def _monitor_loop():
 
         except Exception as e:
             logger.error("Global monitor loop error: %s", e)
+
+        # finished ones made room — start what waits
+        try:
+            await queue.drain()
+        except Exception as e:
+            logger.error("Download queue error: %s", e)
 
         await asyncio.sleep(20)
 

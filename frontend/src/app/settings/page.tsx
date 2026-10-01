@@ -144,6 +144,8 @@ const GENERAL_SECTIONS = [
     fields: [
       { key: "plex_media_dir", label: "Složka pro filmy", type: "folder", hint: "Kam se stahují filmy (v Docker kontejneru)" },
       { key: "tv_media_dir", label: "Složka pro seriály", type: "folder", hint: "Pokud prázdné, seriály se stahují do složky pro filmy" },
+      { key: "max_concurrent_downloads", label: "Max. souběžných stahování", type: "text",
+        hint: "Kolik stahování Lumina pustí najednou (WebShare/FastShare i torrenty), ostatní čekají ve frontě. 0 = bez omezení. Výchozí 3" },
     ],
   },
   {

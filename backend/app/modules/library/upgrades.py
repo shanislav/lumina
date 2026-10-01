@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS library_films (
 
 PAUSE_BETWEEN_MOVIES_S = 5
 VERIFY_PER_MOVIE = 10
-MAX_PER_JOB = 200
+MAX_PER_JOB = 1000
 
 _queue: list[int] = []
 _auto_download: dict[int, str] = {}     # tmdb_id → "version" | "replace" (scheduler with auto downloads)
@@ -235,13 +235,20 @@ async def after_import(tmdb_id: int | None) -> None:
     db = await get_db()
     try:
         row = await (await db.execute("SELECT status FROM upgrade_checks WHERE tmdb_id = ?", (tmdb_id,))).fetchone()
+        film = await (await db.execute("SELECT watch_upgrades, upgrade_once FROM library_films WHERE tmdb_id = ?",
+                                       (tmdb_id,))).fetchone()
+        once = bool(film and film[0] and film[1])
+        if once:
+            # a one-off quality update: the better version is here, stop watching
+            await db.execute("UPDATE library_films SET watch_upgrades = 0, upgrade_once = 0 WHERE tmdb_id = ?", (tmdb_id,))
         if row:
-            await db.execute("UPDATE upgrade_checks SET status = 'none', note = 'nová verze v knihovně — kontroluji znovu' "
-                             "WHERE tmdb_id = ?", (tmdb_id,))
-            await db.commit()
+            await db.execute("UPDATE upgrade_checks SET status = ?, note = ? WHERE tmdb_id = ?",
+                             ("done", "lepší verze stažena — hlídání ukončeno", tmdb_id) if once else
+                             ("none", "nová verze v knihovně — kontroluji znovu", tmdb_id))
+        await db.commit()
     finally:
         await db.close()
-    if row:
+    if row and not once:
         enqueue([tmdb_id])
 
 
@@ -266,7 +273,8 @@ async def watched() -> list[dict]:
     checks = await results()
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT tmdb_id, profile_id, on_better FROM library_films WHERE watch_upgrades = 1")
+        cursor = await db.execute("SELECT tmdb_id, profile_id, on_better, upgrade_once FROM library_films "
+                                  "WHERE watch_upgrades = 1")
         films = [dict(r) for r in await cursor.fetchall()]
         out = []
         for f in films:
@@ -277,6 +285,7 @@ async def watched() -> list[dict]:
             extra = await cursor.fetchone()
             out.append({
                 "tmdb_id": f["tmdb_id"], "profile_id": f["profile_id"], "on_better": f["on_better"] or "",
+                "upgrade_once": bool(f["upgrade_once"]),
                 "title": owned["title"], "year": owned["year"], "poster_url": extra["poster_url"] if extra else None,
                 "owned": {"id": owned["id"], "quality": extra["quality"] if extra else "", "score": owned["quality_score"],
                           "language": owned["language"] or "", "size": owned["file_size"]},

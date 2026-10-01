@@ -263,7 +263,7 @@ export default function FileTable({
     setDownloading((prev) => ({ ...prev, [file.ident]: "starting" }));
     try {
       const result = await startDownload(file, undefined, tmdb_id, title, year, mediaType || "movie", action);
-      const id = result.gid || result.hash || "ok";
+      const id = result.queued ? "queued" : result.gid || result.hash || "ok";
       setDownloading((prev) => ({ ...prev, [file.ident]: id }));
       onDownloadStarted?.(file);
     } catch {
@@ -440,6 +440,8 @@ export default function FileTable({
                     <span className="text-xs text-zinc-500">Odesílám...</span>
                   ) : dlState === "error" ? (
                     <span className="text-xs text-red-400">Chyba</span>
+                  ) : dlState === "queued" ? (
+                    <span className="text-xs text-zinc-400" title="Čeká na volné místo (max. souběžných stahování)">Ve frontě</span>
                   ) : (
                     <span className="text-xs text-green-400">{dlState.slice(0, 8)}...</span>
                   )}
