@@ -244,3 +244,24 @@ async def test_names_first_then_folders(library):
         assert not old.exists()
     finally:
         await db.close()
+
+
+async def test_a_file_in_a_year_folder_takes_nothing_else_along(library):
+    """A movie lying right in "2017/" (no folder of its own) must not move the other movies' folders."""
+    root = str(library)
+    stray = library / "2017" / "Blade Runner 2049.mkv"
+    os.rename(library / "2017" / "Blade Runner 2049 (2017)" / "Blade Runner (1982) [Bluray-720p x264] [CS+EN].mkv", stray)
+    other = library / "2017" / "Other Movie (2017)"
+    other.mkdir()
+    (other / "Other Movie (2017).mkv").write_bytes(b"y")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("UPDATE library_movies SET file_path = ?, filename = ?", (str(stray), stray.name))
+    db = await get_db()
+    try:
+        plan = await organize.plan_movie(db, NoTMDB(), 1, root)
+        assert not plan["remove_folder"]
+        assert {op["src"] for op in plan["ops"]} == {str(stray)}
+        await organize.apply_plan(db, plan, root)
+        assert (other / "Other Movie (2017).mkv").exists()
+    finally:
+        await db.close()

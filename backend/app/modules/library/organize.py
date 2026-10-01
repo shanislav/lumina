@@ -126,7 +126,16 @@ def _plan_group(rows: list[dict], details: dict, root: str, settings: dict) -> d
         e for e in entries
         if os.path.splitext(e)[1].lower() in VIDEO_EXTS and os.path.join(folder, e) not in group_paths
     ]
-    whole_folder = not other_videos and os.path.normpath(folder) != os.path.normpath(root)
+    # The folder is the movie's own only at the depth of a movie folder (a file lying in a year folder
+    # "1972/" must not take the other movies' folders along) and without videos in subfolders
+    depth = lambda p: len(os.path.relpath(p, root).split(os.sep))  # noqa: E731
+    subfolder_videos = any(
+        os.path.splitext(f)[1].lower() in VIDEO_EXTS
+        for e in entries if os.path.isdir(os.path.join(folder, e))
+        for _dir, _subs, files in os.walk(os.path.join(folder, e)) for f in files
+    )
+    whole_folder = (not other_videos and not subfolder_videos and os.path.normpath(folder) != os.path.normpath(root)
+                    and target_folder is not None and depth(folder) == depth(target_folder))
 
     for src, dst in renames.items():
         ops.append({"kind": "video", "src": src, "dst": dst})
