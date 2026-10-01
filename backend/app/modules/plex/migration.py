@@ -221,11 +221,14 @@ def compare(snapshot: dict[str, dict], now: list[dict]) -> dict:
     # the same film: by its TMDB id, or IMDb id (an old item matched by IMDb only)
     lost = {("tmdb", o["tmdb_id"]): o for o in missing + gone if o["tmdb_id"]}
     lost |= {("imdb", o["imdb_id"]): o for o in missing + gone if o.get("imdb_id")}
+    # … or by its file name: a folder move keeps the names (a film Plex had wrong comes back as the right one)
+    lost |= {("file", os.path.basename(f)): o for o in missing + gone for f in o["files"]}
     readded, new = [], []
     for m in now:
         if m["rating_key"] in snapshot:
             continue
-        old = lost.get(("tmdb", m["tmdb_id"])) or lost.get(("imdb", m.get("imdb_id")))
+        old = (lost.get(("tmdb", m["tmdb_id"])) or lost.get(("imdb", m.get("imdb_id")))
+               or next((lost[("file", os.path.basename(f))] for f in m["files"] if ("file", os.path.basename(f)) in lost), None))
         if old and old not in [r["old"] for r in readded]:
             readded.append({"old": old, "new": m})
         else:

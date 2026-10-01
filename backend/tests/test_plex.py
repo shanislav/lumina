@@ -274,3 +274,12 @@ async def test_an_old_item_known_by_imdb_only_is_paired(server):
     FakeServer.after_scan = [FakeServer.items_now[0], meta("9", 22, ["/share/Video/Movies/2000/B2/b.mkv"], imdb="tt77", added=777)]
     report = await migration.check()
     assert [m["rating_key"] for m in report["renewed"]] == ["9"] and not report["missing"] and not report["new"]
+
+
+async def test_a_film_plex_had_wrong_is_paired_by_its_file(server):
+    """Plex knew the file as another film; after the folder move it matches the right one."""
+    migration = server
+    await migration.start()
+    FakeServer.after_scan = [FakeServer.items_now[0], meta("9", 99, ["/share/Video/Movies/2016/Right (2016)/b.mkv"], viewed=2, added=777)]
+    report = await migration.check()
+    assert [m["rating_key"] for m in report["renewed"]] == ["9"] and not report["missing"] and not report["new"]
