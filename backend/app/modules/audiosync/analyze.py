@@ -190,11 +190,12 @@ class Result:
 
 
 def _measure(ref_path: str, ref_track: int, other_path: str, other_track: int, at: float, speed: float,
-             offset_guess: float = 0.0, margin: float = MARGIN_S) -> Window:
-    needle = onsets(extract(ref_path, ref_track, at, WINDOW_S))
+             offset_guess: float = 0.0, margin: float = MARGIN_S, window: float | None = None) -> Window:
+    window = window or WINDOW_S
+    needle = onsets(extract(ref_path, ref_track, at, window))
     center = speed * at + offset_guess
     start = max(0.0, center - margin)
-    hay = stretch(onsets(extract(other_path, other_track, start, speed * WINDOW_S + 2 * margin)), speed)
+    hay = stretch(onsets(extract(other_path, other_track, start, speed * window + 2 * margin)), speed)
     lag, score, sharp = locate(needle, hay)
     found_other = start + lag / FPS * speed
     return Window(at=at, offset=found_other - speed * at, score=score, sharpness=sharp)
@@ -370,6 +371,8 @@ def same_audio(ref_path: str, ref_track: int, other_path: str, other_track: int,
 SMOOTH_S = 1.0          # agreement is averaged over this much time
 MIN_GAP_S = 0.3         # shorter "missing" stretches are noise at the cut point
 SCAN_STEP_S = 20.0      # coarse search for a cut: one window every this many seconds
+FINE_WINDOW_S = 10.0    # then short windows …
+FINE_STEP_S = 5.0       # … this far apart narrow it to a few seconds
 
 
 def _aligned_other(other_path: str, other_track: int, speed: float, offset: float, lo: float,
@@ -430,12 +433,26 @@ def find_cut(ref_path: str, ref_track: int, other_path: str, other_track: int, s
             s1 = max(s1, float(at))
         elif abs(w.offset - o2) <= SAME_OFFSET_S:
             s2 = min(s2, float(at))
+    # 2) short windows narrow it down: the last one that still fits o1, the first that fits o2
+    last_o1, first_o2 = s1, s2 + WINDOW_S - FINE_WINDOW_S
+    for at in np.arange(s1, s2 + WINDOW_S - FINE_WINDOW_S + 0.01, FINE_STEP_S):
+        w = _measure(ref_path, ref_track, other_path, other_track, float(at), speed, (o1 + o2) / 2, margin,
+                     window=FINE_WINDOW_S)
+        if not w.good:
+            continue
+        if abs(w.offset - o1) <= SAME_OFFSET_S:
+            last_o1 = max(last_o1, float(at))
+        elif abs(w.offset - o2) <= SAME_OFFSET_S:
+            first_o2 = min(first_o2, float(at))
+    if first_o2 + FINE_WINDOW_S <= last_o1:      # contradicting short windows — keep the coarse bounds
+        last_o1, first_o2 = s1, s2 + WINDOW_S - FINE_WINDOW_S
+    # 3) the exact point from the per-frame agreement over that short stretch
     gap_s = max(0.0, (o1 - o2) / speed)
-    a, b = s1, max(s2 + WINDOW_S, s1 + WINDOW_S + gap_s + 1)
+    a, b = last_o1, max(first_o2 + FINE_WINDOW_S, last_o1 + FINE_WINDOW_S + gap_s + 1)
     ref = onsets(extract(ref_path, ref_track, a, b - a))
     c1 = _agreement(ref, _aligned_other(other_path, other_track, speed, o1, a, b - a))
     c2 = _agreement(ref, _aligned_other(other_path, other_track, speed, o2, a, b - a))
-    t = cut_point(c1, c2, int(round(gap_s * FPS)), int(WINDOW_S / 2 * FPS))
+    t = cut_point(c1, c2, int(round(gap_s * FPS)), int(FINE_WINDOW_S / 2 * FPS))
     t1 = a + t / FPS
     return t1, t1 + gap_s
 

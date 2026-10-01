@@ -103,7 +103,8 @@ def cluster(versions: list[dict], duration: float, progress=None) -> list[dict]:
         home = None
         if t["usable"]:
             for d in dubs:
-                if d["lang"] != lang or not d["rep"]["usable"]:
+                # a track without a language tag can be any dub — compare it with all of them
+                if (lang and d["lang"] and d["lang"] != lang) or not d["rep"]["usable"]:
                     continue
                 # a version never holds one dub twice under two different groups, unless it really has two copies
                 if same_dub(d["rep"], t, duration):
@@ -112,6 +113,8 @@ def cluster(versions: list[dict], duration: float, progress=None) -> list[dict]:
         if home is None:
             home = {"lang": lang, "rep": t, "members": []}
             dubs.append(home)
+        elif not home["lang"] and lang:
+            home["lang"] = lang                  # the group learns its language from a tagged member
         home["members"].append(t)
         if progress:
             progress("compare", k + 1, len(tracks))
