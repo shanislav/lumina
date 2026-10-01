@@ -11,11 +11,20 @@ Needs ffmpeg and mkvtoolnix in the backend image.
 from app.core.module import Module, Permission
 from app.modules.audiosync.router import MAPS, REFS, RESULTS, router
 
+# migration 2 of a removed feature (keep-audio on download) — migrations are numbered by position
+PENDING = """
+CREATE TABLE IF NOT EXISTS audiosync_pending (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 module = Module(
     name="audiosync",
     title="Přenos zvuku",
     order=40,
     routers=[router],
-    migrations=[RESULTS, MAPS, REFS],
+    migrations=[RESULTS, PENDING, MAPS, REFS],
     permissions=[Permission("audiosync", "Editor zvuku: porovnávat, opravovat a přenášet zvukové stopy")],
 )
