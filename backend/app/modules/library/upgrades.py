@@ -1,6 +1,6 @@
 """Background check: is there a better version of a library movie on the sources?
 
-For each movie: the owned version to beat (the preferred one, else the best score) → all
+For each movie: the owned version to beat (the best score of all versions) → all
 offers of the film (app/core/offers, same as the search UI) → the likely ones verified at the
 source → offers that are an upgrade by the agreed rule (core.offers.search.upgrade_block).
 The result per movie is kept in upgrade_checks, so the library can show "a better version
@@ -107,7 +107,9 @@ async def _owned_version(db, tmdb_id: int, prefs: quality.Prefs) -> dict | None:
         versions.append({**dict(r), "quality_score": q.score})
     if not versions:
         return None
-    return max(versions, key=lambda v: (v["preferred"] or 0, v["quality_score"]))
+    # the best one owned — a version already in the library is never "better" (no download loop);
+    # the preferred version is the user's favourite: never replaced, see request_download
+    return max(versions, key=lambda v: v["quality_score"])
 
 
 async def film_settings(db, tmdb_id: int) -> dict:
@@ -145,7 +147,8 @@ async def check_movie(tmdb_id: int) -> dict | None:
     # prefer verified offers, then the score — an unverified name can promise too much
     better.sort(key=lambda r: (not r.get("verified"), -r["quality_score"]))
     status_ = "better" if better else "none"
-    await _save(tmdb_id, owned, owned["quality_score"], status_, better, note=f"profil {profile.name}")
+    note = f"profil {profile.name}" + (" · oblíbená verze se nenahradí" if owned["preferred"] else "")
+    await _save(tmdb_id, owned, owned["quality_score"], status_, better, note=note)
     return {"status": status_, "upgrades": len(better)}
 
 
@@ -180,12 +183,15 @@ async def request_download(tmdb_id: int, mode: str, requested_by: str = "upgrade
         return False
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT title, year FROM library_movies WHERE id = ?", (check["owned_id"],))
+        cursor = await db.execute("SELECT title, year, preferred FROM library_movies WHERE id = ?", (check["owned_id"],))
         owned = await cursor.fetchone()
     finally:
         await db.close()
     if not owned:
         return False
+    # the preferred version is the user's favourite — a better one comes next to it, never instead of it
+    if mode == "replace" and owned["preferred"]:
+        mode = "version"
     action = {"mode": "replace", "file_id": check["owned_id"]} if mode == "replace" else {"mode": "version"}
     payload = await events.emit("download.request", {
         "file_ident": best["ident"], "source": best.get("source"), "source_id": best.get("source_id") or 0,

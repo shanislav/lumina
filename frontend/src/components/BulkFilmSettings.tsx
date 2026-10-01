@@ -85,7 +85,7 @@ export default function BulkFilmSettings({ tmdbIds, profiles, onSaved }: {
       </div>
       <p className="text-[11px] text-zinc-500">
         Stahování jde přes frontu (max. souběžných stahování v Nastavení → Stahování). „Stáhnout a nahradit“ smaže
-        starou verzi až po úspěšném importu nové.
+        starou verzi až po úspěšném importu nové. Preferovaná (oblíbená) verze se nikdy nenahradí — lepší přibude jako další verze.
       </p>
       <div className="flex items-center gap-3">
         <button onClick={save} disabled={busy || !tmdbIds.length}

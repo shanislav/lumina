@@ -98,3 +98,25 @@ async def test_bulk_keeps_own_profiles_when_asked():
     films = await lib.film_settings_all()
     assert films["5"]["profile_id"] == 9 and films["6"]["profile_id"] is None
     assert films["5"]["on_better"] == films["6"]["on_better"] == "version"
+
+
+async def test_the_preferred_version_is_never_replaced(monkeypatch):
+    from app.core import events
+    from app.modules.library import upgrades
+
+    await init_db(registry.discover())
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.executemany("INSERT INTO library_movies (id, tmdb_id, title, year, status, preferred) VALUES (?, ?, 'F', '2000', 'matched', ?)",
+                         [(1, 10, 1), (2, 20, 0)])
+        conn.executemany("INSERT INTO upgrade_checks (tmdb_id, owned_id, status, best) VALUES (?, ?, 'better', '{\"ident\": \"x\"}')",
+                         [(10, 1), (20, 2)])
+    asked = []
+
+    async def fake_emit(name, payload):
+        asked.append(payload["library_action"])
+        payload["started"] = {"gid": "g"}
+        return payload
+    monkeypatch.setattr(events, "emit", fake_emit)
+    assert await upgrades.request_download(10, "replace")
+    assert await upgrades.request_download(20, "replace")
+    assert asked == [{"mode": "version"}, {"mode": "replace", "file_id": 2}]
