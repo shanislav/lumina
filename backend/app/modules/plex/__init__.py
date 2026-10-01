@@ -23,7 +23,7 @@ module = Module(
     order=80,
     routers=[router],
     migrations=[seed_automation("plex", "Plex (obnovení knihovny)"), migration.TABLES,
-                add_column("plex_snapshot", "edits", "TEXT")],
+                add_column("plex_snapshot", "edits", "TEXT"), add_column("plex_snapshot", "imdb_id", "TEXT")],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=90),
                    Subscription("library.collect_hints", hints.on_collect_hints)],
     tasks=[TaskSource(tasks.read, "library.edit")],

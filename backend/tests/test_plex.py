@@ -101,9 +101,9 @@ async def test_a_long_rename_is_one_scan_after_it_calms_down(plex, monkeypatch):
 
 # ─── hints and the migration ───
 
-def meta(key, tmdb, files, viewed=0, added=1000, deleted=False):
+def meta(key, tmdb, files, viewed=0, added=1000, deleted=False, imdb=None):
     return {"ratingKey": key, "title": f"Film {key}", "year": 2000, "guid": "plex://movie/x",
-            "Guid": [{"id": "imdb://tt1"}, {"id": f"tmdb://{tmdb}"}], "viewCount": viewed or None,
+            "Guid": [{"id": f"imdb://{imdb or f'tt{tmdb}'}"}] + ([{"id": f"tmdb://{tmdb}"}] if tmdb else []), "viewCount": viewed or None,
             "addedAt": added, **({"deletedAt": 5} if deleted else {}),
             "Media": [{"Part": [{"file": f} for f in files]}]}
 
@@ -265,3 +265,12 @@ async def test_edits_by_hand_come_back_on_a_new_item(server):
     await migration.finish(empty_trash=True, repair=False)
     import os
     assert not os.path.exists(migration.POSTERS)
+
+
+async def test_an_old_item_known_by_imdb_only_is_paired(server):
+    migration = server
+    FakeServer.items_now = [FakeServer.items_now[0], meta("2", None, ["/share/Video/Movies/2000/B/b.mkv"], imdb="tt77", added=777)]
+    await migration.start()
+    FakeServer.after_scan = [FakeServer.items_now[0], meta("9", 22, ["/share/Video/Movies/2000/B2/b.mkv"], imdb="tt77", added=777)]
+    report = await migration.check()
+    assert [m["rating_key"] for m in report["renewed"]] == ["9"] and not report["missing"] and not report["new"]

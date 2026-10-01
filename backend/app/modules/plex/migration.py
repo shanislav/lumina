@@ -152,9 +152,9 @@ async def start() -> dict:
         try:
             await db.execute("DELETE FROM plex_snapshot")
             await db.executemany(
-                "INSERT INTO plex_snapshot (rating_key, tmdb_id, title, year, files, view_count, last_viewed_at, added_at, edits) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [(m["rating_key"], m["tmdb_id"], m["title"], m["year"], json.dumps(m["files"]), m["view_count"],
+                "INSERT INTO plex_snapshot (rating_key, tmdb_id, imdb_id, title, year, files, view_count, last_viewed_at, "
+                "added_at, edits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [(m["rating_key"], m["tmdb_id"], m["imdb_id"], m["title"], m["year"], json.dumps(m["files"]), m["view_count"],
                   m["last_viewed_at"], m["added_at"], json.dumps(edits[m["rating_key"]]) if m["rating_key"] in edits else None)
                  for m in found])
             await db.execute("INSERT INTO plex_migration (id, section_key, section_title, prefs) VALUES (1, ?, ?, ?)",
@@ -218,13 +218,16 @@ def compare(snapshot: dict[str, dict], now: list[dict]) -> dict:
             missing.append(old)
         elif m["files"] != old["files"]:
             moved.append({**old, "files": m["files"], "old_files": old["files"]})
-    lost = {o["tmdb_id"]: o for o in missing + gone if o["tmdb_id"]}
+    # the same film: by its TMDB id, or IMDb id (an old item matched by IMDb only)
+    lost = {("tmdb", o["tmdb_id"]): o for o in missing + gone if o["tmdb_id"]}
+    lost |= {("imdb", o["imdb_id"]): o for o in missing + gone if o.get("imdb_id")}
     readded, new = [], []
     for m in now:
         if m["rating_key"] in snapshot:
             continue
-        if m["tmdb_id"] in lost:
-            readded.append({"old": lost[m["tmdb_id"]], "new": m})
+        old = lost.get(("tmdb", m["tmdb_id"])) or lost.get(("imdb", m.get("imdb_id")))
+        if old and old not in [r["old"] for r in readded]:
+            readded.append({"old": old, "new": m})
         else:
             new.append(m)
     return {"moved": moved, "missing": missing, "gone": gone, "readded": readded, "new": new,
@@ -260,8 +263,8 @@ async def check() -> dict:
         result["readded"] = [r for r in result["readded"] if r not in renewed]
         for r in renewed:
             n = r["new"]
-            await db.execute("UPDATE plex_snapshot SET rating_key = ?, files = ? WHERE rating_key = ?",
-                             (n["rating_key"], json.dumps(n["files"]), r["old"]["rating_key"]))
+            await db.execute("UPDATE plex_snapshot SET rating_key = ?, files = ?, tmdb_id = ?, imdb_id = ? WHERE rating_key = ?",
+                             (n["rating_key"], json.dumps(n["files"]), n["tmdb_id"], n["imdb_id"], r["old"]["rating_key"]))
         # the user's own poster and fields onto the new item
         restored = []
         for r in renewed:      # (a movie added anew gets them on finish, with the repair)
@@ -282,9 +285,9 @@ async def check() -> dict:
             await db.execute("UPDATE plex_snapshot SET files = ? WHERE rating_key = ?", (json.dumps(m["files"]), m["rating_key"]))
         for m in result["new"]:
             await db.execute(
-                "INSERT INTO plex_snapshot (rating_key, tmdb_id, title, year, files, view_count, last_viewed_at, added_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (m["rating_key"], m["tmdb_id"], m["title"], m["year"], json.dumps(m["files"]), m["view_count"],
+                "INSERT INTO plex_snapshot (rating_key, tmdb_id, imdb_id, title, year, files, view_count, last_viewed_at, added_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (m["rating_key"], m["tmdb_id"], m["imdb_id"], m["title"], m["year"], json.dumps(m["files"]), m["view_count"],
                  m["last_viewed_at"], m["added_at"]))
         report = {
             "checked_at": time.time(),
@@ -294,7 +297,7 @@ async def check() -> dict:
             "renewed": [_brief(r["new"]) for r in renewed],
             "edits_restored": restored,
             "missing": [{**_brief(m), "files": m["files"]} for m in result["missing"] + result["gone"]
-                        if m["tmdb_id"] not in {r["old"]["tmdb_id"] for r in result["readded"] + renewed}],
+                        if m["rating_key"] not in {r["old"]["rating_key"] for r in result["readded"] + renewed}],
             "readded": [{"title": r["old"]["title"], "year": r["old"]["year"], "old_key": r["old"]["rating_key"],
                          "new_key": r["new"]["rating_key"], "watched": r["old"]["view_count"] > 0,
                          "added_at": r["old"]["added_at"]} for r in result["readded"]],
