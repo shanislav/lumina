@@ -117,6 +117,31 @@ def _video_args(info: dict, mode: str) -> list[str]:
             "-g", str(SEGMENT_S * 24), "-sc_threshold", "0"]
 
 
+def keyframe_before(path: str, at: float) -> float:
+    """The last video keyframe at or before ``at`` (packet flags, nothing decoded).
+
+    A copied picture can only start at a keyframe, while ffmpeg cuts the audio exactly at ``at`` —
+    the stream then begins with up to a few seconds of picture without sound, and browsers (MSE)
+    line both starts up differently: the sound ended up that much early (Zkus mě rozesmát: 2.6 s).
+    Starting at the keyframe itself, both begin together."""
+    if at <= 0:
+        return 0.0
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals",
+                        f"{max(0.0, at - 20):.3f}%{at + 0.5:.3f}", "-show_entries", "packet=pts_time,flags",
+                        "-of", "csv=p=0", path], capture_output=True, text=True, timeout=60)
+    keys = []
+    for line in r.stdout.splitlines():
+        pts, _, flags = line.partition(",")
+        try:
+            t = float(pts)
+        except ValueError:
+            continue
+        if "K" in flags and t <= at + 0.05:
+            keys.append(t)
+    # a hair after it: a rounded time just before the keyframe would make ffmpeg seek one GOP back
+    return max(keys) + 0.02 if keys else at
+
+
 async def start(user_id: int, movie_id: int, path: str, at: float, audio: int, wanted: str = "auto",
                 caps: dict | None = None) -> tuple[Session, dict, str]:
     info = await asyncio.to_thread(probe, path)
@@ -126,6 +151,8 @@ async def start(user_id: int, movie_id: int, path: str, at: float, audio: int, w
     elif audio >= len(info["audio"]):
         audio = 0
     at = max(0.0, min(at, max(0.0, info["duration"] - 5)))
+    if mode == "original":
+        at = await asyncio.to_thread(keyframe_before, path, at)
     for s in [s for s in _sessions.values() if s.user_id == user_id]:
         await stop(s.id)
     while len(_sessions) >= MAX_SESSIONS:
