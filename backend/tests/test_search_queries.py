@@ -52,9 +52,7 @@ def test_year_guard():
     assert not _years_mismatch("1917.2019.1080p.BluRay.mkv", 2019)          # title with a number
     assert not _years_mismatch("2001.A.Space.Odyssey.1968.mkv", 1968)
     assert not _years_mismatch("Matrix.2000.remaster.mkv", 1999)            # ±1
-"""What the torrent indexers are asked."""
-
-from app.core.offers.search import torrent_query_list
+from app.core.offers.search import torrent_query_list  # noqa: E402 — what the torrent indexers are asked
 
 
 def test_torrent_queries_are_few():
