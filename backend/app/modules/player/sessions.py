@@ -118,28 +118,24 @@ def _video_args(info: dict, mode: str) -> list[str]:
 
 
 def keyframe_before(path: str, at: float) -> float:
-    """The last video keyframe at or before ``at`` (packet flags, nothing decoded).
+    """Where a copied picture really starts when ffmpeg seeks to ``at``.
 
-    A copied picture can only start at a keyframe, while ffmpeg cuts the audio exactly at ``at`` —
-    the stream then begins with up to a few seconds of picture without sound, and browsers (MSE)
-    line both starts up differently: the sound ended up that much early (Zkus mě rozesmát: 2.6 s).
-    Starting at the keyframe itself, both begin together."""
+    A copied picture can only start at a keyframe — the one the demuxer's seek lands on (in MKV
+    only keyframes listed in the index, seconds apart) — while ffmpeg cuts the audio exactly at
+    ``at``. The stream then began with picture without sound and browsers (MSE) lined both starts
+    up differently: the sound ended up that much early (Zkus mě rozesmát: 2.6 s). ffprobe seeks the
+    same way as ffmpeg, so its first packet is that keyframe; starting there, both begin together."""
     if at <= 0:
         return 0.0
-    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals",
-                        f"{max(0.0, at - 20):.3f}%{at + 0.5:.3f}", "-show_entries", "packet=pts_time,flags",
-                        "-of", "csv=p=0", path], capture_output=True, text=True, timeout=60)
-    keys = []
-    for line in r.stdout.splitlines():
-        pts, _, flags = line.partition(",")
-        try:
-            t = float(pts)
-        except ValueError:
-            continue
-        if "K" in flags and t <= at + 0.05:
-            keys.append(t)
-    # a hair after it: a rounded time just before the keyframe would make ffmpeg seek one GOP back
-    return max(keys) + 0.02 if keys else at
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals", f"{at:.3f}%+#1",
+                        "-show_entries", "packet=pts_time", "-of", "csv=p=0", path],
+                       capture_output=True, text=True, timeout=60)
+    try:
+        landed = float(r.stdout.split()[0].strip(","))
+    except (IndexError, ValueError):
+        return at
+    # a hair after it: a time rounded to just before the keyframe would make ffmpeg seek one further back
+    return landed + 0.02 if at - 30 < landed <= at + 0.05 else at
 
 
 async def start(user_id: int, movie_id: int, path: str, at: float, audio: int, wanted: str = "auto",
