@@ -57,6 +57,14 @@ interface MovieGroup {
 
 const QUALITY_RANK: Record<string, number> = { "2160p": 5, "1080p": 4, "720p": 3, "576p": 2, "480p": 1 };
 
+/** "Pelíšky" finds "pelisky" — lower case, no diacritics */
+const fold = (text: string) => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const matches = (query: string, ...texts: (string | null | undefined)[]) => {
+  const words = fold(query).split(/\s+/).filter(Boolean);
+  const hay = fold(texts.filter(Boolean).join(" "));
+  return words.every((w) => hay.includes(w));
+};
+
 function groupMovies(movies: LibraryMovie[]): MovieGroup[] {
   const groups = new Map<string, LibraryMovie[]>();
   for (const m of movies) {
@@ -172,6 +180,7 @@ export default function LibraryPage() {
     return c?.status === "better" ? c : null;
   };
   const [librarySort, setLibrarySort] = useState<LibrarySort>("default");
+  const [librarySearch, setLibrarySearch] = useState("");
   const [summary, setSummary] = useState<Partial<Record<LibraryStatus, number>>>({});
   const scanning = !!scan?.running;
   // fix names on disk
@@ -273,6 +282,10 @@ export default function LibraryPage() {
     const flag = QUALITY_FLAGS.find((f) => f.key === qualityFlag);
     if (flag) list = list.filter((g) => identified.includes(g) && flag.test(bestVersion(g), g));
     if (qualityFlag === "has_better") list = list.filter((g) => betterOf(g));
+    if (librarySearch.trim()) {
+      list = list.filter((g) => matches(librarySearch, g.main.title, g.main.original_title, g.main.year,
+        ...g.versions.map((v) => v.filename)));
+    }
     const score = (g: MovieGroup) => bestVersion(g).quality_score ?? 0;
     const size = (g: MovieGroup) => g.versions.reduce((s, v) => s + (v.file_size || 0), 0);
     const added = (g: MovieGroup) => g.versions.reduce((a, v) => (v.added_at > a ? v.added_at : a), "");
@@ -282,7 +295,7 @@ export default function LibraryPage() {
     if (librarySort === "added_desc") list = [...list].sort((a, b) => added(b).localeCompare(added(a)));
     return list;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, multiVersion, movieFilter, qualityFlag, librarySort, identified, upgradeChecks]);
+  }, [groups, multiVersion, movieFilter, qualityFlag, librarySort, identified, upgradeChecks, librarySearch]);
   const [versionsOf, setVersionsOf] = useState<MovieGroup | null>(null);
 
   function openMovie(movie: LibraryMovie) {
@@ -492,6 +505,9 @@ export default function LibraryPage() {
           Serialy ({shows.length})
         </button>
       </div>
+      <input type="search" value={librarySearch} onChange={(e) => setLibrarySearch(e.target.value)}
+        placeholder={tab === "filmy" ? "Hledat v knihovně — název, rok, soubor…" : "Hledat seriál…"}
+        className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-600" />
 
       {loading ? (
         <div className="text-zinc-500 animate-pulse text-center py-12">Nacitam...</div>
@@ -763,7 +779,7 @@ export default function LibraryPage() {
           </div>
         ) : (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-            {shows.map((show) => {
+            {shows.filter((show) => !librarySearch.trim() || matches(librarySearch, show.title, String(show.year ?? ""))).map((show) => {
               const progress = show.total_episodes > 0
                 ? Math.round((show.owned_episodes / show.total_episodes) * 100)
                 : 0;
