@@ -289,6 +289,11 @@ export default function LibraryPage() {
     const score = (g: MovieGroup) => bestVersion(g).quality_score ?? 0;
     const size = (g: MovieGroup) => g.versions.reduce((s, v) => s + (v.file_size || 0), 0);
     const added = (g: MovieGroup) => g.versions.reduce((a, v) => (v.added_at > a ? v.added_at : a), "");
+    // by title the Czech way (Č after C, "Šifra" under Š), the year second
+    if (librarySort === "default") {
+      list = [...list].sort((a, b) => (a.main.title || a.main.filename).localeCompare(b.main.title || b.main.filename, "cs",
+        { sensitivity: "base", numeric: true }) || String(a.main.year).localeCompare(String(b.main.year)));
+    }
     if (librarySort === "quality_asc") list = [...list].sort((a, b) => score(a) - score(b));
     if (librarySort === "quality_desc") list = [...list].sort((a, b) => score(b) - score(a));
     if (librarySort === "size_desc") list = [...list].sort((a, b) => size(b) - size(a));
@@ -779,7 +784,8 @@ export default function LibraryPage() {
           </div>
         ) : (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-            {shows.filter((show) => !librarySearch.trim() || matches(librarySearch, show.title, String(show.year ?? ""))).map((show) => {
+            {shows.filter((show) => !librarySearch.trim() || matches(librarySearch, show.title, String(show.year ?? "")))
+              .sort((a, b) => a.title.localeCompare(b.title, "cs", { sensitivity: "base", numeric: true })).map((show) => {
               const progress = show.total_episodes > 0
                 ? Math.round((show.owned_episodes / show.total_episodes) * 100)
                 : 0;
