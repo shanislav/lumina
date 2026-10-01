@@ -92,14 +92,14 @@ class QBittorrentClient:
             torrent_hash = info_hash(torrent)
             resp = await self._http.post(
                 f"{self._base_url}/api/v2/torrents/add",
-                data={"savepath": save_path},
+                data={"savepath": save_path} if save_path else {},
                 files={"torrents": ("lumina.torrent", torrent, "application/x-bittorrent")},
             )
             resp.raise_for_status()
             return torrent_hash
         resp = await self._http.post(
             f"{self._base_url}/api/v2/torrents/add",
-            data={"urls": magnet_url, "savepath": save_path},
+            data={"urls": magnet_url, **({"savepath": save_path} if save_path else {})},
         )
         resp.raise_for_status()
         return extract_hash_from_magnet(magnet_url)
