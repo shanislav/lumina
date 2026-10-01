@@ -6,6 +6,8 @@ import httpx
 from app.models.schemas import ScorableFile, ScoredFile
 from app.sources.base import TORRENT_SOURCES
 
+MIN_SEEDERS = 1   # same as app.core.offers.search
+
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -217,7 +219,7 @@ async def score_results(
         return []
 
     # Pre-filter: drop torrents with less than 10 seeders
-    files = [f for f in files if not (f.source in TORRENT_SOURCES and (f.seeders is None or f.seeders < 10))]
+    files = [f for f in files if not (f.source in TORRENT_SOURCES and (f.seeders is None or f.seeders < MIN_SEEDERS))]
     if not files:
         return []
 
@@ -386,7 +388,7 @@ def _fallback_scoring(
                 break
 
         # Filter out torrents with low seeders
-        if f.source in TORRENT_SOURCES and (f.seeders is None or f.seeders < 10):
+        if f.source in TORRENT_SOURCES and (f.seeders is None or f.seeders < MIN_SEEDERS):
             continue
 
         # Title relevance (main scoring factor)

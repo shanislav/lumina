@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # playable video files make sense for the library.
 DDL_VIDEO_EXTS = {"mkv", "mp4", "avi", "m4v", "ts", "m2ts", "wmv", "mov", "mpg", "mpeg", "webm", "divx", "ogm"}
 MAX_DDL_QUERIES = 6
-MIN_SEEDERS = 10
+MIN_SEEDERS = 1   # private trackers (Sk-CzTorrent) have few seeders even for good torrents; the count is shown
 DETAIL_SOURCES = ("webshare", "fastshare", "prowlarr")   # verification order: WebShare = one API call
 
 
