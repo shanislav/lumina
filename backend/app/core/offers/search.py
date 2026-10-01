@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 DDL_VIDEO_EXTS = {"mkv", "mp4", "avi", "m4v", "ts", "m2ts", "wmv", "mov", "mpg", "mpeg", "webm", "divx", "ogm"}
 MAX_DDL_QUERIES = 6
 MIN_SEEDERS = 10
-DETAIL_SOURCES = ("webshare", "fastshare")   # verification order: WebShare = one API call
+DETAIL_SOURCES = ("webshare", "fastshare", "prowlarr")   # verification order: WebShare = one API call
 
 
 def _clean_query(query: str) -> str:

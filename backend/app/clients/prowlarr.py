@@ -4,11 +4,15 @@ import logging
 
 import httpx
 
+from app.core import mediainfo_text
+from app.core.throttle import Throttle
 from app.models.schemas import TorrentResult
 
 logger = logging.getLogger(__name__)
 
 CATEGORIES = [2000, 5000]   # movies, TV
+# detail pages on the trackers themselves: a few at a time, politely
+PAGE_THROTTLE = Throttle("tracker pages", concurrency=2, interval=0.5, cooldown=600)
 
 
 class ProwlarrClient:
@@ -37,6 +41,20 @@ class ProwlarrClient:
                 description=item.get("indexer") or "",
             ))
         return results
+
+    async def details(self, info_url: str) -> dict | None:
+        """MediaInfo the uploader put on the tracker's detail page (audio tracks, length, HDR …)."""
+        if not info_url or PAGE_THROTTLE.cooling_down:
+            return None
+        async with PAGE_THROTTLE.slot():
+            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+                resp = await client.get(info_url)
+        if resp.status_code in (403, 429):
+            PAGE_THROTTLE.trip()
+            return None
+        if resp.status_code != 200:
+            return None
+        return mediainfo_text.parse(mediainfo_text.page_text(resp.text))
 
     async def test(self) -> None:
         resp = await self._http.get(f"{self._base_url}/api/v1/indexer")

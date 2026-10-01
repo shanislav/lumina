@@ -330,6 +330,13 @@ export async function removeDownload(
 
 // --- Source Management ---
 
+/** The sources switched on (no settings needed) */
+export async function getActiveSources(): Promise<{ type: string; name: string }[]> {
+  const res = await apiFetch(`${API_BASE}/api/sources/active`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
 export async function getSources(): Promise<Source[]> {
   const res = await apiFetch(`${API_BASE}/api/sources`);
   if (!res.ok) throw new Error(`Failed to load sources: ${res.status}`);

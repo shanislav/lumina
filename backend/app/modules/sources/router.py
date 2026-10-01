@@ -40,6 +40,17 @@ def _row_to_response(row) -> SourceResponse:
     )
 
 
+@router.get("/active", dependencies=[Depends(require("search"))])
+async def active_sources() -> list[dict]:
+    """The sources switched on (type and name only) — what the file search may offer as a filter."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT type, name FROM sources WHERE enabled = 1 ORDER BY id")
+        return [{"type": r["type"], "name": r["name"]} for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
 @router.get("", dependencies=[Depends(require("settings"))], response_model=list[SourceResponse])
 async def list_sources() -> list[SourceResponse]:
     db = await get_db()

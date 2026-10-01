@@ -10,9 +10,11 @@ import {
   LibraryAction,
   versionLabel,
   getFileDetails,
+  getActiveSources,
 } from "@/lib/api";
 
 const TORRENT = ["jackett", "prowlarr"];
+const SOURCE_SHORT: Record<string, string> = { webshare: "WS", fastshare: "FS", jackett: "Jackett", prowlarr: "Prowlarr" };
 import { useAuth } from "@/components/AuthGate";
 
 interface Props {
@@ -100,6 +102,9 @@ export default function FileTable({
   const generation = useRef(0);
 
   useEffect(() => setFilters(loadFilters()), []);
+  // only the sources that are switched on are offered as a filter
+  const [activeSources, setActiveSources] = useState<{ type: string; name: string }[]>([]);
+  useEffect(() => { getActiveSources().then(setActiveSources).catch(() => {}); }, []);
   function updateFilters(patch: Partial<Filters>) {
     // functional update: quick consecutive clicks must not overwrite each other
     setFilters((prev) => {
@@ -183,7 +188,9 @@ export default function FileTable({
       const f = r.file;
       if (upgrade && onlyBetter && !isUpgrade(f)) return false;
       if (f.film === "no" && !showJunk) return false;
-      if (filters.sources.length && !r.copies.some((c) => filters.sources.includes(c.source))) return false;
+      // a remembered choice of a source switched off since then does not hide everything
+      const sources = filters.sources.filter((x) => !activeSources.length || activeSources.some((a) => a.type === x));
+      if (sources.length && !r.copies.some((c) => sources.includes(c.source))) return false;
       if (filters.qualities.length && !filters.qualities.includes(f.resolution || "")) return false;
       if (filters.audio === "local" && f.lang_tier < 2) return false;
       if (filters.audio === "local_or_subs" && f.lang_tier < 1) return false;
@@ -201,7 +208,7 @@ export default function FileTable({
         || a.size - b.size;
     });
     return { view: sorted, junk: junkRows, hiddenByUpgrade: hidden };
-  }, [rows, filters, showJunk, preferLocalAudio, upgrade, onlyBetter, ownedSizes, canMoveDub, moveDub]);
+  }, [rows, filters, showJunk, preferLocalAudio, upgrade, onlyBetter, ownedSizes, canMoveDub, moveDub, activeSources]);
 
   const best = view.find((r) => r.file.film === "yes");
 
@@ -327,7 +334,7 @@ export default function FileTable({
         <MultiGroup label="Rozlišení" values={filters.qualities} onChange={(v) => updateFilters({ qualities: v })}
           options={[["2160p", "4K"], ["1080p", "1080p"], ["720p", "720p"], ["SD", "SD"]]} />
         <MultiGroup label="Zdroj" values={filters.sources} onChange={(v) => updateFilters({ sources: v })}
-          options={[["webshare", "WS"], ["fastshare", "FS"], ["jackett", "Jackett"], ["prowlarr", "Prowlarr"]]} />
+          options={activeSources.map((src) => [src.type, SOURCE_SHORT[src.type] ?? src.name] as [string, string])} />
         <FilterGroup label="Řadit" value={filters.sort} onChange={(v) => updateFilters({ sort: v as SortMode })}
           options={[["recommended", "Doporučené"], ["quality", "Kvalita"], ["bitrate", "Bitrate"], ["size", "Velikost"]]} />
       </div>
@@ -420,8 +427,8 @@ export default function FileTable({
 // ── cells ──
 
 const BATCH = 15;
-const DETAIL_SOURCES = new Set(["webshare", "fastshare"]);
-const SOURCE_ORDER = ["webshare", "fastshare"]; // cheapest verification first
+const DETAIL_SOURCES = new Set(["webshare", "fastshare", "prowlarr"]);
+const SOURCE_ORDER = ["webshare", "fastshare", "prowlarr"]; // cheapest verification first
 const FILM_ORDER: Record<string, number> = { yes: 0, unsure: 1, length: 2, no: 3 };
 // Czech/Slovak audio is what this library is about — highlight it.
 const LOCAL = new Set(["cs", "sk"]);
