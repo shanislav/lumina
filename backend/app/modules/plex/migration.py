@@ -209,6 +209,15 @@ async def check() -> dict:
         rows = await (await db.execute("SELECT * FROM plex_snapshot")).fetchall()
         snapshot = {r["rating_key"]: {**dict(r), "files": json.loads(r["files"])} for r in rows}
         result = compare(snapshot, now)
+        # Plex made a new item but carried the date added and the watched state over (by the film's id):
+        # nothing to repair — the new item takes the old one's place
+        renewed = [r for r in result["readded"] if r["new"]["added_at"] == r["old"]["added_at"]
+                   and r["new"]["view_count"] >= r["old"]["view_count"]]
+        result["readded"] = [r for r in result["readded"] if r not in renewed]
+        for r in renewed:
+            n = r["new"]
+            await db.execute("UPDATE plex_snapshot SET rating_key = ?, files = ? WHERE rating_key = ?",
+                             (n["rating_key"], json.dumps(n["files"]), r["old"]["rating_key"]))
         # Renamed files are the new normal; a film added meanwhile (a download) is no problem. A missing
         # movie stays in the snapshot, so every later check reports it again until it is dealt with.
         for m in result["moved"]:
@@ -224,8 +233,9 @@ async def check() -> dict:
             "moved": len(result["moved"]),
             "unchanged": result["unchanged"],
             "new": [_brief(m) for m in result["new"]],
+            "renewed": [_brief(r["new"]) for r in renewed],
             "missing": [{**_brief(m), "files": m["files"]} for m in result["missing"] + result["gone"]
-                        if m["tmdb_id"] not in {r["old"]["tmdb_id"] for r in result["readded"]}],
+                        if m["tmdb_id"] not in {r["old"]["tmdb_id"] for r in result["readded"] + renewed}],
             "readded": [{"title": r["old"]["title"], "year": r["old"]["year"], "old_key": r["old"]["rating_key"],
                          "new_key": r["new"]["rating_key"], "watched": r["old"]["view_count"] > 0,
                          "added_at": r["old"]["added_at"]} for r in result["readded"]],

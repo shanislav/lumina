@@ -36,13 +36,12 @@ export default function RenameChecklist({ count, onPick, batches }: {
     return () => clearTimeout(t);
   }, [plex, load]);
 
-  // after a batch: one scan + check
+  // after a batch (the library page ran the Plex checks itself): show the result
   useEffect(() => {
     if (batches === lastBatches.current) return;
     lastBatches.current = batches;
-    if (plex?.active) runCheck();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batches]);
+    load();
+  }, [batches, load]);
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -116,8 +115,8 @@ export default function RenameChecklist({ count, onPick, batches }: {
           {count > 20 && <b> · {count} filmů, doporučeno</b>}
         </p>
         <p>
-          Lumina si zapamatuje filmy v Plexu (zhlédnuto, datum přidání), vypne Plexu automatiku níže, po každé dávce Plex jednou
-          prohledá a zkontroluje, že každý film zůstal stejný. Na konci vysype koš a vrátí nastavení, jak bylo.
+          Lumina si zapamatuje filmy v Plexu (zhlédnuto, datum přidání), vypne Plexu automatiku níže a každou dávku udělá ve
+          dvou krocích — nejdřív názvy souborů, pak složky, po každém Plex jednou prohledá — a zkontroluje, že každý film zůstal stejný. Na konci vysype koš a vrátí nastavení, jak bylo.
         </p>
         {settingsList}
         <ol className="list-decimal space-y-1 pl-5">{radarr}{trial}</ol>
@@ -153,6 +152,7 @@ export default function RenameChecklist({ count, onPick, batches }: {
         <div className="space-y-1">
           <p>
             Poslední kontrola: <span className="text-emerald-300">{report.moved} přejmenováno a v Plexu zachováno</span>
+            {!!report.renewed?.length && <span className="text-emerald-300"> · {report.renewed.length} s novým ID v Plexu (zhlédnuto a datum přidání zachováno)</span>}
             {" · "}{report.unchanged} beze změny{report.new.length > 0 && ` · ${report.new.length} nových`}
             {!problems && <span className="text-emerald-300"> · vše v pořádku</span>}
           </p>

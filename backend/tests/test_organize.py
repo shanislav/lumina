@@ -219,3 +219,28 @@ async def test_two_versions_with_the_same_name_keep_2(library):
     assert videos == {first.name: f"{stem}.mkv"}          # the "(2)" one needs no change
     assert not plan["conflicts"]
 
+
+
+async def test_names_first_then_folders(library):
+    """A big rename for Plex: new file names in the old folder, then the folder with names unchanged."""
+    root = str(library)
+    old = library / "2017" / "Blade Runner (1982)"
+    os.rename(library / "2017" / "Blade Runner 2049 (2017)", old)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("UPDATE library_movies SET file_path = replace(file_path, 'Blade Runner 2049 (2017)', 'Blade Runner (1982)')")
+    name = "Blade Runner 2049 (2017) [720p x264] [CS+EN] {tmdb-335984}"
+    db = await get_db()
+    try:
+        names = organize.names_only(await organize.plan_movie(db, NoTMDB(), 1, root))
+        assert all(os.path.dirname(op["src"]) == os.path.dirname(op["dst"]) for op in names["ops"])
+        assert not names["remove_folder"]
+        await organize.apply_plan(db, names, root)
+        assert (old / f"{name}.mkv").exists() and (old / f"{name}.cs.srt").exists()
+
+        rest = await organize.plan_movie(db, NoTMDB(), 1, root)
+        assert rest["ops"] and all(os.path.basename(op["src"]) == os.path.basename(op["dst"]) for op in rest["ops"])
+        await organize.apply_plan(db, rest, root)
+        assert (library / "2017" / "Blade Runner 2049 (2017)" / f"{name}.mkv").exists()
+        assert not old.exists()
+    finally:
+        await db.close()

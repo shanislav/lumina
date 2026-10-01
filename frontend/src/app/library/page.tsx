@@ -19,6 +19,8 @@ import {
   getOrganizePlan,
   getOrganizePlanAll,
   applyOrganize,
+  checkPlexMigrationAndWait,
+  getPlexMigration,
   undoOrganize,
   getLibraryMovies,
   getLibraryShows,
@@ -176,6 +178,7 @@ export default function LibraryPage() {
   const [moviePlan, setMoviePlan] = useState<OrganizePlan | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
+  const [planStep, setPlanStep] = useState<string | null>(null);   // what a long rename is doing now
   const [bulkOpen, setBulkOpen] = useState(false);
   const [batches, setBatches] = useState(0);     // applied/undone rename batches (the Plex check follows each)
   const [bulkPlans, setBulkPlans] = useState<OrganizePlan[] | null>(null);
@@ -327,7 +330,25 @@ export default function LibraryPage() {
   async function runOrganize(movieIds: number[]) {
     setPlanBusy(true);
     try {
-      const result = await applyOrganize(movieIds);
+      // With a Plex migration running: names first (files stay in their folders), a Plex check, then the
+      // folders, another check — Plex keeps a movie only when one of the two changes at a time (decisions/0008)
+      const plex = await getPlexMigration().catch(() => null);
+      let result: OrganizeResult;
+      if (plex?.active) {
+        setPlanStep("Přejmenovávám soubory…");
+        const names = await applyOrganize(movieIds, "names");
+        setPlanStep("Plex prohledává knihovnu (1/2)…");
+        await checkPlexMigrationAndWait();
+        setPlanStep("Přesouvám složky…");
+        const folders = await applyOrganize(movieIds);
+        setPlanStep("Plex prohledává knihovnu (2/2)…");
+        await checkPlexMigrationAndWait();
+        const titles = new Set(folders.done.map((d) => d.title));
+        result = { ...folders, done: [...folders.done, ...names.done.filter((d) => !titles.has(d.title))],
+                   failed: [...names.failed, ...folders.failed] };
+      } else {
+        result = await applyOrganize(movieIds);
+      }
       setOrganizeResult(result);
       setMoviePlan(null);
       setBatches((n) => n + 1);
@@ -337,6 +358,7 @@ export default function LibraryPage() {
       setPlanError(e instanceof Error ? e.message : "Chyba");
     } finally {
       setPlanBusy(false);
+      setPlanStep(null);
     }
   }
 
@@ -344,12 +366,17 @@ export default function LibraryPage() {
     setPlanBusy(true);
     try {
       await undoOrganize(batchId);
+      if ((await getPlexMigration().catch(() => null))?.active) {
+        setPlanStep("Plex prohledává knihovnu…");
+        await checkPlexMigrationAndWait();
+      }
       setOrganizeResult(null);
       setBatches((n) => n + 1);
       await loadData();
       if (bulkOpen) await openBulk();
     } finally {
       setPlanBusy(false);
+      setPlanStep(null);
     }
   }
 
@@ -1172,7 +1199,7 @@ export default function LibraryPage() {
                 <div className="flex justify-end">
                   <button onClick={() => runOrganize(Array.from(bulkSelected))} disabled={planBusy || bulkSelected.size === 0}
                     className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-700 text-white text-sm font-medium">
-                    {planBusy ? "Opravuji…" : `Opravit ${bulkSelected.size} filmů`}
+                    {planBusy ? (planStep || "Opravuji…") : `Opravit ${bulkSelected.size} filmů`}
                   </button>
                 </div>
               </>

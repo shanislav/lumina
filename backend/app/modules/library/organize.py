@@ -178,6 +178,15 @@ def _plan_group(rows: list[dict], details: dict, root: str, settings: dict) -> d
     }
 
 
+def names_only(plan: dict) -> dict:
+    """The first half of a plan: new file names, each file staying in its folder. Plex keeps a movie
+    whose file got another name in the same folder, and one whose folder moved with the file names
+    unchanged — but not both at once (decisions/0008), so a big rename goes names first, then folders."""
+    ops = [{**op, "dst": os.path.join(os.path.dirname(op["src"]), os.path.basename(op["dst"]))} for op in plan["ops"]]
+    ops = [op for op in ops if op["src"] != op["dst"]]
+    return {**plan, "ops": ops, "conflicts": _conflicts(ops), "target_folder": plan["folder"], "remove_folder": False}
+
+
 def _conflicts(ops: list[dict]) -> list[str]:
     problems = []
     sources = {os.path.normcase(op["src"]) for op in ops}

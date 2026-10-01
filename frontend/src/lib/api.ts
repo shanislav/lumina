@@ -992,11 +992,12 @@ export async function getOrganizePlanAll(): Promise<OrganizePlan[]> {
   return res.json();
 }
 
-export async function applyOrganize(movieIds: number[]): Promise<OrganizeResult> {
+/** stage "names": only new file names, files stay in their folders (the first half of a rename with Plex) */
+export async function applyOrganize(movieIds: number[], stage: "all" | "names" = "all"): Promise<OrganizeResult> {
   const res = await apiFetch(`${API_BASE}/api/library/organize`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ movie_ids: movieIds }),
+    body: JSON.stringify({ movie_ids: movieIds, stage }),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
   return res.json();
@@ -1238,6 +1239,7 @@ export interface PlexMigrationReport {
   moved: number;
   unchanged: number;
   new: PlexMovieBrief[];
+  renewed?: PlexMovieBrief[];   // Plex gave a new id, watched state and date added carried over
   missing: PlexMovieBrief[];
   readded: { title: string; year: number | null; old_key: string; new_key: string; watched: boolean; added_at: number | null }[];
 }
@@ -1273,6 +1275,19 @@ async function plexMigrationPost(path: string, body?: object): Promise<any> {
 }
 
 export const startPlexMigration = (): Promise<PlexMigration> => plexMigrationPost("start");
+
+/** One Plex scan + check, waiting until it is done. */
+export async function checkPlexMigrationAndWait(): Promise<PlexMigration | null> {
+  await plexMigrationPost("check");
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const state = await getPlexMigration();
+    if (!state?.job?.running) {
+      if (state?.job?.error) throw new Error(`Kontrola Plexu selhala: ${state.job.error}`);
+      return state;
+    }
+  }
+}
 export const checkPlexMigration = (): Promise<{ started: boolean }> => plexMigrationPost("check");
 export const finishPlexMigration = (emptyTrash: boolean, repair: boolean): Promise<{ repaired: number; emptied: boolean }> =>
   plexMigrationPost("finish", { empty_trash: emptyTrash, repair });

@@ -3,6 +3,7 @@
 import json
 import os
 import logging
+from typing import Literal
 
 from fastapi import Depends, APIRouter
 from pydantic import BaseModel
@@ -341,6 +342,9 @@ async def delete_library_show(tmdb_id: int):
 
 class OrganizeRequest(BaseModel):
     movie_ids: list[int]
+    # "names": only new file names, files stay in their folders (Plex keeps movies — decisions/0008);
+    # "all": names and folders
+    stage: Literal["all", "names"] = "all"
 
 
 async def _organize_context():
@@ -401,6 +405,8 @@ async def organize_apply(body: OrganizeRequest):
                 continue
             try:
                 plan = await organize.plan_movie(db, client, movie_id, root)
+                if body.stage == "names":
+                    plan = organize.names_only(plan)
                 handled.update(plan["movie_ids"])
                 if not plan["ops"]:
                     continue

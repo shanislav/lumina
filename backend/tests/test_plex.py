@@ -225,3 +225,15 @@ async def test_cancel_deletes_nothing(server):
     await migration.finish(empty_trash=False, repair=False)
     assert not any(c[0] == "empty" for c in FakeServer.calls)
     assert FakeServer.prefs_now["FSEventLibraryUpdatesEnabled"] is True
+
+
+async def test_a_new_item_with_the_old_state_needs_no_repair(server):
+    migration = server
+    await migration.start()
+    FakeServer.after_scan = [FakeServer.items_now[0],
+                             meta("9", 22, ["/share/Video/Movies/2000/B2/b.mkv"], viewed=2, added=777)]
+    report = await migration.check()
+    assert report["readded"] == [] and report["missing"] == []
+    assert [m["rating_key"] for m in report["renewed"]] == ["9"]
+    again = await migration.check()                                         # the new item is the snapshot's now
+    assert again["renewed"] == [] and again["unchanged"] == 2
