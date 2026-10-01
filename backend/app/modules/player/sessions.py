@@ -118,24 +118,25 @@ def _video_args(info: dict, mode: str) -> list[str]:
 
 
 def keyframe_before(path: str, at: float) -> float:
-    """Where a copied picture really starts when ffmpeg seeks to ``at``.
+    """Where a copied picture really starts when ffmpeg seeks to ``at``: the keyframe its seek lands on.
 
-    A copied picture can only start at a keyframe — the one the demuxer's seek lands on (in MKV
-    only keyframes listed in the index, seconds apart) — while ffmpeg cuts the audio exactly at
-    ``at``. The stream then began with picture without sound and browsers (MSE) lined both starts
-    up differently: the sound ended up that much early (Zkus mě rozesmát: 2.6 s). ffprobe seeks the
-    same way as ffmpeg, so its first packet is that keyframe; starting there, both begin together."""
+    A copied picture can only start at a keyframe, while ffmpeg cut the audio exactly at ``at`` —
+    the stream began with picture without sound and browsers (MSE) lined both starts up differently:
+    the sound ended up that much early (Zkus mě rozesmát: 2.6 s). So the copy is started with
+    ``-noaccurate_seek`` (the audio is not trimmed either, both begin at that keyframe) and the
+    player's clock starts there. ffmpeg seeks 3/23 s earlier than asked when a video stream has
+    B-frames (fftools); ffprobe does the same seek from there, its first packet is the keyframe."""
     if at <= 0:
         return 0.0
-    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals", f"{at:.3f}%+#1",
+    target = max(0.0, at - 3 / 23)
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals", f"{target:.3f}%+#1",
                         "-show_entries", "packet=pts_time", "-of", "csv=p=0", path],
                        capture_output=True, text=True, timeout=60)
     try:
         landed = float(r.stdout.split()[0].strip(","))
     except (IndexError, ValueError):
         return at
-    # a hair after it: a time rounded to just before the keyframe would make ffmpeg seek one further back
-    return landed + 0.02 if at - 30 < landed <= at + 0.05 else at
+    return landed if at - 60 < landed <= at + 0.05 else at
 
 
 async def start(user_id: int, movie_id: int, path: str, at: float, audio: int, wanted: str = "auto",
@@ -147,8 +148,9 @@ async def start(user_id: int, movie_id: int, path: str, at: float, audio: int, w
     elif audio >= len(info["audio"]):
         audio = 0
     at = max(0.0, min(at, max(0.0, info["duration"] - 5)))
+    seek = at
     if mode == "original":
-        at = await asyncio.to_thread(keyframe_before, path, at)
+        at = await asyncio.to_thread(keyframe_before, path, seek)
     for s in [s for s in _sessions.values() if s.user_id == user_id]:
         await stop(s.id)
     while len(_sessions) >= MAX_SESSIONS:
@@ -157,7 +159,7 @@ async def start(user_id: int, movie_id: int, path: str, at: float, audio: int, w
     d = ROOT / sid
     d.mkdir(parents=True, exist_ok=True)
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-readrate", "2", "-readrate_initial_burst", "20",
-           "-ss", f"{at:.3f}", "-i", path, "-map", "0:v:0"]
+           *(["-noaccurate_seek"] if mode == "original" else []), "-ss", f"{seek:.3f}", "-i", path, "-map", "0:v:0"]
     if audio >= 0:
         cmd += ["-map", f"0:a:{audio}", "-c:a", "aac", "-ac", "2", "-b:a", "160k"]
     cmd += _video_args(info, mode)
