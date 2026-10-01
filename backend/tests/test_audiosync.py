@@ -154,3 +154,15 @@ def test_a_drifting_stretch_then_a_jump_is_two_segments_with_a_slope():
     a, b = segs
     assert 0.00015 < a.slope < 0.00025 and abs(a.at(2068) - (-1.74)) < 0.05      # follows the drift
     assert abs(b.at(4000) - (-2.04)) < 0.05
+
+
+def test_a_third_offset_between_two_segments_is_another_stretch():
+    """Christmas Vacation CZ vs EN: 0.79 before, 0.60 for ~55 s, then 0.28 — two cuts, not one."""
+    from app.modules.audiosync.analyze import Window, middle_run
+    ws = [Window(at=float(t), offset=o, score=0.2 if good else 0.01, sharpness=5.0 if good else 1.0)
+          for t, o, good in [(2140, 0.78, True), (2150, 0.76, True), (2180, 0.60, True), (2195, 0.61, True),
+                             (2210, 0.85, False), (2225, 0.63, True), (2240, 0.28, True)]]
+    run = middle_run(ws, 0.79, 0.28)
+    assert [w.at for w in run] == [2180, 2195, 2225]
+    # a lone odd window is noise
+    assert middle_run([ws[0], ws[2], ws[-1]], 0.79, 0.28) == []

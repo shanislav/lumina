@@ -373,6 +373,8 @@ MIN_GAP_S = 0.3         # shorter "missing" stretches are noise at the cut point
 SCAN_STEP_S = 20.0      # coarse search for a cut: one window every this many seconds
 FINE_WINDOW_S = 10.0    # then short windows …
 FINE_STEP_S = 5.0       # … this far apart narrow it to a few seconds
+MID_WINDOW_S = 20.0     # between two segments: windows this long …
+MID_STEP_S = 10.0       # … this far apart look for a third offset (two cuts close together)
 
 
 def _aligned_other(other_path: str, other_track: int, speed: float, offset: float, lo: float,
@@ -474,8 +476,64 @@ def find_cut(ref_path: str, ref_track: int, other_path: str, other_track: int, s
     return t1, t1 + gap_s
 
 
+def middle_run(windows: list[Window], o1: float, o2: float) -> list[Window]:
+    """The longest run of trustworthy windows that agree on an offset that is neither o1 nor o2
+    (untrustworthy windows in between do not break it, one fitting o1/o2 does). At least two."""
+    runs: list[list[Window]] = [[]]
+    for w in windows:
+        if not w.good:
+            continue
+        if abs(w.offset - o1) <= SAME_OFFSET_S or abs(w.offset - o2) <= SAME_OFFSET_S:
+            runs.append([])
+        elif runs[-1] and abs(w.offset - runs[-1][-1].offset) <= SAME_OFFSET_S:
+            runs[-1].append(w)
+        else:
+            runs.append([w])
+    best = max(runs, key=len)
+    return best if len(best) >= 2 else []
+
+
+def _middle(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
+            s1: Segment, s2: Segment) -> Segment | None:
+    """Two cuts close together (Christmas Vacation CZ: −0.16 s, ~55 s later −0.33 s) look like one
+    from far: between the segments short windows find the stretch with its own offset."""
+    lo, hi = s1.end - WINDOW_S, s2.start + WINDOW_S
+    if hi - lo < 2 * MID_WINDOW_S + MID_STEP_S:
+        return None
+    o1, o2 = s1.at(s1.end), s2.at(s2.start)
+    margin = abs(o1 - o2) / 2 + 20
+    windows = [_measure(ref_path, ref_track, other_path, other_track, float(at), speed, (o1 + o2) / 2, margin,
+                        window=MID_WINDOW_S)
+               for at in np.arange(lo + MID_STEP_S, hi - MID_WINDOW_S - MID_STEP_S + 0.01, MID_STEP_S)]
+    run = middle_run(windows, o1, o2)
+    if not run:
+        return None
+    offset = float(np.median([w.offset for w in run]))
+    # as a segment of long windows: find_cut takes a cut ≥ 0.4 W after the last fitting window start and
+    # ≤ 0.6 W after the first one; a short window may sit with a quarter of it across a cut
+    start = run[0].at + 0.75 * MID_WINDOW_S - 0.6 * WINDOW_S
+    end = run[-1].at + 0.25 * MID_WINDOW_S - 0.4 * WINDOW_S + WINDOW_S
+    logger.info("audiosync: between %.2f and %.2f another offset %.2f (%.0f–%.0f s)", o1, o2, offset,
+                run[0].at, run[-1].at + MID_WINDOW_S)
+    return Segment(start=start, end=end, offset=offset)
+
+
+def with_middles(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
+                 segments: list[Segment], depth: int = 2) -> list[Segment]:
+    out = [segments[0]]
+    for s2 in segments[1:]:
+        s1 = out[-1]
+        mid = _middle(ref_path, ref_track, other_path, other_track, speed, s1, s2) if depth else None
+        if mid:
+            out[-1:] = with_middles(ref_path, ref_track, other_path, other_track, speed, [s1, mid, s2], depth - 1)
+        else:
+            out.append(s2)
+    return out
+
+
 def cut_pieces(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
                segments: list[Segment], duration: float, progress=None) -> list[dict]:
+    segments = with_middles(ref_path, ref_track, other_path, other_track, speed, segments)
     pieces: list[dict] = []
     start = 0.0
     for k, (s1, s2) in enumerate(zip(segments, segments[1:])):
