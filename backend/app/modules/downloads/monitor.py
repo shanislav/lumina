@@ -9,9 +9,31 @@ from app.config import get_effective_settings
 from app.clients.aria2 import Aria2Client
 from app.clients.qbittorrent import QBittorrentClient
 from app.core import events
+from app.core.paths import map_path
 from app.db import DB_PATH
 
 logger = logging.getLogger("app.modules.downloads.monitor")
+
+SEEDING_DIR = ".lumina-import"
+
+
+def _seeding_copy(path: str, torrent_hash: str) -> str:
+    """A hard link of a finished torrent's video next to it (a copy across file systems) — the import
+    takes that one, the torrent's own file stays for seeding (private trackers want a ratio)."""
+    folder = os.path.join(os.path.dirname(path), SEEDING_DIR, torrent_hash[:16])
+    os.makedirs(folder, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(path))[0]
+    # the video and its subtitles ("Film.cs.srt")
+    for name in os.listdir(os.path.dirname(path)):
+        if name == os.path.basename(path) or (name.startswith(stem + ".") and name.lower().endswith((".srt", ".ass", ".ssa", ".sub", ".idx"))):
+            src, dst = os.path.join(os.path.dirname(path), name), os.path.join(folder, name)
+            if not os.path.exists(dst):
+                try:
+                    os.link(src, dst)
+                except OSError:
+                    import shutil
+                    shutil.copy2(src, dst)
+    return os.path.join(folder, os.path.basename(path))
 
 _monitor_running = False
 
@@ -71,10 +93,12 @@ async def _monitor_loop():
                                 progress = t.get("progress", 0)
                                 # Completed states or progress == 1.0
                                 if state in ("uploading", "stalledUP", "pausedUP", "forcedUP", "queuedUP", "checkingUP") or progress >= 1.0:
-                                    save_path = t.get("save_path", "") or t.get("content_path", "")
-                                    name = t.get("name", "")
-                                    if save_path and name:
-                                        candidate = os.path.join(save_path, name)
+                                    # content_path = the file or the torrent's folder, as qBittorrent sees it
+                                    rule = cfg.get("qbittorrent_path_map", "")
+                                    candidate = map_path(t.get("content_path", ""), rule, to_lumina=True)
+                                    if not candidate and t.get("save_path") and t.get("name"):
+                                        candidate = map_path(os.path.join(t["save_path"], t["name"]), rule, to_lumina=True)
+                                    if candidate:
                                         if os.path.exists(candidate):
                                             if os.path.isdir(candidate):
                                                 # Find largest video file in folder
@@ -86,6 +110,10 @@ async def _monitor_loop():
                                                                 completed_path = fp
                                             else:
                                                 completed_path = candidate
+                                    if completed_path:
+                                        # the library moves and renames what it imports — qBittorrent keeps
+                                        # seeding its own file, the library gets a hard link (same data, no space)
+                                        completed_path = _seeding_copy(completed_path, did)
                                     logger.info("qBittorrent %s complete: state=%s path=%s", did[:8], state, completed_path)
                             except Exception as qe:
                                 logger.error("qBittorrent check failed for %s: %s", did[:8], qe)

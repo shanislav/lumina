@@ -25,6 +25,7 @@ DEFAULTS = {
     "qbittorrent_url": "",
     "qbittorrent_username": "admin",
     "qbittorrent_password": "",
+    "qbittorrent_path_map": "",
     "min_relevance_score": "70",
     # quality of found files (app/core/quality.py)
     "quality_prefer_local": "true",   # CZ/SK audio first in "Doporučené"

@@ -52,6 +52,8 @@ async def get_effective_settings() -> dict[str, str]:
         "qbittorrent_url": db_settings.get("qbittorrent_url") or env.qbittorrent_url,
         "qbittorrent_username": db_settings.get("qbittorrent_username") or env.qbittorrent_username,
         "qbittorrent_password": db_settings.get("qbittorrent_password") or env.qbittorrent_password,
+        # qBittorrent outside Docker sees the share elsewhere: "lumina prefix=qbittorrent prefix"
+        "qbittorrent_path_map": db_settings.get("qbittorrent_path_map") or "",
         "min_relevance_score": db_settings.get("min_relevance_score") or "70",
         "languages": db_settings.get("languages") or "cs",
         # language of titles/overviews from TMDB (Objevit, search) — separate from the audio preference

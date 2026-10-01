@@ -4,6 +4,7 @@ import logging
 import httpx
 
 from app.models.schemas import ScorableFile, ScoredFile
+from app.sources.base import TORRENT_SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,7 @@ async def score_results(
         return []
 
     # Pre-filter: drop torrents with less than 10 seeders
-    files = [f for f in files if not (f.source == "jackett" and (f.seeders is None or f.seeders < 10))]
+    files = [f for f in files if not (f.source in TORRENT_SOURCES and (f.seeders is None or f.seeders < 10))]
     if not files:
         return []
 
@@ -237,7 +238,7 @@ async def score_results(
     if not files:
         return local_scored + overflow_scored
 
-    prefix_map = {"webshare": "[WS]", "fastshare": "[FS]", "jackett": "[T]"}
+    prefix_map = {"webshare": "[WS]", "fastshare": "[FS]", "jackett": "[T]", "prowlarr": "[T]"}
     lines = []
     for i, f in enumerate(files):
         prefix = prefix_map.get(f.source, f"[{f.source[:2].upper()}]")
@@ -375,7 +376,7 @@ def _fallback_scoring(
     for i, f in enumerate(files):
         name_lower = f.name.lower()
         ext = "." + name_lower.rsplit(".", 1)[-1] if "." in name_lower else ""
-        is_video = ext in video_exts or f.source in ("jackett", "webshare", "fastshare")
+        is_video = ext in video_exts or f.source in ("webshare", "fastshare", *TORRENT_SOURCES)
         is_lang = any(tag in name_lower for tag in all_tags)
 
         quality = "unknown"
@@ -385,7 +386,7 @@ def _fallback_scoring(
                 break
 
         # Filter out torrents with low seeders
-        if f.source == "jackett" and (f.seeders is None or f.seeders < 10):
+        if f.source in TORRENT_SOURCES and (f.seeders is None or f.seeders < 10):
             continue
 
         # Title relevance (main scoring factor)

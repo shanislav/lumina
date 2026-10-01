@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 
@@ -22,6 +23,35 @@ def extract_hash_from_magnet(magnet_url: str) -> str:
     return ""
 
 
+def _bencode_end(data: bytes, i: int) -> int:
+    """Index just past the bencoded value starting at ``i``."""
+    c = data[i:i + 1]
+    if c == b"i":
+        return data.index(b"e", i) + 1
+    if c in (b"l", b"d"):
+        i += 1
+        while data[i:i + 1] != b"e":
+            i = _bencode_end(data, i)
+        return i + 1
+    colon = data.index(b":", i)
+    return colon + 1 + int(data[i:colon])
+
+
+def info_hash(torrent: bytes) -> str:
+    """The info hash of a .torrent file (SHA-1 of its bencoded "info" dictionary)."""
+    if torrent[:1] != b"d":
+        raise ValueError("not a torrent file")
+    i = 1
+    while torrent[i:i + 1] != b"e":
+        key_end = _bencode_end(torrent, i)
+        key = torrent[torrent.index(b":", i) + 1:key_end]
+        value_end = _bencode_end(torrent, key_end)
+        if key == b"info":
+            return hashlib.sha1(torrent[key_end:value_end]).hexdigest()
+        i = value_end
+    raise ValueError("torrent file without info")
+
+
 class QBittorrentClient:
     def __init__(self, base_url: str, username: str, password: str) -> None:
         self._base_url = base_url.rstrip("/")
@@ -44,8 +74,29 @@ class QBittorrentClient:
         logger.info("qBittorrent login successful")
 
     async def add_torrent(self, magnet_url: str, save_path: str) -> str:
-        """Add a torrent via magnet link. Returns the info hash."""
+        """Add a torrent by a magnet link or a link to a .torrent file (private trackers through
+        Jackett / Prowlarr give those). Returns the info hash."""
         await self.login()
+        if not magnet_url.startswith("magnet:"):
+            # Lumina fetches the file itself (the indexer is reachable from here, not always from
+            # qBittorrent) — a link may also redirect to a magnet
+            async with httpx.AsyncClient(timeout=30, follow_redirects=False) as http:
+                resp = await http.get(magnet_url)
+                while resp.is_redirect:
+                    target = resp.headers.get("location", "")
+                    if target.startswith("magnet:"):
+                        return await self.add_torrent(target, save_path)
+                    resp = await http.get(httpx.URL(magnet_url).join(target))
+                resp.raise_for_status()
+            torrent = resp.content
+            torrent_hash = info_hash(torrent)
+            resp = await self._http.post(
+                f"{self._base_url}/api/v2/torrents/add",
+                data={"savepath": save_path},
+                files={"torrents": ("lumina.torrent", torrent, "application/x-bittorrent")},
+            )
+            resp.raise_for_status()
+            return torrent_hash
         resp = await self._http.post(
             f"{self._base_url}/api/v2/torrents/add",
             data={"urls": magnet_url, "savepath": save_path},
@@ -68,6 +119,10 @@ class QBittorrentClient:
         return {
             "hash": t.get("hash", ""),
             "status": t.get("state", "unknown"),
+            "state": t.get("state", "unknown"),
+            "name": t.get("name", ""),
+            "save_path": t.get("save_path", ""),
+            "content_path": t.get("content_path", ""),
             "progress": t.get("progress", 0),
             "download_speed": t.get("dlspeed", 0),
             "total_size": t.get("total_size", 0),

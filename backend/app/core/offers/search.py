@@ -14,7 +14,7 @@ from app.core.offers.evaluate import RELEVANCE, MovieContext, evaluate, recommen
 from app.core.quality import Prefs, prefs_from_settings
 from app.core.text import clean_text
 from app.models.schemas import ScorableFile
-from app.sources.base import SearchResult, SourceType
+from app.sources.base import TORRENT_SOURCES, SearchResult
 from app.sources.registry import SourceRegistry
 
 logger = logging.getLogger(__name__)
@@ -227,7 +227,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     tasks = [
         _safe_search(source, q)
         for source in sources
-        for q in (unique_queries if source.source_type == SourceType.JACKETT else ddl)
+        for q in (unique_queries if source.source_type.value in TORRENT_SOURCES else ddl)
     ]
     results_per_task = await asyncio.gather(*tasks)
 
@@ -236,9 +236,9 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     for batch in results_per_task:
         for r in batch:
             r.name = clean_text(r.name)   # any source: one broken name must not break the search
-            if r.source_type != SourceType.JACKETT and not is_video_name(r.name):
+            if r.source_type.value not in TORRENT_SOURCES and not is_video_name(r.name):
                 continue
-            if r.source_type == SourceType.JACKETT and (r.seeders or 0) < MIN_SEEDERS:
+            if r.source_type.value in TORRENT_SOURCES and (r.seeders or 0) < MIN_SEEDERS:
                 continue   # torrents nobody seeds are useless
             if r.ident not in seen_idents:
                 seen_idents.add(r.ident)

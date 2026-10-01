@@ -11,6 +11,8 @@ import {
   versionLabel,
   getFileDetails,
 } from "@/lib/api";
+
+const TORRENT = ["jackett", "prowlarr"];
 import { useAuth } from "@/components/AuthGate";
 
 interface Props {
@@ -38,6 +40,7 @@ const BADGE_STYLES: Record<string, { bg: string; label: string }> = {
   webshare: { bg: "bg-violet-900/60 text-violet-300", label: "WS" },
   fastshare: { bg: "bg-cyan-900/60 text-cyan-300", label: "FS" },
   jackett: { bg: "bg-orange-900/60 text-orange-300", label: "T" },
+  prowlarr: { bg: "bg-orange-900/60 text-orange-300", label: "T" },
 };
 
 function SourceBadge({ file }: { file: ScoredFile }) {
@@ -46,7 +49,7 @@ function SourceBadge({ file }: { file: ScoredFile }) {
   const badge = (
     <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${style.bg} ${link ? "cursor-pointer hover:opacity-80" : ""}`}>
       {style.label}
-      {file.seeders != null && file.source === "jackett" && <span className="ml-1 opacity-70">{file.seeders}</span>}
+      {file.seeders != null && TORRENT.includes(file.source) && <span className="ml-1 opacity-70">{file.seeders}</span>}
     </span>
   );
   return link ? (
@@ -155,7 +158,7 @@ export default function FileTable({
     // same file on several sources → one row
     const bySize = new Map<string, ScoredFile[]>();
     for (const f of merged) {
-      const k = f.source === "jackett" ? `t:${keyOf(f)}` : `s:${f.size}`;
+      const k = TORRENT.includes(f.source) ? `t:${keyOf(f)}` : `s:${f.size}`;
       bySize.set(k, [...(bySize.get(k) ?? []), f]);
     }
     return Array.from(bySize, ([key, copies]): Row => ({
@@ -324,7 +327,7 @@ export default function FileTable({
         <MultiGroup label="Rozlišení" values={filters.qualities} onChange={(v) => updateFilters({ qualities: v })}
           options={[["2160p", "4K"], ["1080p", "1080p"], ["720p", "720p"], ["SD", "SD"]]} />
         <MultiGroup label="Zdroj" values={filters.sources} onChange={(v) => updateFilters({ sources: v })}
-          options={[["webshare", "WS"], ["fastshare", "FS"], ["jackett", "Torrent"]]} />
+          options={[["webshare", "WS"], ["fastshare", "FS"], ["jackett", "Jackett"], ["prowlarr", "Prowlarr"]]} />
         <FilterGroup label="Řadit" value={filters.sort} onChange={(v) => updateFilters({ sort: v as SortMode })}
           options={[["recommended", "Doporučené"], ["quality", "Kvalita"], ["bitrate", "Bitrate"], ["size", "Velikost"]]} />
       </div>

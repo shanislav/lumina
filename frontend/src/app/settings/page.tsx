@@ -59,6 +59,15 @@ const SOURCE_TYPES = [
       { key: "api_key", label: "API Key", type: "password" },
     ],
   },
+  {
+    type: "prowlarr",
+    label: "Prowlarr",
+    fields: [
+      { key: "url", label: "URL", type: "text", placeholder: "http://prowlarr:9696" },
+      { key: "api_key", label: "API Key", type: "password" },
+    ],
+    hint: "Torrenty z trackerů nastavených v Prowlarru (API Key: Prowlarr → Settings → General → Security)",
+  },
 ];
 
 const INTEGRATION_TYPES = [
@@ -160,6 +169,8 @@ const GENERAL_SECTIONS = [
       { key: "qbittorrent_url", label: "URL", type: "text", hint: "Např. http://qbittorrent:8080" },
       { key: "qbittorrent_username", label: "Username", type: "text" },
       { key: "qbittorrent_password", label: "Password", type: "password" },
+      { key: "qbittorrent_path_map", label: "Mapování cest (volitelné)", type: "text",
+        hint: "Když qBittorrent vidí disk pod jinou cestou než Lumina: cesta v Lumině=cesta v qBittorrentu (např. /data=/data/Share)" },
     ],
   },
 ];

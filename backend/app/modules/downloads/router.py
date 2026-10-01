@@ -6,6 +6,7 @@ from app.clients.aria2 import Aria2Client
 from app.clients.qbittorrent import QBittorrentClient
 from app.config import get_effective_settings
 from app.core.auth import User, require
+from app.core.paths import map_path
 from app.models.schemas import DownloadRequest
 from app.sources.base import DownloadBackend
 from app.sources.registry import SourceRegistry
@@ -18,6 +19,7 @@ SOURCE_LABELS: dict[str, str] = {
     "webshare": "WebShare",
     "fastshare": "FastShare",
     "jackett": "Torrent",
+    "prowlarr": "Torrent",
 }
 
 
@@ -85,7 +87,7 @@ async def start_download(req: DownloadRequest) -> dict:
             cfg["qbittorrent_password"],
         )
         try:
-            torrent_hash = await qbt.add_torrent(req.magnet_url, save_path=target_dir)
+            torrent_hash = await qbt.add_torrent(req.magnet_url, save_path=map_path(target_dir, cfg["qbittorrent_path_map"]))
             from app.modules.downloads.store import track_download
             from app.modules.downloads.monitor import ensure_monitor_running
             await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie", req.library_action, source_label)

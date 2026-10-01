@@ -8,6 +8,10 @@ class SourceType(str, Enum):
     WEBSHARE = "webshare"
     FASTSHARE = "fastshare"
     JACKETT = "jackett"
+    PROWLARR = "prowlarr"
+
+
+TORRENT_SOURCES = {SourceType.JACKETT.value, SourceType.PROWLARR.value}
 
 
 class DownloadBackend(str, Enum):

@@ -15,10 +15,12 @@ def _ensure_classes() -> None:
     from app.sources.webshare import WebShareSource
     from app.sources.fastshare import FastShareSource
     from app.sources.jackett import JackettSource
+    from app.sources.prowlarr import ProwlarrSource
 
     SOURCE_CLASSES[SourceType.WEBSHARE] = WebShareSource
     SOURCE_CLASSES[SourceType.FASTSHARE] = FastShareSource
     SOURCE_CLASSES[SourceType.JACKETT] = JackettSource
+    SOURCE_CLASSES[SourceType.PROWLARR] = ProwlarrSource
 
 
 class SourceRegistry:

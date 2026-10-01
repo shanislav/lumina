@@ -1,0 +1,34 @@
+import hashlib
+
+from app.clients.prowlarr import ProwlarrClient
+from app.sources.base import BaseSource, DownloadBackend, SearchResult, SourceType
+
+
+class ProwlarrSource(BaseSource):
+    source_type = SourceType.PROWLARR
+    download_backend = DownloadBackend.QBITTORRENT
+
+    def __init__(self, source_id: int, config: dict) -> None:
+        super().__init__(source_id, config)
+        self._client = ProwlarrClient(config["url"], config["api_key"])
+
+    async def search(self, query: str, limit: int = 30) -> list[SearchResult]:
+        return [
+            SearchResult(source_id=self.source_id, source_type=self.source_type,
+                         ident=hashlib.sha1(t.magnet_url.encode()).hexdigest()[:16], name=t.title, size=t.size,
+                         magnet_url=t.magnet_url, seeders=t.seeders)
+            for t in await self._client.search(query, limit)
+        ]
+
+    async def get_download_info(self, ident: str) -> dict:
+        raise NotImplementedError("Prowlarr downloads use the link from the search result")
+
+    async def test_connection(self) -> bool:
+        try:
+            await self._client.test()
+            return True
+        except Exception:
+            return False
+
+    async def close(self) -> None:
+        await self._client.close()
