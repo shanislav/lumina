@@ -329,7 +329,11 @@ function HomeContent() {
             mediaType={selectedMovie?.media_type || "movie"}
               files={files}
               loading={filesLoading}
-              onDownloadStarted={() => setResultsCollapsed(true)}
+              onDownloadStarted={(file) => {
+                setResultsCollapsed(true);
+                // the table folds away before it can tell the header the pick is downloading now
+                setPick((p) => (p?.file?.ident === file.ident ? { ...p, downloading: "ok" } : p));
+              }}
               profileId={selectedMovie?.media_type === "tv" ? undefined : profileId}
               onPick={setPick}
             />

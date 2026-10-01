@@ -34,7 +34,7 @@ interface Props {
   title?: string;
   year?: number;
   mediaType?: "movie" | "tv";
-  onDownloadStarted?: () => void;
+  onDownloadStarted?: (file: ScoredFile) => void;
   owned?: OwnedVersion[];
   movie?: MovieContext | null;
   preferLocalAudio?: boolean;
@@ -262,7 +262,7 @@ export default function FileTable({
       const result = await startDownload(file, undefined, tmdb_id, title, year, mediaType || "movie", action);
       const id = result.gid || result.hash || "ok";
       setDownloading((prev) => ({ ...prev, [file.ident]: id }));
-      onDownloadStarted?.();
+      onDownloadStarted?.(file);
     } catch {
       setDownloading((prev) => ({ ...prev, [file.ident]: "error" }));
     }
