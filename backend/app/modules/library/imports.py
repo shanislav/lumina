@@ -35,6 +35,7 @@ from app.core.film_match import length_verdict
 from app.core.mediainfo import probe_async
 from app.db import get_db
 from app.core.release_name import SUBTITLE_EXTS, VIDEO_EXTS
+from app.core import events
 from app.modules.library.notify import emit_movie_updated
 from app.modules.library.organize import _ensure_dir, naming_settings
 
@@ -149,6 +150,7 @@ async def delete_version(db, movie_id: int, root: str) -> list[str]:
                          (f"delete-{movie_id}", movie_id, path))
     await db.commit()
     logger.info("Deleted version %s (%d files)", video, len(deleted))
+    await events.emit("library.files_removed", {"folders": [folder]})
     # the other versions' NFO (list of versions) follows
     if tmdb_id:
         cursor = await db.execute("SELECT id FROM library_movies WHERE tmdb_id = ? AND status IN ('matched', 'manual')", (tmdb_id,))

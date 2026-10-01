@@ -14,7 +14,7 @@ from app.core.migrations import add_column
 from app.core.module import Module, Subscription, TaskSource
 from app.core.schema import seed_automation
 from app.modules.plex import hints, migration, tasks
-from app.modules.plex.handler import on_movie_updated
+from app.modules.plex.handler import on_files_removed, on_movie_updated
 from app.modules.plex.router import router
 
 module = Module(
@@ -25,6 +25,7 @@ module = Module(
     migrations=[seed_automation("plex", "Plex (obnovení knihovny)"), migration.TABLES,
                 add_column("plex_snapshot", "edits", "TEXT"), add_column("plex_snapshot", "imdb_id", "TEXT")],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=90),
+                   Subscription("library.files_removed", on_files_removed),
                    Subscription("library.collect_hints", hints.on_collect_hints)],
     tasks=[TaskSource(tasks.read, "library.edit")],
 )

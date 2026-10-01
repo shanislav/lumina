@@ -283,3 +283,20 @@ async def test_a_film_plex_had_wrong_is_paired_by_its_file(server):
     FakeServer.after_scan = [FakeServer.items_now[0], meta("9", 99, ["/share/Video/Movies/2016/Right (2016)/b.mkv"], viewed=2, added=777)]
     report = await migration.check()
     assert [m["rating_key"] for m in report["renewed"]] == ["9"] and not report["missing"] and not report["new"]
+
+
+async def test_a_removed_movie_folder_scans_the_year_folder(plex, tmp_path, monkeypatch):
+    import asyncio
+    monkeypatch.setattr(handler, "QUIET_S", 0.5)
+    """The last version deleted: its folder is gone — Plex rescans the year folder above it."""
+    import os
+    root = tmp_path / "Movies"
+    (root / "2014").mkdir(parents=True)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("UPDATE settings SET value = ? WHERE key = 'movies_library_dir'", (str(root),))
+        conn.execute("UPDATE automations SET config = ? WHERE type = 'plex'",
+                     (json.dumps({"url": "http://plex:32400", "token": "t", "path_map": f"{root}=/share/Video/Movies"}),))
+    await handler.on_files_removed({"folders": [str(root / "2014" / "Interstellar (2014)")]})
+    assert handler._pending == {os.path.normpath(str(root / "2014"))}
+    await asyncio.wait_for(handler._task, 30)
+    assert FakePlex.scans == [("3", "/share/Video/Movies/2014")]

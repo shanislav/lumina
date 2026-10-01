@@ -4,6 +4,7 @@ the removed and the added file in the same scan and keeps the movie, see decisio
 
 import asyncio
 import logging
+import os
 import time
 
 from app.clients.plex import PlexClient
@@ -25,12 +26,27 @@ _last = 0.0
 
 
 async def on_movie_updated(payload: dict) -> None:
-    global _task
+    if not payload.get("folder") or payload.get("folder_is_library_root"):
+        return
+    await _queue(payload["folder"])
+
+
+async def on_files_removed(payload: dict) -> None:
+    """A deleted version or a whole movie folder: scan the nearest folder still on disk (the movie's,
+    or the year folder above a removed one) — Plex then drops what is gone."""
+    root = os.path.normpath(movies_library_dir(await get_effective_settings()) or "")
+    for folder in payload.get("folders", []):
+        folder = os.path.normpath(folder)
+        while not os.path.isdir(folder) and folder.startswith(root + os.sep):
+            folder = os.path.dirname(folder)
+        if folder.startswith(root + os.sep):
+            await _queue(folder)
+
+
+async def _queue(folder: str) -> None:
+    global _task, _first, _last
     automation = await get_automation("plex")
     if not automation or not automation["enabled"]:
-        return
-    global _first, _last
-    if not payload.get("folder") or payload.get("folder_is_library_root"):
         return
     if await migration.active():   # the migration scans the whole section after each batch itself
         return
@@ -38,7 +54,7 @@ async def on_movie_updated(payload: dict) -> None:
     if not _pending:
         _first = now
     _last = now
-    _pending.add(payload["folder"])
+    _pending.add(folder)
     if _task is None or _task.done():
         _task = asyncio.create_task(_flush_later())
 
