@@ -10,6 +10,7 @@ With Plex set up (even without the scans) it also gives the library import a hin
 movie a file is, and runs a big rename so that Plex keeps its movies (``migration``).
 """
 
+from app.core.migrations import add_column
 from app.core.module import Module, Subscription, TaskSource
 from app.core.schema import seed_automation
 from app.modules.plex import hints, migration, tasks
@@ -21,7 +22,8 @@ module = Module(
     title="Plex",
     order=80,
     routers=[router],
-    migrations=[seed_automation("plex", "Plex (obnovení knihovny)"), migration.TABLES],
+    migrations=[seed_automation("plex", "Plex (obnovení knihovny)"), migration.TABLES,
+                add_column("plex_snapshot", "edits", "TEXT")],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=90),
                    Subscription("library.collect_hints", hints.on_collect_hints)],
     tasks=[TaskSource(tasks.read, "library.edit")],

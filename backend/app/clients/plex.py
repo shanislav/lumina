@@ -63,5 +63,31 @@ class PlexClient:
                                     params={"type": 1, "id": rating_key, "addedAt.value": added_at})
         resp.raise_for_status()
 
+    async def item(self, rating_key: str) -> dict:
+        """One movie with its locked fields (``Field``)."""
+        resp = await self._http.get(f"/library/metadata/{rating_key}")
+        resp.raise_for_status()
+        return resp.json()["MediaContainer"]["Metadata"][0]
+
+    async def poster(self, rating_key: str) -> bytes:
+        resp = await self._http.get(f"/library/metadata/{rating_key}/thumb", timeout=60)
+        resp.raise_for_status()
+        return resp.content
+
+    async def upload_poster(self, rating_key: str, image: bytes) -> None:
+        """Upload a poster; Plex selects it."""
+        resp = await self._http.post(f"/library/metadata/{rating_key}/posters", content=image, timeout=60)
+        resp.raise_for_status()
+
+    async def edit_fields(self, section_key: str, rating_key: str, values: dict, locked: list[str]) -> None:
+        """Set fields of a movie and lock them, as an edit in Plex does."""
+        params: dict[str, object] = {"type": 1, "id": rating_key}
+        for name, value in values.items():
+            params[f"{name}.value"] = value
+        for name in locked:
+            params[f"{name}.locked"] = 1
+        resp = await self._http.put(f"/library/sections/{section_key}/all", params=params)
+        resp.raise_for_status()
+
     async def close(self) -> None:
         await self._http.aclose()

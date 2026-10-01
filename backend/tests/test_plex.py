@@ -139,6 +139,19 @@ class FakeServer(FakePlex):
     async def set_added_at(self, section, key, at):
         FakeServer.calls.append(("added", key, at))
 
+    async def item(self, key):
+        fields = [{"locked": True, "name": "thumb"}, {"locked": True, "name": "title"}] if key == "2" else []
+        return {"ratingKey": key, "title": "Můj název" if key == "2" else "Film", "Field": fields}
+
+    async def poster(self, key):
+        return b"poster-" + key.encode()
+
+    async def upload_poster(self, key, image):
+        FakeServer.calls.append(("poster", key, image))
+
+    async def edit_fields(self, section, key, values, locked):
+        FakeServer.calls.append(("fields", key, values, sorted(locked)))
+
 
 @pytest.fixture
 async def server(plex, monkeypatch):
@@ -237,3 +250,18 @@ async def test_a_new_item_with_the_old_state_needs_no_repair(server):
     assert [m["rating_key"] for m in report["renewed"]] == ["9"]
     again = await migration.check()                                         # the new item is the snapshot's now
     assert again["renewed"] == [] and again["unchanged"] == 2
+
+
+async def test_edits_by_hand_come_back_on_a_new_item(server):
+    """A poster picked by hand and a locked title: Plex loses them with a new id — Lumina puts them back."""
+    migration = server
+    await migration.start()
+    FakeServer.after_scan = [FakeServer.items_now[0],
+                             meta("9", 22, ["/share/Video/Movies/2000/B2/b.mkv"], viewed=2, added=777)]
+    report = await migration.check()
+    assert report["edits_restored"] == ["Film 2"]
+    assert ("poster", "9", b"poster-2") in FakeServer.calls
+    assert ("fields", "9", {"title": "Můj název"}, ["thumb", "title"]) in FakeServer.calls
+    await migration.finish(empty_trash=True, repair=False)
+    import os
+    assert not os.path.exists(migration.POSTERS)
