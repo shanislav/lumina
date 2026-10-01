@@ -28,7 +28,7 @@ from app.modules.library.files import (
     _parse_nfo_file,
     _scan_video_files,
 )
-from app.modules.library.matcher import FileEvidence, decide, score_candidate
+from app.modules.library.matcher import TRUSTED_HINTS, FileEvidence, decide, score_candidate
 from app.core.release_name import VIDEO_EXTS, NameFacts, parse_name
 from app.modules.library.nfo import find_nfo, read_nfo
 from app.modules.library.notify import emit_movie_updated
@@ -242,6 +242,10 @@ async def identify_movie(client: TMDBClient, db, video_path: str, videos_in_fold
         if details:
             scored.append(score_candidate(evidence, details))
     status, ranked = decide(scored)
+    if status == "matched" and any(set(sources) & TRUSTED_HINTS and tmdb_id != ranked[0].candidate["tmdb_id"]
+                                   for tmdb_id, sources in hints.items()):
+        status = "review"
+        ranked[0].reasons.append("Plex má jiný film")
     # Restoring from Lumina's own NFO (e.g. after losing the DB): the user's choice stays a user choice.
     if (nfo and nfo.by_lumina and nfo.lumina_status == "manual" and ranked
             and ranked[0].candidate["tmdb_id"] == nfo.tmdb_id):

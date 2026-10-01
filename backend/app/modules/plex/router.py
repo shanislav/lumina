@@ -1,9 +1,11 @@
-from fastapi import Depends, APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.clients.plex import PlexClient
 from app.config import get_effective_settings, movies_library_dir
-from app.modules.plex.paths import section_for, to_plex
+from app.modules.plex import migration
+from app.modules.plex.library import PlexError
+from app.modules.plex.paths import section_for, suggest_rule, to_plex
 from app.core.auth import require
 from app.db import get_automation
 
@@ -37,33 +39,45 @@ async def test_connection(body: PlexTest):
         "library_root": root,
         "plex_path": mapped,
         "section": section["title"] if section else None,
+        "suggested_map": None if section or not root else suggest_rule(root, locations),
     }
 
 
-# Plex server settings that matter when many files are renamed at once
-_WATCH = {
-    "FSEventLibraryUpdatesEnabled": "Automaticky prohledávat knihovnu (sledování změn na disku)",
-    "FSEventLibraryPartialScanEnabled": "Částečné prohledání při zjištění změn",
-    "autoEmptyTrash": "Automaticky vysypat koš po každém prohledání",
-}
+# ─── A big rename (decisions/0008) ───
+
+def _fail(e: PlexError):
+    raise HTTPException(400, str(e))
 
 
-@router.get("/migration-check", dependencies=[Depends(require("library.edit"))])
-async def migration_check() -> dict:
-    """Before a big rename: what Plex does on its own. Watching the disk splits the rename into many
-    small scans; with the trash emptied after each, a renamed film can come back as a new one."""
-    automation = await get_automation("plex")
-    cfg = (automation or {}).get("config") or {}
-    if not (cfg.get("url") and cfg.get("token")):
-        return {"configured": False, "lumina_scans": False, "settings": []}
-    client = PlexClient(cfg["url"], cfg["token"])
+@router.get("/migration", dependencies=[Depends(require("library.edit"))])
+async def migration_overview() -> dict:
+    return await migration.overview()
+
+
+@router.post("/migration/start", dependencies=[Depends(require("library.edit"))])
+async def migration_start() -> dict:
     try:
-        prefs = await client.prefs()
-    except Exception as e:  # noqa: BLE001
-        return {"configured": True, "reachable": False, "error": str(e) or type(e).__name__,
-                "lumina_scans": bool(automation["enabled"]), "settings": []}
-    finally:
-        await client.close()
-    settings = [{"id": k, "title": t, "on": str(prefs.get(k)).lower() in ("true", "1")}
-                for k, t in _WATCH.items() if k in prefs]
-    return {"configured": True, "reachable": True, "lumina_scans": bool(automation["enabled"]), "settings": settings}
+        return await migration.start()
+    except PlexError as e:
+        _fail(e)
+
+
+@router.post("/migration/check", dependencies=[Depends(require("library.edit"))])
+async def migration_check() -> dict:
+    """Scan the section once and compare with the snapshot (in the background)."""
+    if not await migration.active():
+        raise HTTPException(400, "Migrace neběží")
+    return {"started": migration.start_check()}
+
+
+class FinishBody(BaseModel):
+    empty_trash: bool = False
+    repair: bool = False
+
+
+@router.post("/migration/finish", dependencies=[Depends(require("library.edit"))])
+async def migration_finish(body: FinishBody) -> dict:
+    try:
+        return await migration.finish(body.empty_trash, body.repair)
+    except PlexError as e:
+        _fail(e)

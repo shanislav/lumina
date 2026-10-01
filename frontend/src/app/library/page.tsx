@@ -177,6 +177,7 @@ export default function LibraryPage() {
   const [planError, setPlanError] = useState<string | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [batches, setBatches] = useState(0);     // applied/undone rename batches (the Plex check follows each)
   const [bulkPlans, setBulkPlans] = useState<OrganizePlan[] | null>(null);
   const [bulkSelected, setBulkSelected] = useState<Set<number>>(new Set());
   const [organizeResult, setOrganizeResult] = useState<OrganizeResult | null>(null);
@@ -302,10 +303,16 @@ export default function LibraryPage() {
     }
   }
 
-  async function openBulk() {
+  // the task list links here after a Plex check: /library?rename=1
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("rename")) openBulk();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function openBulk(keepResult = false) {
     setBulkOpen(true);
     setBulkPlans(null);
-    setOrganizeResult(null);
+    if (!keepResult) setOrganizeResult(null);
     setPlanError(null);
     try {
       const plans = await getOrganizePlanAll();
@@ -323,8 +330,9 @@ export default function LibraryPage() {
       const result = await applyOrganize(movieIds);
       setOrganizeResult(result);
       setMoviePlan(null);
-      if (bulkOpen) setBulkPlans(null);
+      setBatches((n) => n + 1);
       await loadData();
+      if (bulkOpen) await openBulk(true);
     } catch (e) {
       setPlanError(e instanceof Error ? e.message : "Chyba");
     } finally {
@@ -337,7 +345,9 @@ export default function LibraryPage() {
     try {
       await undoOrganize(batchId);
       setOrganizeResult(null);
+      setBatches((n) => n + 1);
       await loadData();
+      if (bulkOpen) await openBulk();
     } finally {
       setPlanBusy(false);
     }
@@ -390,7 +400,7 @@ export default function LibraryPage() {
         </div>
         {canEdit && <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={openBulk}
+            onClick={() => openBulk()}
             disabled={scanning}
             title="Přejmenuje složky a soubory spárovaných filmů podle pravidel (s náhledem)"
             className="px-3 py-2 rounded-lg border border-zinc-700 hover:border-zinc-500 disabled:opacity-40 text-zinc-300 text-sm transition-colors"
@@ -1122,15 +1132,17 @@ export default function LibraryPage() {
               Jen spárované filmy (ne „na kontrolu“). Nic se nepřepisuje, každou dávku lze vrátit.
             </p>
             {planError && <p className="text-sm text-red-400">{planError}</p>}
+            <div className="overflow-y-auto max-h-[40vh] shrink-0">
+              <RenameChecklist count={bulkPlans?.length ?? 0} batches={batches} onPick={(n) =>
+                setBulkSelected(new Set((bulkPlans ?? []).filter((p) => !p.conflicts.length).slice(0, n).map((p) => p.movie_ids[0])))} />
+            </div>
             {organizeResult && <OrganizeResultView result={organizeResult} onUndo={runUndo} busy={planBusy} />}
-            {bulkPlans === null && !organizeResult ? (
+            {bulkPlans === null ? (
               <p className="text-zinc-500 animate-pulse text-sm">Počítám změny…</p>
             ) : bulkPlans && bulkPlans.length === 0 ? (
               <p className="text-green-400 text-sm">Všechny spárované filmy už odpovídají pravidlům.</p>
             ) : bulkPlans ? (
               <>
-                <RenameChecklist count={bulkPlans.length} onPick={(n) =>
-                  setBulkSelected(new Set(bulkPlans.filter((p) => !p.conflicts.length).slice(0, n).map((p) => p.movie_ids[0])))} />
                 <div className="flex items-center gap-3 text-sm text-zinc-400">
                   <span>{bulkPlans.length} filmů ke změně · vybráno {bulkSelected.size}</span>
                   <button className="text-violet-400 hover:text-violet-300" onClick={() => setBulkSelected(new Set(bulkPlans.filter((p) => !p.conflicts.length).map((p) => p.movie_ids[0])))}>vše</button>

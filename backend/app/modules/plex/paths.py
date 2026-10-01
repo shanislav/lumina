@@ -22,12 +22,9 @@ def _inside(path: list[str], folder: list[str]) -> bool:
 
 
 def to_plex(folder: str, library_root: str, locations: list[str], rule: str = "") -> str | None:
-    """Plex path of ``folder``, or None when it cannot be mapped.
-
-    Manual rule first; else a Plex location containing the folder as it is; else the
-    location sharing the longest tail with the library root
-    (/data/Video/Movies ↔ /mnt/share/Video/Movies).
-    """
+    """Plex path of ``folder``, or None when it cannot be mapped: by the manual rule, or as it is
+    when a Plex location contains it. Never guessed — a guess can point at another library with
+    the same layout (a test copy next to the real one), see ``suggest_rule``."""
     f = _parts(folder)
     parsed = parse_rule(rule)
     if parsed:
@@ -36,18 +33,26 @@ def to_plex(folder: str, library_root: str, locations: list[str], rule: str = ""
     for loc in locations:
         if _inside(f, _parts(loc)):
             return _join(f)
+    return None
+
+
+def suggest_rule(library_root: str, locations: list[str]) -> str | None:
+    """A rule for the user to confirm: the one location sharing the longest tail with the library
+    root (/data/Video/Movies ↔ /mnt/share/Video/Movies → "/data=/mnt/share"); None on a tie."""
     root = _parts(library_root)
-    if not root or not _inside(f, root):
-        return None
-    best, best_n = None, 0
+    scored = []
     for loc in locations:
         lp = _parts(loc)
         n = 0
         while n < min(len(lp), len(root)) and lp[-1 - n] == root[-1 - n]:
             n += 1
-        if n > best_n:
-            best, best_n = lp, n
-    return _join(best + f[len(root):]) if best else None
+        if n:
+            scored.append((n, lp))
+    scored.sort(key=lambda x: -x[0])
+    if not scored or (len(scored) > 1 and scored[0][0] == scored[1][0]):
+        return None
+    n, lp = scored[0]
+    return f"{_join(root[:len(root) - n])}={_join(lp[:len(lp) - n])}"
 
 
 def section_for(plex_path: str, sections: list[dict]) -> dict | None:

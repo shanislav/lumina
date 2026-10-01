@@ -9,6 +9,7 @@ import time
 from app.clients.plex import PlexClient
 from app.config import get_effective_settings, movies_library_dir
 from app.db import get_automation
+from app.modules.plex import migration
 from app.modules.plex.paths import section_for, to_plex
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,8 @@ async def on_movie_updated(payload: dict) -> None:
         return
     global _first, _last
     if not payload.get("folder") or payload.get("folder_is_library_root"):
+        return
+    if await migration.active():   # the migration scans the whole section after each batch itself
         return
     now = time.monotonic()
     if not _pending:

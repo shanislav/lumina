@@ -1,4 +1,5 @@
-"""Plex Media Server API — only what Lumina needs: library sections and a partial scan."""
+"""Plex Media Server API — only what Lumina needs: library sections, scans, the movies of a section,
+server settings and the trash (a big rename, decisions/0008)."""
 
 import httpx
 
@@ -18,7 +19,8 @@ class PlexClient:
         dirs = resp.json().get("MediaContainer", {}).get("Directory", [])
         return [
             {"key": str(d["key"]), "title": d.get("title", ""), "type": d.get("type", ""),
-             "locations": [loc["path"] for loc in d.get("Location", []) if loc.get("path")]}
+             "locations": [loc["path"] for loc in d.get("Location", []) if loc.get("path")],
+             "refreshing": bool(d.get("refreshing"))}
             for d in dirs
         ]
 
@@ -33,6 +35,33 @@ class PlexClient:
         resp = await self._http.get("/:/prefs")
         resp.raise_for_status()
         return {s["id"]: s.get("value") for s in resp.json().get("MediaContainer", {}).get("Setting", []) if "id" in s}
+
+    async def set_prefs(self, values: dict[str, object]) -> None:
+        """Change server settings ({id: value}); booleans as 1/0."""
+        params = {k: (int(v) if isinstance(v, bool) else v) for k, v in values.items()}
+        resp = await self._http.put("/:/prefs", params=params)
+        resp.raise_for_status()
+
+    async def items(self, section_key: str) -> list[dict]:
+        """The section's movies as Plex returns them (with the ids of all agents: Guid)."""
+        resp = await self._http.get(f"/library/sections/{section_key}/all",
+                                    params={"includeGuids": 1}, timeout=120)
+        resp.raise_for_status()
+        return resp.json().get("MediaContainer", {}).get("Metadata", [])
+
+    async def empty_trash(self, section_key: str) -> None:
+        resp = await self._http.put(f"/library/sections/{section_key}/emptyTrash")
+        resp.raise_for_status()
+
+    async def mark_watched(self, rating_key: str) -> None:
+        resp = await self._http.get("/:/scrobble", params={"key": rating_key,
+                                                           "identifier": "com.plexapp.plugins.library"})
+        resp.raise_for_status()
+
+    async def set_added_at(self, section_key: str, rating_key: str, added_at: int) -> None:
+        resp = await self._http.put(f"/library/sections/{section_key}/all",
+                                    params={"type": 1, "id": rating_key, "addedAt.value": added_at})
+        resp.raise_for_status()
 
     async def close(self) -> None:
         await self._http.aclose()

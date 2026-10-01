@@ -651,6 +651,7 @@ export interface PlexTestResult {
   library_root?: string;
   plex_path?: string | null;
   section?: string | null;
+  suggested_map?: string | null;
 }
 
 export async function testPlex(url: string, token: string, path_map: string): Promise<PlexTestResult> {
@@ -1230,17 +1231,48 @@ export const stopPlayer = (session: string) =>
 
 // ── before a big rename: what Plex does on its own ──
 
-export interface PlexMigrationCheck {
-  configured: boolean;
-  reachable?: boolean;
-  error?: string;
-  lumina_scans: boolean;
-  settings: { id: string; title: string; on: boolean }[];
+export interface PlexMovieBrief { rating_key: string; title: string; year: number | null; files?: string[] }
+
+export interface PlexMigrationReport {
+  checked_at: number;
+  moved: number;
+  unchanged: number;
+  new: PlexMovieBrief[];
+  missing: PlexMovieBrief[];
+  readded: { title: string; year: number | null; old_key: string; new_key: string; watched: boolean; added_at: number | null }[];
 }
 
-export async function getPlexMigrationCheck(): Promise<PlexMigrationCheck | null> {
-  const res = await apiFetch(`${API_BASE}/api/plex/migration-check`);
-  if (res.status === 404) return null;        // the plex module is off
+export interface PlexMigration {
+  configured: boolean;
+  error?: string;
+  active: boolean;
+  section?: string;
+  settings?: { id: string; title: string; on: boolean; was_on?: boolean }[];
+  started_at?: string;
+  movies?: number;
+  report?: PlexMigrationReport | null;
+  job: { running?: boolean; phase?: string; error?: string; finished_at?: number };
+}
+
+/** null = the plex module is off */
+export async function getPlexMigration(): Promise<PlexMigration | null> {
+  const res = await apiFetch(`${API_BASE}/api/plex/migration`);
+  if (res.status === 404) return null;
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+async function plexMigrationPost(path: string, body?: object): Promise<any> {
+  const res = await apiFetch(`${API_BASE}/api/plex/migration/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
+}
+
+export const startPlexMigration = (): Promise<PlexMigration> => plexMigrationPost("start");
+export const checkPlexMigration = (): Promise<{ started: boolean }> => plexMigrationPost("check");
+export const finishPlexMigration = (emptyTrash: boolean, repair: boolean): Promise<{ repaired: number; emptied: boolean }> =>
+  plexMigrationPost("finish", { empty_trash: emptyTrash, repair });

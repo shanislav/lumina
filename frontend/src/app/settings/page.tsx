@@ -114,7 +114,7 @@ const INTEGRATION_TYPES = [
     fields: [
       { key: "url", label: "Plex URL", type: "text", placeholder: "http://plex:32400" },
       { key: "token", label: "Plex token", type: "password", hint: "Plex Web → libovolný film → ⋯ → Získat informace → Zobrazit XML → hodnota X-Plex-Token v adrese" },
-      { key: "path_map", label: "Mapování cest (volitelné)", type: "text", placeholder: "/data/Video=/mnt/share/Video", hint: "Jen když Plex vidí knihovnu pod jinou cestou a automatika ji nenajde: cesta v Lumině=cesta v Plexu" },
+      { key: "path_map", label: "Mapování cest (volitelné)", type: "text", placeholder: "/data/Video=/mnt/share/Video", hint: "Když Plex vidí knihovnu pod jinou cestou: cesta v Lumině=cesta v Plexu (Vyzkoušet spojení navrhne)" },
     ],
   },
 ];
@@ -677,7 +677,19 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
                   <div className="text-xs space-y-1">
                     {plexTest.section
                       ? <p className="text-green-400">✓ Knihovna filmů <b>{plexTest.library_root}</b> = Plex „{plexTest.section}“ ({plexTest.plex_path})</p>
-                      : <p className="text-amber-400">Spojení funguje, ale knihovnu {plexTest.library_root || "(nenastavena)"} jsem v Plexu nenašel — nastav mapování cest.</p>}
+                      : <div className="text-amber-400">
+                          <p>Spojení funguje, ale knihovnu {plexTest.library_root || "(nenastavena)"} jsem v Plexu nenašel — nastav mapování cest.</p>
+                          {plexTest.suggested_map && (
+                            <p className="mt-1 text-zinc-300">Návrh: <code className="text-violet-300">{plexTest.suggested_map}</code>{" "}
+                              <button type="button" className="text-violet-400 underline hover:text-violet-300"
+                                onClick={async () => {
+                                  const rule = plexTest.suggested_map!;
+                                  setConfig({ ...config, path_map: rule });
+                                  setPlexTest("loading"); setPlexTest(await testPlex(config.url, config.token, rule));
+                                }}>použít a vyzkoušet</button>
+                            </p>
+                          )}
+                        </div>}
                     <ul className="text-zinc-500">
                       {plexTest.sections.map((s) => <li key={s.title}>{s.type === "movie" ? "🎬" : "📺"} {s.title}: {s.locations.join(", ")}</li>)}
                     </ul>
