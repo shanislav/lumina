@@ -454,6 +454,8 @@ def find_cut(ref_path: str, ref_track: int, other_path: str, other_track: int, s
     c2 = _agreement(ref, _aligned_other(other_path, other_track, speed, o2, a, b - a))
     t = cut_point(c1, c2, int(round(gap_s * FPS)), int(FINE_WINDOW_S / 2 * FPS))
     t1 = a + t / FPS
+    logger.info("audiosync cut %.2f→%.2f: windows %.0f/%.0f, short windows %.0f/%.0f, cut at %.2f (+%.2f s gap)",
+                o1, o2, s1, s2, last_o1, first_o2, t1, gap_s)
     return t1, t1 + gap_s
 
 
