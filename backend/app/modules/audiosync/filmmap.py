@@ -54,6 +54,19 @@ _TECH = re.compile(
 MARK = "[L]"   # a track Lumina moved or fixed
 
 
+_CODEC_NAME = {"ac3": "AC3", "eac3": "EAC3", "dts": "DTS", "truehd": "TrueHD", "aac": "AAC", "flac": "FLAC",
+               "opus": "Opus", "mp3": "MP3", "vorbis": "Vorbis"}
+
+
+def codec_label(codec: str | None, profile: str | None = None) -> str:
+    """"DTS-HD MA", "EAC3", "AC3" …"""
+    if codec == "dts" and profile and profile.upper().startswith("DTS-HD"):
+        return profile
+    if (codec or "").startswith("pcm"):
+        return "PCM"
+    return _CODEC_NAME.get(codec or "", (codec or "").upper())
+
+
 def channels_label(channels: int | None) -> str:
     return {1: "1.0", 2: "2.0", 6: "5.1", 8: "7.1"}.get(channels or 0, f"{channels}ch" if channels else "")
 
@@ -137,7 +150,7 @@ def cluster(versions: list[dict], duration: float, progress=None) -> list[dict]:
         out.append({
             "id": i, "lang": d["lang"], "name": max(names, key=len),
             "members": [{"version_id": m["version_id"], "track": m["track"], "codec": m["info"].get("codec"),
-                         "channels": m["info"].get("channels"), "title": m["info"].get("title"),
+                         "channels": m["info"].get("channels"), "bitrate": m["info"].get("bitrate"), "title": m["info"].get("title"),
                          "language": m["info"].get("language")} for m in d["members"]],
         })
     # two different dubs with the same name get numbers ("CZ 1", "CZ 2")

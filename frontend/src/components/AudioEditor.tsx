@@ -16,8 +16,18 @@ const LANG: Record<string, string> = {
 };
 const lang = (code: string) => (code ? LANG[code.toLowerCase()] ?? code.toUpperCase() : "?");
 const channels = (n: number) => ({ 1: "1.0", 2: "2.0", 6: "5.1", 8: "7.1" } as Record<number, string>)[n] ?? `${n}ch`;
-const trackLabel = (a: { language: string; codec: string; channels: number; title?: string }) =>
-  `${lang(a.language)} ${channels(a.channels)} ${(a.codec || "?").toUpperCase()}${a.title ? ` „${a.title}“` : ""}`;
+const trackLabel = (a: { language: string; codec: string; channels: number; title?: string; bitrate?: number }) =>
+  `${lang(a.language)} ${channels(a.channels)} ${(a.codec || "?").toUpperCase()}${a.bitrate ? ` ${Math.round(a.bitrate / 1000)} kbps` : ""}${a.title ? ` „${a.title}“` : ""}`;
+
+/** How a track of another version fits the reference: its own measurement or its version's. */
+function fitBadge(verdict: string | undefined, delta: number, own: boolean): { text: string; cls: string; tip: string } {
+  const how = verdict === "speed" ? " — jiná rychlost, přepočítá se" : verdict === "cuts" ? " — jiný střih, poskládá se"
+    : delta ? ` po posunu ${delta > 0 ? "+" : ""}${delta.toFixed(2)} s` : "";
+  const tip = own ? "Nesedí s časováním své verze (uploader ji vložil jinak) — změřena zvlášť přímo proti referenci"
+    : delta ? "Ve své verzi je posunutá oproti ostatním stopám — Lumina to vyrovná" : "Změřeno proti referenční stopě";
+  return { text: `✓ sedí s referencí${how}${own ? " (změřena zvlášť)" : ""}`,
+    cls: how || own ? "bg-amber-900/40 text-amber-200" : "bg-emerald-900/60 text-emerald-200", tip };
+}
 
 const PHASE: Record<string, string> = {
   target: "Kontroluji stopy cíle vůči referenci", align: "Srovnávám verzi s referencí", tracks: "Měřím jednotlivé stopy",
@@ -350,8 +360,9 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
                             <label className="mr-3"><input type="checkbox" checked={fix.includes(a.index)}
                               onChange={(e) => setFix(e.target.checked ? [...fix, a.index] : fix.filter((x) => x !== a.index))} /> opravit</label>
                           )}
-                          {!isRef && can("library.delete") && (
-                            <label><input type="checkbox" checked={drop.includes(a.index)}
+                          {can("library.delete") && (
+                            <label title={isRef ? "Referenční stopa se použije ke kontrole nových stop a odebere se až nakonec; referencí se stane stopa, která s ní sedí" : undefined}>
+                              <input type="checkbox" checked={drop.includes(a.index)}
                               onChange={(e) => { setDrop(e.target.checked ? [...drop, a.index] : drop.filter((x) => x !== a.index)); setFix(fix.filter((x) => x !== a.index)); }} /> odebrat</label>
                           )}
                         </td>
@@ -394,13 +405,10 @@ export default function AudioEditor({ tmdbId, initialTarget }: { tmdbId: number;
                             <span className={chosenSrc === m ? "text-green-300" : ""}>{trackLabel(m)}</span>
                             <span className="text-zinc-600">z {v?.quality} ({versionName(m.version_id)})</span>
                             {!usable && <span className="rounded bg-red-900/50 px-1 text-red-200">✗ nesedí</span>}
-                            {usable && fit.result_id && <span className="text-amber-300" title="Nesedí s časováním své verze (uploader ji vložil jinak) — změřena zvlášť proti referenci">změřena zvlášť</span>}
-                            {usable && !fit.result_id && fit.delta !== 0 && (
-                              <span className="text-amber-300" title="Ve své verzi je posunutá oproti ostatním stopám — Lumina to vyrovná">vlastní posun {fit.delta > 0 ? "+" : ""}{fit.delta.toFixed(2)} s</span>
-                            )}
-                            {v?.alignment && v.alignment.verdict !== "constant" && v.alignment.verdict !== "no_match" && (
-                              <span className="text-zinc-500">{v.alignment.verdict === "speed" ? "jiná rychlost — přepočítá se" : "jiný střih — poskládá se"}</span>
-                            )}
+                            {usable && (() => {
+                              const b = fitBadge(fit.verdict ?? v?.alignment?.verdict, fit.result_id ? 0 : fit.delta, !!fit.result_id);
+                              return <span title={b.tip} className={`rounded px-1 ${b.cls}`}>{b.text}</span>;
+                            })()}
                             {usable && <button onClick={() => previewMember(m)} disabled={clipBusy} className="text-violet-300 hover:text-violet-200 disabled:opacity-40">▶ ukázka</button>}
                           </div>
                         );

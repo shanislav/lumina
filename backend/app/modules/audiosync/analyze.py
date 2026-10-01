@@ -54,7 +54,8 @@ def probe(path: str) -> dict:
     times from the start of the file; muxing keeps the real timestamps (step 2 converts)."""
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries",
-         "format=duration,start_time:stream=index,codec_type,codec_name,channels:stream_tags=language,title",
+         "format=duration,start_time:stream=index,codec_type,codec_name,profile,channels,bit_rate"
+         ":stream_tags=language,title,BPS,BPS-eng",
          "-of", "json", path], capture_output=True, text=True, timeout=60, check=True).stdout
     data = json.loads(out)
     audio = []
@@ -62,9 +63,13 @@ def probe(path: str) -> dict:
         if s.get("codec_type") != "audio":
             continue
         tags = s.get("tags") or {}
+        try:   # MKV keeps the bitrate in a statistics tag
+            bitrate = int(s.get("bit_rate") or tags.get("BPS") or tags.get("BPS-eng") or 0)
+        except ValueError:
+            bitrate = 0
         audio.append({"index": len(audio), "language": (tags.get("language") or "").lower(),
                       "title": tags.get("title") or "", "codec": s.get("codec_name") or "",
-                      "channels": s.get("channels") or 0})
+                      "channels": s.get("channels") or 0, "bitrate": bitrate, "profile": s.get("profile") or ""})
     fmt = data.get("format", {})
     return {"duration": float(fmt.get("duration") or 0), "start": float(fmt.get("start_time") or 0), "audio": audio}
 

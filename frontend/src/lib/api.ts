@@ -1047,6 +1047,8 @@ export interface AudioTrackInfo {
   title: string;
   codec: string;
   channels: number;
+  bitrate?: number;
+  profile?: string;
 }
 
 export type AudioVerdict = "constant" | "speed" | "cuts" | "no_match";
@@ -1136,6 +1138,7 @@ export interface FilmMapMember {
   track: number;
   codec: string;
   channels: number;
+  bitrate?: number;
   title: string;
   language: string;
 }

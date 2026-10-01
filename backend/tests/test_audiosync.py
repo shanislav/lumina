@@ -67,19 +67,26 @@ def test_judge_cut_and_no_match():
     assert judge(bad, 1.0, 7200)[0] == "no_match"
 
 
-def test_tracks_are_named_by_language_and_channels_moved_ones_marked():
+def test_tracks_get_telling_names_moved_ones_marked():
     from app.modules.audiosync.transfer import ref_track_names, track_name
-    assert track_name({"language": "cze", "title": "CZ dabing Nova", "channels": 6}) == "CZ Nova 5.1 [L]"
-    assert track_name({"language": "slo", "title": "Slovak AC3 2.0 @ 192 kbps", "channels": 2}) == "SK 2.0 [L]"
-    # the file's own tracks: tidied up, no mark — unless Lumina moved them before
-    assert track_name({"language": "eng", "title": "English DTS-HD MA 7.1", "channels": 8}, moved=False) == "EN 7.1"
-    assert track_name({"language": "slo", "title": "SLO (Lumina sync)", "channels": 2}, moved=False) == "SK 2.0 [L]"
-    assert track_name({"language": "cze", "title": "CZ 2.0 [L]", "channels": 2}, moved=False) == "CZ 2.0 [L]"
+    assert track_name({"language": "cze", "title": "CZ dabing Nova", "channels": 6, "codec": "ac3",
+                       "bitrate": 448000}) == "CZ Nova 5.1 AC3 448 kbps [L]"
+    assert track_name({"language": "slo", "title": "Slovak AC3 2.0 @ 192 kbps", "channels": 2, "codec": "ac3"}) == "SK 2.0 AC3 [L]"
+    # the file's own tracks: a telling name stays, a dull one gets the details
+    assert track_name({"language": "eng", "title": "Eng DTS 6ch 48kHz - 1510 kbps - 24bit", "channels": 6,
+                       "codec": "dts"}, moved=False) is None
+    assert track_name({"language": "cze", "title": "Stereo", "channels": 2, "codec": "aac", "bitrate": 192000},
+                      moved=False) == "CZ 2.0 AAC 192 kbps"
+    assert track_name({"language": "eng", "title": "", "channels": 8, "codec": "dts", "profile": "DTS-HD MA"},
+                      moved=False) == "EN 7.1 DTS-HD MA"
+    # moved by Lumina before: keeps the mark
+    assert track_name({"language": "slo", "title": "SLO (Lumina sync)", "channels": 2, "codec": "ac3"}, moved=False) == "SK 2.0 AC3 [L]"
+    assert track_name({"language": "cze", "title": "CZ 2.0 [L]", "channels": 2, "codec": "ac3"}, moved=False) == "CZ 2.0 AC3 [L]"
     # an untagged track keeps its name
     assert track_name({"language": "", "title": "Stereo", "channels": 2}, moved=False) is None
     ref = {"audio": [{"index": 0, "language": "", "title": "x", "channels": 6},
-                     {"index": 1, "language": "cze", "title": "Stereo", "channels": 2}]}
-    assert ref_track_names(ref) == {1: "CZ 2.0"}
+                     {"index": 1, "language": "cze", "title": "Stereo", "channels": 2, "codec": "aac"}]}
+    assert ref_track_names(ref) == {1: "CZ 2.0 AAC"}
 
 
 def test_default_reference_is_the_original_language_then_english():
@@ -189,3 +196,12 @@ async def test_tasks_of_the_audio_editor_show_running_and_recent_work():
     finally:
         r._job.clear()
         r._job.update(saved)
+
+
+def test_dropping_the_reference_hands_it_to_a_track_that_fits():
+    from app.modules.audiosync.router import _new_reference
+    fmap = {"target_tracks": {"0": {"ok": False}, "1": {"ok": True}}}
+    assert _new_reference(fmap, [0, 1, 3], 3, False) == 2           # kept: stays, new position
+    assert _new_reference(fmap, [0, 1], 3, False) == 1              # dropped: track 1 fits it
+    assert _new_reference({"target_tracks": {}}, [0], 3, True) == 1  # else the first added track
+    assert _new_reference({"target_tracks": {}}, [0], 3, False) is None

@@ -254,17 +254,20 @@ def distinct_tracks(ref_path: str, ref: dict, other_path: str, other: dict, trac
 
 
 def track_name(info: dict, moved: bool = True) -> str | None:
-    """Readable: "CZ 5.1", "CZ Nova 2.0", "SK 2.0 [L]" (the mark = Lumina moved or fixed the track).
-    A track without a language tag keeps its name (None) unless it was moved."""
-    from app.modules.audiosync.filmmap import MARK, channels_label, dub_name
-    title = re.sub(r"\(lumina sync\)", " ", info.get("title") or "", flags=re.IGNORECASE)
-    moved = moved or MARK in title or title != (info.get("title") or "")
+    """A telling name: "CZ Nova 5.1 AC3 448 kbps", "SK 2.0 AC3 224 kbps [L]" (the mark = Lumina moved
+    or fixed the track). A track of the file that already has a telling name ("Eng DTS 6ch 48kHz -
+    1510 kbps - 24bit") keeps it (None); so does one without a language tag."""
+    from app.modules.audiosync.filmmap import MARK, channels_label, codec_label, dub_name
+    original = info.get("title") or ""
+    title = re.sub(r"\(lumina sync\)", " ", original, flags=re.IGNORECASE)
+    moved = moved or MARK in title or title != original
     lang = engine.lang_code(info.get("language", ""))
-    if not lang and not moved:
+    if not moved and (not lang or re.search(r"\d", original)):
         return None
-    name = dub_name(lang, title) if lang else "?"
-    name = " ".join(x for x in (name, channels_label(info.get("channels")), MARK if moved else "") if x)
-    return name
+    kbps = round((info.get("bitrate") or 0) / 1000)
+    parts = (dub_name(lang, title) if lang else "?", channels_label(info.get("channels")),
+             codec_label(info.get("codec"), info.get("profile")), f"{kbps} kbps" if kbps else "", MARK if moved else "")
+    return " ".join(x for x in parts if x)
 
 
 def ref_track_names(ref: dict) -> dict[int, str]:
@@ -318,6 +321,9 @@ def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: P
             else:
                 file, tid, delay_ms = prepare_audio(src["path"], t, analysis["speed"], analysis["offset"], srcdir,
                                                     info.get("channels") or 2, ref["start"], other["start"])
+            if cut or abs(analysis["speed"] - 1) > 1e-9:     # re-encoded: name what it is now
+                ch = info.get("channels") or 2
+                info = {**info, "codec": "ac3", "profile": "", "bitrate": 640000 if ch > 2 else 224000}
             added.append({"file": file, "tid": tid, "delay_ms": delay_ms, "language": info.get("language") or "",
                           "name": track_name(info, moved=True), "source": src["path"]})
             checks.append(analysis.get("pieces") if cut else None)

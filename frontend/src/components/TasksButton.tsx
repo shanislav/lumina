@@ -65,7 +65,11 @@ export default function TasksButton() {
           running.length ? "border-violet-600 text-violet-300" : finished.length ? (failed ? "border-amber-600 text-amber-300" : "border-emerald-700 text-emerald-300")
             : "border-zinc-800 text-zinc-500 hover:text-zinc-300"}`}>
         {running.length > 0 && <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-violet-400 animate-spin" />}
-        <span aria-hidden className="text-sm">⚙</span>
+        {/* activity: a pulse line — "something is going on", not settings */}
+        <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="3 12 7 12 10 5 14 19 17 12 21 12" />
+        </svg>
         {(running.length > 0 || finished.length > 0) && (
           <span className={`absolute -right-1 -top-1 min-w-[1rem] rounded-full px-1 text-[10px] leading-4 text-white ${
             running.length ? "bg-violet-600" : failed ? "bg-amber-600" : "bg-emerald-700"}`}>

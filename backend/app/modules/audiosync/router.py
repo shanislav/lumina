@@ -542,8 +542,8 @@ async def apply_map(body: ApplyBody, user: User = Depends(require("audiosync")))
     fmap = json.loads(row["result"])
     target = await _file(fmap["target_id"])
     ref_track = fmap.get("ref_track", 0)
-    if ref_track in body.drop_tracks or ref_track in body.fix_tracks:
-        raise HTTPException(400, "Referenční stopa musí zůstat, jak je")
+    if ref_track in body.fix_tracks:
+        raise HTTPException(400, "Referenční stopa se neopravuje — podle ní se měří ostatní")
     by_version = {v["id"]: v for v in fmap["versions"]}
     sources: dict[tuple, dict] = {}
     for p in body.picks:
@@ -590,6 +590,9 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, d
             count = len((await asyncio.to_thread(engine.probe, target["file_path"]))["audio"])
             keep = [i for i in range(count) if i not in body.drop_tracks and i not in body.fix_tracks]
             ref_track = fmap.get("ref_track", 0)
+            # the reference may go too — but only after the added tracks were checked against it
+            drop_ref = ref_track not in keep
+            build_keep = sorted(keep + [ref_track]) if drop_ref and sources else keep
             if sources:
                 srcs = []
                 for src in sources.values():
@@ -599,14 +602,18 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, d
                                  "tracks": sorted(set(src["tracks"])), "analysis": analysis})
                 out_name = Path(target["filename"]).stem + " [audio].mkv"
                 out = await asyncio.to_thread(muxer.transfer_many, target["file_path"], ref_track, srcs, workdir,
-                                              out_name, progress, report, keep, False)
+                                              out_name, progress, report, build_keep, False)
+                if drop_ref:
+                    total = len(build_keep) + len(report.get("added") or [])
+                    out = await asyncio.to_thread(muxer.strip, out, [i for i in range(total) if i != build_keep.index(ref_track)],
+                                                  workdir / "final", out_name, progress)
             else:
                 out_name = Path(target["filename"]).stem + " [tracks].mkv"
                 out = await asyncio.to_thread(muxer.strip, target["file_path"], keep, workdir, out_name, progress)
             _job.update(report=report)
             payload = await _hand_over(out, downloads / out_name, target, body.mode, f"map-{target['id']}", progress)
             if body.mode == "replace" and payload.get("imported"):
-                await _follow_reference(target, payload.get("path"), keep.index(ref_track))
+                await _follow_reference(target, payload.get("path"), _new_reference(fmap, keep, ref_track, bool(sources)))
         except muxer.TransferError as e:
             _job.update(error=str(e))
         except Exception as e:  # noqa: BLE001 — shown to the user
@@ -617,10 +624,22 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, d
             _job.update(running=False, finished_at=time.time())
 
 
-async def _follow_reference(old: dict, new_path: str | None, new_track: int) -> None:
+def _new_reference(fmap: dict, keep: list[int], ref_track: int, added: bool) -> int | None:
+    """Index of the reference in the edited file. When the reference itself was dropped, a kept
+    track measured to fit it takes its place, else the first added one (checked against it)."""
+    if ref_track in keep:
+        return keep.index(ref_track)
+    checks = fmap.get("target_tracks") or {}
+    fitting = next((i for i in keep if (checks.get(str(i)) or {}).get("ok")), None)
+    if fitting is not None:
+        return keep.index(fitting)
+    return len(keep) if added else None
+
+
+async def _follow_reference(old: dict, new_path: str | None, new_track: int | None) -> None:
     """The edited file replaced the reference version: the reference (checked by the user) moves with it."""
     stored = await _stored_ref(old["tmdb_id"])
-    if not stored or stored.get("movie_id") != old["id"] or not new_path:
+    if not stored or stored.get("movie_id") != old["id"] or not new_path or new_track is None:
         return
     db = await get_db()
     try:
