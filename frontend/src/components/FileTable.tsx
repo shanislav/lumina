@@ -524,10 +524,35 @@ function Lang({ code, verified, sub }: { code: string; verified: boolean; sub?: 
   return <span className={`${base} ${style}`}>{code || "?"}</span>;
 }
 
+// CZ/SK/EN first, the rest after them
+const INTEREST = ["cs", "sk", "en"];
+const byInterest = (codes: string[]) => [...codes].sort((a, b) =>
+  (INTEREST.indexOf(a) + 1 || 99) - (INTEREST.indexOf(b) + 1 || 99));
+const SHOWN_LANGS = 4;
+
+/** A few languages, the rest behind "+N" — a file with 25 subtitle languages must not break the table. */
+function Langs({ codes, verified, sub = false }: { codes: string[]; verified: boolean; sub?: boolean }) {
+  const shown = codes.length > SHOWN_LANGS + 1 ? codes.slice(0, SHOWN_LANGS) : codes;
+  const rest = codes.slice(shown.length);
+  return (
+    <>
+      {shown.map((l) => <Lang key={l} code={l} verified={verified} sub={sub} />)}
+      {rest.length > 0 && (
+        <span className="group relative inline-block">
+          <span className="ml-0.5 cursor-default rounded border border-zinc-700 px-1 text-[10px] text-zinc-400">+{rest.length}</span>
+          <span className="invisible group-hover:visible absolute left-0 top-full z-20 mt-1 flex max-w-xs flex-wrap gap-0.5 rounded border border-zinc-700 bg-zinc-900 p-1.5 shadow-lg whitespace-normal">
+            {rest.map((l) => <Lang key={l} code={l} verified={verified} sub={sub} />)}
+          </span>
+        </span>
+      )}
+    </>
+  );
+}
+
 function LanguageCell({ file }: { file: ScoredFile }) {
   const verified = file.verified && (file.audio ?? []).some((a) => a.lang);
-  const audio = Array.from(new Set(file.audio_langs ?? []));
-  const subs = Array.from(new Set(file.subtitle_langs ?? []));
+  const audio = byInterest(Array.from(new Set(file.audio_langs ?? [])));
+  const subs = byInterest(Array.from(new Set(file.subtitle_langs ?? [])));
   if (!audio.length && !subs.length) return <span className="text-zinc-600">-</span>;
   const tip = verified
     ? (file.audio ?? []).map((a) => [(a.lang || "?").toUpperCase(), a.codec, a.channels ? `${a.channels}ch` : ""].filter(Boolean).join(" ")).join(", ")
@@ -536,11 +561,11 @@ function LanguageCell({ file }: { file: ScoredFile }) {
     <div title={tip} className="leading-tight whitespace-nowrap">
       <div>
         {verified ? <span className="text-green-500 text-[10px] mr-1">✓</span> : <span className="text-zinc-600 text-[10px] mr-1">?</span>}
-        {audio.map((l) => <Lang key={`a${l}`} code={l} verified={verified} />)}
+        <Langs codes={audio} verified={verified} />
       </div>
       {subs.length > 0 && (
         <div className="text-[10px] text-zinc-500 mt-0.5">
-          tit: {subs.map((l) => <Lang key={`s${l}`} code={l} verified={verified} sub />)}
+          tit: <Langs codes={subs} verified={verified} sub />
         </div>
       )}
     </div>
