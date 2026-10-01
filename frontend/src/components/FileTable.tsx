@@ -19,6 +19,14 @@ const TORRENT = ["jackett", "prowlarr"];
 const SOURCE_SHORT: Record<string, string> = { webshare: "WS", fastshare: "FS", jackett: "Jackett", prowlarr: "Prowlarr" };
 import { useAuth } from "@/components/AuthGate";
 
+/** What the chosen profile would download now, for the page header */
+export interface PickOffer {
+  pick: ProfilePick;
+  file: ScoredFile | null;
+  downloading?: string;     // "starting" | "error" | the download id
+  download: () => void;
+}
+
 interface Props {
   files: ScoredFile[];
   loading: boolean;
@@ -34,6 +42,9 @@ interface Props {
   upgradeFrom?: OwnedVersion | null;
   /** The quality profile chosen above ("" = the default one): its pick is offered for download right away. */
   profileId?: number | "";
+  /** Told what the profile would take now (null while unknown): the page header shows it with a
+   *  download button, and "+ Chci" only when nothing suits. */
+  onPick?: (pick: PickOffer | null) => void;
 }
 
 /** An offer is an upgrade when its score is higher than the owned version's and it does not
@@ -49,7 +60,7 @@ const BADGE_STYLES: Record<string, { bg: string; label: string }> = {
   prowlarr: { bg: "bg-orange-900/60 text-orange-300", label: "T" },
 };
 
-function SourceBadge({ file }: { file: ScoredFile }) {
+export function SourceBadge({ file }: { file: ScoredFile }) {
   const style = BADGE_STYLES[file.source] || { bg: "bg-zinc-800 text-zinc-300", label: file.source.slice(0, 2).toUpperCase() };
   const link = sourceLink(file);
   const badge = (
@@ -86,7 +97,7 @@ interface Row {
 
 export default function FileTable({
   files, loading, onDownloadStarted, tmdb_id, title, year, mediaType, owned = [], movie, preferLocalAudio = true,
-  upgradeFrom = null, profileId,
+  upgradeFrom = null, profileId, onPick,
 }: Props) {
   const { can } = useAuth();
   const [onlyBetter, setOnlyBetter] = useState(true);
@@ -228,6 +239,12 @@ export default function FileTable({
     return () => clearTimeout(t);
   }, [rows, profileId, upgrade]);
   const pickRow = pick?.key ? rows.find((r) => r.copies.some((c) => keyOf(c) === pick.key)) : undefined;
+  const pickDownloading = pickRow ? downloading[pickRow.file.ident] : undefined;
+  useEffect(() => {
+    onPick?.(pick ? { pick, file: pickRow?.file ?? null, downloading: pickDownloading,
+                      download: () => pickRow && handleDownload(pickRow.file) } : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pick, pickRow, pickDownloading]);
 
   function handleDownload(file: ScoredFile) {
     // Movie already in the library → ask: another version, or replace one?
@@ -341,41 +358,6 @@ export default function FileTable({
           )}
           {onlyBetter && view.length === 0 && !verify.running && (
             <p className="text-xs text-amber-300">Lepší verze zatím není.</p>
-          )}
-        </div>
-      )}
-
-      {pick && (
-        <div className="mb-3 rounded-lg border border-violet-800 bg-violet-950/20 px-3 py-2 text-sm">
-          {pickRow ? (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="text-violet-300">🎯 Podle profilu „{pick.profile}“:</span>
-              <SourceBadge file={pickRow.file} />
-              <span className="text-zinc-100 break-all">{pickRow.file.name}</span>
-              <span className="text-zinc-400 text-xs">
-                {pickRow.file.quality_summary || "?"} · {formatSize(pickRow.file.size)}
-                {!pickRow.file.verified && " · neověřeno"}
-              </span>
-              <span className="text-zinc-500 text-xs">({pick.suitable} {pick.suitable === 1 ? "vyhovuje" : "vyhovuje profilu"})</span>
-              {can("download") && (
-                downloading[pickRow.file.ident] ? (
-                  <span className="ml-auto text-xs text-green-400">
-                    {downloading[pickRow.file.ident] === "starting" ? "Odesílám…" : downloading[pickRow.file.ident] === "error" ? "Chyba" : "Stahuje se"}
-                  </span>
-                ) : (
-                  <button onClick={() => handleDownload(pickRow.file)}
-                    className="ml-auto rounded bg-violet-600 px-3 py-1 text-xs font-medium text-white hover:bg-violet-500">
-                    Stáhnout teď
-                  </button>
-                )
-              )}
-            </div>
-          ) : (
-            <p className="text-zinc-400">
-              🎯 Profilu „{pick.profile}“ teď nic nevyhovuje
-              {pick.reasons.length > 0 && <> — {pick.reasons.map(([why, n]) => `${why} (${n}×)`).join(", ")}</>}.
-              {" "}Přidej film do Chci a Lumina ho bude hledat dál.
-            </p>
           )}
         </div>
       )}

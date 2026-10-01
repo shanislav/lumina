@@ -8,6 +8,8 @@ import FileTable from "@/components/FileTable";
 import DownloadPanel from "@/components/DownloadPanel";
 import WantButton, { ProfileSelect } from "@/components/WantButton";
 import MovieInfoLine, { FriendCopies } from "@/components/MovieInfoLine";
+import PickOfferView from "@/components/PickOffer";
+import { PickOffer } from "@/components/FileTable";
 import { useAuth } from "@/components/AuthGate";
 import Link from "next/link";
 import {
@@ -40,6 +42,7 @@ export default function Home() {
 }
 
 function HomeContent() {
+  const { can } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [ready, setReady] = useState(false);
@@ -47,6 +50,8 @@ function HomeContent() {
   const [files, setFiles] = useState<ScoredFile[]>([]);
   const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
   const [profileId, setProfileId] = useState<number | "">("");   // for "+ Chci" and the offer picked now
+  const [pick, setPick] = useState<PickOffer | null>(null);   // what the profile would download now
+  useEffect(() => setPick(null), [selectedMovie]);
   const [moviesLoading, setMoviesLoading] = useState(false);
   const [filesLoading, setFilesLoading] = useState(false);
   const [resultsCollapsed, setResultsCollapsed] = useState(false);
@@ -265,7 +270,11 @@ function HomeContent() {
               )}
             </h2>
             {selectedMovie.media_type !== "tv" && <ProfileSelect value={profileId} onChange={setProfileId} />}
-            <WantButton movie={selectedMovie} profileId={profileId} onProfileChange={setProfileId} />
+            {!filesLoading && files.length > 0 && <PickOfferView offer={pick} canDownload={can("download")} />}
+            {/* "+ Chci" = look for it later: when nothing here suits the profile */}
+            {!filesLoading && files.length > 0 && pick && !pick.pick.key && (
+              <WantButton movie={selectedMovie} profileId={profileId} onProfileChange={setProfileId} />
+            )}
             {resultsCollapsed && files.length > 0 && (
               <button
                 onClick={() => setResultsCollapsed(false)}
@@ -322,6 +331,7 @@ function HomeContent() {
               loading={filesLoading}
               onDownloadStarted={() => setResultsCollapsed(true)}
               profileId={selectedMovie?.media_type === "tv" ? undefined : profileId}
+              onPick={setPick}
             />
           )}
         </div>
