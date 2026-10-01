@@ -230,14 +230,17 @@ export default function FileTable({
   // What the chosen profile would download now — asked again as verification refines the offers
   const [pick, setPick] = useState<ProfilePick | null>(null);
   useEffect(() => {
-    if (profileId === undefined || upgrade) { setPick(null); return; }
-    const offers = rows.map((r) => r.file).filter((f) => f.film === "yes" || f.film === "unsure");
+    if (profileId === undefined) { setPick(null); return; }
+    // looking for a better version: only what beats the owned one (the "Jen lepší" rule)
+    const better = (f: ScoredFile) => !upgrade || (!ownedSizes.has(f.size) && f.quality_score > (upgrade.quality_score ?? 0)
+      && !(hasLocalAudio(upgrade) && f.lang_tier < 2 && !(canMoveDub && moveDub)));
+    const offers = rows.map((r) => r.file).filter((f) => (f.film === "yes" || f.film === "unsure") && better(f));
     if (!offers.length) { setPick(null); return; }
     const t = setTimeout(() => {
       pickForProfile(profileId === "" ? null : profileId, offers).then(setPick).catch(() => setPick(null));
     }, 500);
     return () => clearTimeout(t);
-  }, [rows, profileId, upgrade]);
+  }, [rows, profileId, upgrade, ownedSizes, canMoveDub, moveDub]);
   const pickRow = pick?.key ? rows.find((r) => r.copies.some((c) => keyOf(c) === pick.key)) : undefined;
   const pickDownloading = pickRow ? downloading[pickRow.file.ident] : undefined;
   useEffect(() => {

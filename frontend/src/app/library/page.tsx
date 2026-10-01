@@ -44,6 +44,7 @@ import {
 import DownloadPanel from "@/components/DownloadPanel";
 import { useAuth } from "@/components/AuthGate";
 import RenameChecklist from "@/components/RenameChecklist";
+import { ON_BETTER } from "@/components/WatchedList";
 
 type Tab = "filmy" | "serialy";
 type MovieFilter = "all" | "versions" | "review" | "unmatched";
@@ -909,6 +910,14 @@ export default function LibraryPage() {
                         onChange={(e) => saveFilmSettings(fixingMovie.tmdb_id, { watch_upgrades: e.target.checked })} />
                       Hlídat lepší verzi
                     </label>
+                    {fs.watch_upgrades && (
+                      <label className="flex items-center gap-1">když najde lepší
+                        <select value={fs.on_better ?? ""} className="rounded bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 text-zinc-300"
+                          onChange={(e) => saveFilmSettings(fixingMovie.tmdb_id, { on_better: e.target.value })}>
+                          {ON_BETTER.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                      </label>
+                    )}
                   </div>
                 );
               })() : null}

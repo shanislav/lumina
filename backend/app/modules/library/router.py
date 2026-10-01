@@ -18,7 +18,7 @@ from app.core import naming, quality
 from app.core.quality import prefs_from_settings
 from app.modules.library import importer, organize, upgrades
 from app.modules.library.notify import emit_movie_updated
-from app.core.auth import require
+from app.core.auth import User, require
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/library", tags=["library"])
@@ -469,6 +469,7 @@ async def check_upgrades(body: UpgradeCheckRequest):
 class FilmSettings(BaseModel):
     profile_id: int | None = None
     watch_upgrades: bool = False
+    on_better: str = ""          # '' = as the scheduler says | notify | version | replace
 
 
 @router.get("/films", dependencies=[Depends(require("library.view"))])
@@ -476,8 +477,9 @@ async def film_settings_all():
     """{tmdb_id: {profile_id, watch_upgrades}} for films that have their own settings."""
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT tmdb_id, profile_id, watch_upgrades FROM library_films")
-        return {str(r[0]): {"profile_id": r[1], "watch_upgrades": bool(r[2])} for r in await cursor.fetchall()}
+        cursor = await db.execute("SELECT tmdb_id, profile_id, watch_upgrades, on_better FROM library_films")
+        return {str(r[0]): {"profile_id": r[1], "watch_upgrades": bool(r[2]), "on_better": r[3] or ""}
+                for r in await cursor.fetchall()}
     finally:
         await db.close()
 
@@ -486,14 +488,39 @@ async def film_settings_all():
 async def set_film_settings(tmdb_id: int, body: FilmSettings):
     db = await get_db()
     try:
-        await db.execute("INSERT INTO library_films (tmdb_id, profile_id, watch_upgrades) VALUES (?, ?, ?) "
+        if body.on_better not in ("", "notify", "version", "replace"):
+            raise HTTPException(400, "Neznámá volba")
+        await db.execute("INSERT INTO library_films (tmdb_id, profile_id, watch_upgrades, on_better) VALUES (?, ?, ?, ?) "
                          "ON CONFLICT(tmdb_id) DO UPDATE SET profile_id = excluded.profile_id, "
-                         "watch_upgrades = excluded.watch_upgrades",
-                         (tmdb_id, body.profile_id, int(body.watch_upgrades)))
+                         "watch_upgrades = excluded.watch_upgrades, on_better = excluded.on_better",
+                         (tmdb_id, body.profile_id, int(body.watch_upgrades), body.on_better))
         await db.commit()
         return {"tmdb_id": tmdb_id, **body.model_dump()}
     finally:
         await db.close()
+
+
+@router.get("/watched", dependencies=[Depends(require("library.view"))])
+async def watched_films():
+    """Films watched for a better version, with the last check."""
+    return await upgrades.watched()
+
+
+class UpgradeDownload(BaseModel):
+    mode: str = "version"      # version | replace
+
+
+@router.post("/upgrades/{tmdb_id}/download")
+async def download_upgrade(tmdb_id: int, body: UpgradeDownload, user: User = Depends(require("download"))):
+    """Download the better version the last check found — as another version or replacing the owned one."""
+    if body.mode not in ("version", "replace"):
+        raise HTTPException(400, "Neznámý režim")
+    if body.mode == "replace" and not user.can("library.delete"):
+        raise HTTPException(403, "Nahrazení maže soubor — na to nemáš oprávnění")
+    started = await upgrades.request_download(tmdb_id, body.mode, requested_by=user.username)
+    if not started:
+        raise HTTPException(400, "Lepší verze už není k dispozici — zkontroluj znovu")
+    return {"started": True}
 
 
 @router.get("/upgrades/status", dependencies=[Depends(require("library.view"))])

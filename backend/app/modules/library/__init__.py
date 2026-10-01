@@ -98,6 +98,8 @@ module = Module(
         UPGRADE_CHECKS,
         LIBRARY_FILMS,
         add_column("upgrade_checks", "note", "TEXT DEFAULT ''"),
+        # what to do when a better version turns up: '' = as the scheduler says, notify | version | replace
+        add_column("library_films", "on_better", "TEXT DEFAULT ''"),
     ],
     tasks=[TaskSource(tasks.read, "library.view")],
 )

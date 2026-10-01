@@ -898,7 +898,7 @@ export async function searchTMDBForFix(movieId: number, query: string): Promise<
 export interface UpgradeCheck {
   owned_id: number | null;
   owned_score: number;
-  status: "better" | "none" | "error" | "done";   // done = the film's profile cutoff is reached
+  status: "better" | "none" | "error" | "done" | "downloading";   // done = the film's profile cutoff is reached
   upgrades: number;
   best: { name?: string; source?: string; quality_score?: number; quality_summary?: string; verified?: boolean; size?: number };
   error: string;
@@ -907,7 +907,36 @@ export interface UpgradeCheck {
 }
 
 /** Film-level settings in the library: quality profile and "watch for a better version". */
-export interface FilmSettings { profile_id: number | null; watch_upgrades: boolean }
+export interface FilmSettings {
+  profile_id: number | null;
+  watch_upgrades: boolean;
+  on_better?: string;        // '' = as the scheduler says | notify | version | replace
+}
+
+export interface WatchedFilm {
+  tmdb_id: number;
+  title: string;
+  year: string;
+  poster_url: string | null;
+  profile_id: number | null;
+  on_better: string;
+  owned: { id: number; quality: string; score: number; language: string; size: number };
+  check: UpgradeCheck | null;
+}
+
+export async function getWatched(): Promise<WatchedFilm[]> {
+  const res = await apiFetch(`${API_BASE}/api/library/watched`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Download the better version the last check found: another version, or replacing the owned one. */
+export async function downloadUpgrade(tmdbId: number, mode: "version" | "replace"): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/library/upgrades/${tmdbId}/download`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+}
 
 export async function getFilmSettings(): Promise<Record<string, FilmSettings>> {
   const res = await apiFetch(`${API_BASE}/api/library/films`);

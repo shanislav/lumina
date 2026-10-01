@@ -111,4 +111,21 @@ async def test_film_profile_limits_upgrades_and_cutoff_stops_them(library_movie,
     await lib.set_film_settings(603, lib.FilmSettings(profile_id=easy["id"], watch_upgrades=True))
     monkeypatch.setattr(upgrades, "find_offers", None)          # must not be called
     assert await upgrades.check_movie(603) == {"status": "done", "upgrades": 0}
-    assert (await lib.film_settings_all())["603"] == {"profile_id": easy["id"], "watch_upgrades": True}
+    assert (await lib.film_settings_all())["603"] == {"profile_id": easy["id"], "watch_upgrades": True, "on_better": ""}
+
+
+async def test_a_films_own_choice_decides_the_automatic_upgrade(monkeypatch):
+    """The nightly run downloads a better version the way the film says, else as the scheduler says."""
+    import sqlite3
+    from app.core import registry
+    from app.db import DB_PATH, init_db
+    from app.modules.library import upgrades
+    await init_db(registry.discover())
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.executemany("INSERT INTO library_films (tmdb_id, profile_id, watch_upgrades, on_better) VALUES (?, NULL, 1, ?)",
+                         [(1, ""), (2, "replace"), (3, "notify")])
+    monkeypatch.setattr(upgrades, "enqueue", lambda ids: None)
+    upgrades._auto_download.clear()
+    await upgrades.on_scheduler_run({"upgrades": True, "auto_download_upgrades": "version"})
+    assert upgrades._auto_download == {1: "version", 2: "replace"}
+    upgrades._auto_download.clear()

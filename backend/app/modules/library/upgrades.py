@@ -169,7 +169,7 @@ async def _save(tmdb_id: int, owned: dict | None, owned_score: int, status_: str
         await db.close()
 
 
-async def request_download(tmdb_id: int, mode: str) -> None:
+async def request_download(tmdb_id: int, mode: str, requested_by: str = "upgrade (plánovač)") -> bool:
     """Scheduler with automatic upgrades: download the best better version as a new version or as a
     replacement of the compared one (the import deletes the old one only when the lengths agree)."""
     from app.core import events
@@ -177,7 +177,7 @@ async def request_download(tmdb_id: int, mode: str) -> None:
     check = (await results()).get(str(tmdb_id)) or {}
     best = check.get("best") or {}
     if check.get("status") != "better" or not best.get("ident") or not check.get("owned_id"):
-        return
+        return False
     db = await get_db()
     try:
         cursor = await db.execute("SELECT title, year FROM library_movies WHERE id = ?", (check["owned_id"],))
@@ -185,13 +185,13 @@ async def request_download(tmdb_id: int, mode: str) -> None:
     finally:
         await db.close()
     if not owned:
-        return
+        return False
     action = {"mode": "replace", "file_id": check["owned_id"]} if mode == "replace" else {"mode": "version"}
     payload = await events.emit("download.request", {
         "file_ident": best["ident"], "source": best.get("source"), "source_id": best.get("source_id") or 0,
         "magnet_url": best.get("magnet_url"), "tmdb_id": tmdb_id, "title": owned["title"],
         "year": int((owned["year"] or "0")[:4] or 0), "content_type": "movie", "library_action": action,
-        "requested_by": "upgrade (plánovač)",
+        "requested_by": requested_by,
     })
     if payload.get("started"):
         db = await get_db()
@@ -200,6 +200,7 @@ async def request_download(tmdb_id: int, mode: str) -> None:
             await db.commit()
         finally:
             await db.close()
+    return bool(payload.get("started"))
 
 
 async def on_scheduler_run(payload: dict) -> None:
@@ -209,17 +210,49 @@ async def on_scheduler_run(payload: dict) -> None:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT f.tmdb_id FROM library_films f LEFT JOIN upgrade_checks u ON u.tmdb_id = f.tmdb_id "
+            "SELECT f.tmdb_id, f.on_better FROM library_films f LEFT JOIN upgrade_checks u ON u.tmdb_id = f.tmdb_id "
             "WHERE f.watch_upgrades = 1 AND (u.status IS NULL OR u.status != 'downloading' "
             "OR u.checked_at < datetime('now', '-3 days'))")
-        ids = [r[0] for r in await cursor.fetchall()]
+        rows = [(r[0], r[1] or "") for r in await cursor.fetchall()]
     finally:
         await db.close()
-    mode = payload.get("auto_download_upgrades") or "off"
-    if mode in ("version", "replace"):
-        _auto_download.update({i: mode for i in ids})
+    ids = [t for t, _ in rows]
+    # a film's own choice, else the scheduler's ("off" / "notify" = just show it)
+    default = payload.get("auto_download_upgrades") or "off"
+    for tmdb_id, own in rows:
+        mode = own or default
+        if mode in ("version", "replace"):
+            _auto_download[tmdb_id] = mode
     if ids:
         enqueue(ids)
+
+
+async def watched() -> list[dict]:
+    """Films watched for a better version: what is owned, the film's settings, the last check."""
+    cfg = await get_effective_settings()
+    prefs = quality.prefs_from_settings(cfg)
+    checks = await results()
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT tmdb_id, profile_id, on_better FROM library_films WHERE watch_upgrades = 1")
+        films = [dict(r) for r in await cursor.fetchall()]
+        out = []
+        for f in films:
+            owned = await _owned_version(db, f["tmdb_id"], prefs)
+            if not owned:
+                continue
+            cursor = await db.execute("SELECT poster_url, quality FROM library_movies WHERE id = ?", (owned["id"],))
+            extra = await cursor.fetchone()
+            out.append({
+                "tmdb_id": f["tmdb_id"], "profile_id": f["profile_id"], "on_better": f["on_better"] or "",
+                "title": owned["title"], "year": owned["year"], "poster_url": extra["poster_url"] if extra else None,
+                "owned": {"id": owned["id"], "quality": extra["quality"] if extra else "", "score": owned["quality_score"],
+                          "language": owned["language"] or "", "size": owned["file_size"]},
+                "check": checks.get(str(f["tmdb_id"])),
+            })
+    finally:
+        await db.close()
+    return sorted(out, key=lambda x: x["title"] or "")
 
 
 async def results() -> dict[str, dict]:

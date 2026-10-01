@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import WatchedList from "@/components/WatchedList";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import DownloadPanel from "@/components/DownloadPanel";
@@ -36,6 +37,7 @@ export default function WantedPage() {
   const [job, setJob] = useState<WantedJob | null>(null);
   const [downloading, setDownloading] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"wanted" | "watched">("wanted");
 
   const load = useCallback(async () => {
     try {
@@ -90,6 +92,15 @@ export default function WantedPage() {
 
   return (
     <main className="flex flex-col gap-6 px-4 py-8 max-w-5xl mx-auto">
+      <div className="flex gap-1 bg-zinc-900 p-1 rounded-lg w-fit">
+        {([["wanted", "Chci"], ["watched", "Hlídám lepší verzi"]] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium ${tab === key ? "bg-violet-600 text-white" : "text-zinc-400 hover:text-zinc-200"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "watched" ? <WatchedList profiles={profiles} /> : (<>
       <div className="flex flex-wrap items-center gap-4">
         <h1 className="text-2xl font-bold text-zinc-100">Chci</h1>
         <span className="text-sm text-zinc-500">{open.length} filmů čeká · {items.length - open.length} hotovo</span>
@@ -183,6 +194,7 @@ export default function WantedPage() {
         </div>
       )}
       <DownloadPanel />
+      </>)}
     </main>
   );
 }

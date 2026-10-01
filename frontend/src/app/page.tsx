@@ -23,6 +23,7 @@ import {
   OwnedVersion,
   versionLabel,
   formatSize,
+  getFilmSettings,
 } from "@/lib/api";
 
 export default function Home() {
@@ -60,6 +61,11 @@ function HomeContent() {
   const [movieCtx, setMovieCtx] = useState<MovieContext | null>(null);
   // library "Hledat lepší verzi": id of the owned version to beat
   const [upgradeId, setUpgradeId] = useState<number | null>(null);
+  // looking for a better version of an owned film: its own profile
+  useEffect(() => {
+    if (!upgradeId || !selectedMovie?.tmdb_id) return;
+    getFilmSettings().then((all) => setProfileId(all[String(selectedMovie.tmdb_id)]?.profile_id ?? "")).catch(() => {});
+  }, [upgradeId, selectedMovie]);
   const [preferLocal, setPreferLocal] = useState(true);
 
   function showFiles(res: { files: ScoredFile[]; movie: MovieContext; prefer_local_audio: boolean }) {
