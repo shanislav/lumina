@@ -209,6 +209,12 @@ export default function FileTable({
       if (filters.qualities.length && !filters.qualities.includes(f.resolution || "")) return false;
       if (filters.audio === "local" && f.lang_tier < 2) return false;
       if (filters.audio === "local_or_subs" && f.lang_tier < 1) return false;
+      if (filters.audio === "langs" && filters.audioLangs.length) {
+        // own choice: every chosen language must be there (and with "jen tyto" nothing else)
+        const have = new Set((f.audio_langs ?? []).map((l) => l.toLowerCase()));
+        if (!filters.audioLangs.every((l) => have.has(l))) return false;
+        if (filters.audioOnly && Array.from(have).some((l) => !filters.audioLangs.includes(l))) return false;
+      }
       return true;
     };
     const sorted = rows.filter(pass).sort((ra, rb) => {
@@ -226,6 +232,14 @@ export default function FileTable({
   }, [rows, filters, showJunk, preferLocalAudio, upgrade, onlyBetter, ownedSizes, canMoveDub, moveDub, activeSources]);
 
   const best = view.find((r) => r.file.film === "yes");
+  const audioLangChoices = useMemo(() => {
+    const count = new Map<string, number>();
+    for (const r of rows) for (const l of new Set((r.file.audio_langs ?? []).map((x) => x.toLowerCase())))
+      count.set(l, (count.get(l) ?? 0) + 1);
+    const rest = Array.from(count).filter(([l]) => !["cs", "sk", "en"].includes(l) && l.length <= 3)
+      .sort((a, b) => b[1] - a[1]).slice(0, 6).map(([l]) => l);
+    return ["cs", "sk", "en", ...rest, ...filters.audioLangs.filter((l) => !["cs", "sk", "en", ...rest].includes(l))];
+  }, [rows, filters.audioLangs]);
 
   // What the chosen profile would download now — asked again as verification refines the offers
   const [pick, setPick] = useState<ProfilePick | null>(null);
@@ -371,7 +385,23 @@ export default function FileTable({
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-3 text-xs">
         <FilterGroup label="Zvuk" value={filters.audio} onChange={(v) => updateFilters({ audio: v as AudioFilter })}
-          options={[["all", "Vše"], ["local", "CZ/SK zvuk"], ["local_or_subs", "CZ/SK zvuk nebo titulky"]]} />
+          options={[["all", "Vše"], ["local", "CZ/SK zvuk"], ["local_or_subs", "CZ/SK zvuk nebo titulky"], ["langs", "Vlastní…"]]} />
+        {filters.audio === "langs" && (
+          <div className="flex flex-wrap items-center gap-1" title="Soubor musí mít zvuk ve všech vybraných jazycích (neověřené soubory podle názvu)">
+            <span className="text-zinc-500 mr-1">musí mít:</span>
+            {audioLangChoices.map((l) => (
+              <Chip key={l} active={filters.audioLangs.includes(l)}
+                onClick={() => updateFilters({ audioLangs: filters.audioLangs.includes(l)
+                  ? filters.audioLangs.filter((x) => x !== l) : [...filters.audioLangs, l] })}>
+                {l === "cs" ? "CZ" : l.toUpperCase()}
+              </Chip>
+            ))}
+            <label className="ml-2 flex items-center gap-1 text-zinc-400" title="Žádný jiný jazyk zvuku než vybrané">
+              <input type="checkbox" checked={filters.audioOnly} onChange={(e) => updateFilters({ audioOnly: e.target.checked })} />
+              jen tyto
+            </label>
+          </div>
+        )}
         <MultiGroup label="Rozlišení" values={filters.qualities} onChange={(v) => updateFilters({ qualities: v })}
           options={[["2160p", "4K"], ["1080p", "1080p"], ["720p", "720p"], ["SD", "SD"]]} />
         <MultiGroup label="Zdroj" values={filters.sources} onChange={(v) => updateFilters({ sources: v })}
@@ -565,15 +595,17 @@ function LanguageCell({ file }: { file: ScoredFile }) {
 
 // ── filters ──
 
-type AudioFilter = "all" | "local" | "local_or_subs";
+type AudioFilter = "all" | "local" | "local_or_subs" | "langs";
 type SortMode = "recommended" | "quality" | "bitrate" | "size";
 interface Filters {
   audio: AudioFilter;
+  audioLangs: string[];  // "langs": the audio must have all of these
+  audioOnly: boolean;    // … and no other
   qualities: string[]; // empty = all
   sources: string[];   // empty = all
   sort: SortMode;
 }
-const DEFAULT_FILTERS: Filters = { audio: "all", qualities: [], sources: [], sort: "recommended" };
+const DEFAULT_FILTERS: Filters = { audio: "all", audioLangs: [], audioOnly: false, qualities: [], sources: [], sort: "recommended" };
 const FILTERS_KEY = "lumina.fileFilters";
 
 function loadFilters(): Filters {
