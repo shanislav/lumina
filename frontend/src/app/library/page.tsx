@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import BulkFilmSettings from "@/components/BulkFilmSettings";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -48,6 +48,10 @@ import { ON_BETTER } from "@/components/WatchedList";
 
 type Tab = "filmy" | "serialy";
 type MovieFilter = "all" | "versions" | "review" | "unmatched";
+
+const GRID_PAGE = 120;
+/** A grid card is ~150 px wide: TMDB w342 is plenty (w500 was ~2× the data). */
+const gridPoster = (url: string) => url.replace("/t/p/w500/", "/t/p/w342/");
 
 /** One card in the grid: a movie with all its files (versions). Unidentified files stay alone. */
 interface MovieGroup {
@@ -303,6 +307,18 @@ export default function LibraryPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, multiVersion, movieFilter, qualityFlag, librarySort, identified, upgradeChecks, librarySearch]);
   const [versionsOf, setVersionsOf] = useState<MovieGroup | null>(null);
+  // the grid draws a page of cards, more as it scrolls (770 cards with posters at once were slow)
+  const [shown, setShown] = useState(GRID_PAGE);
+  useEffect(() => setShown(GRID_PAGE), [visibleGroups]);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = moreRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((e) => { if (e[0].isIntersecting) setShown((n) => n + GRID_PAGE); },
+                                        { rootMargin: "800px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [shown, visibleGroups]);
 
   function openMovie(movie: LibraryMovie) {
     setFixingMovie(movie);
@@ -639,7 +655,7 @@ export default function LibraryPage() {
             <div className="text-center py-8 text-zinc-500 text-sm">Nic k zobrazení.</div>
           )}
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-            {visibleGroups.map(({ key, main: movie, versions }) => (
+            {visibleGroups.slice(0, shown).map(({ key, main: movie, versions }) => (
               <div
                 key={key}
                 onClick={() => (versions.length > 1 ? setVersionsOf({ key, main: movie, versions }) : openMovie(movie))}
@@ -648,7 +664,7 @@ export default function LibraryPage() {
                 <div className="aspect-[2/3] relative bg-zinc-800">
                   {movie.poster_url ? (
                     <Image
-                      src={movie.poster_url}
+                      src={gridPoster(movie.poster_url)}
                       alt={movie.title}
                       fill
                       sizes="(max-width: 640px) 33vw, 12.5vw"
@@ -707,6 +723,7 @@ export default function LibraryPage() {
               </div>
             ))}
           </div>
+          {shown < visibleGroups.length && <div ref={moreRef} className="h-8" />}
           </div>
         )
       ) : selectedShow ? (

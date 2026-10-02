@@ -67,7 +67,8 @@ def _movie_row(r, prefs: quality.Prefs | None = None) -> dict:
         "matched_by": r["matched_by"] or "filename",
         "status": r["status"] or "matched",
         "confidence": r["confidence"] or 0,
-        "candidates": json.loads(r["candidates"] or "[]"),
+        # only a file still to be decided needs its candidates (they were ~1/3 of the whole list)
+        "candidates": json.loads(r["candidates"] or "[]") if r["status"] in ("review", "unmatched") else [],
         "media": media,
         "duration_s": r["duration_s"] or 0,
         "file_path": r["file_path"],
