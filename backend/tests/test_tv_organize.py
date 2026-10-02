@@ -222,3 +222,16 @@ def test_two_subtitles_of_one_name_get_numbers(tmp_path):
     names = sorted(os.path.basename(op["dst"]) for op in plan["ops"] if op["kind"] == "sidecar")
     assert names == ["Černobyl - S01E01.cs.2.srt", "Černobyl - S01E01.cs.srt", "Černobyl - S01E01.srt"]
     assert not plan["conflicts"]
+
+
+def test_file_title_when_plex_names_another_part(tmp_path):
+    root = str(tmp_path)
+    a = touch(root, "Archer/S03/Archer.S00E04.Heart.of.Archness.Part.I.mkv")
+    b = touch(root, "Archer/S03/Archer.S01E01.Mole.Hunt.mkv")
+    rows = [row(a, "Archer", 0, [4], status="not_in_tmdb", file=[0, [4]], plex=[0, 4, "Heart of Archness - Part II"],
+                title="Heart of Archness Part I"),
+            row(b, "Archer", 1, [1], file=[1, [1]], plex=[1, 1, "Hon na krtka"], title="Mole Hunt")]
+    got = rel(organize_tv.plan_folder(rows, {"tmdb_id": 10283, "title": "Archer", "year": 2009}, {}, {}, root, SETTINGS), root)
+    assert got["Archer/S03/Archer.S00E04.Heart.of.Archness.Part.I.mkv"].endswith("/Specials/Archer - S00E04 - Heart of Archness Part I.mkv")
+    # another language is no other episode: Plex's (Czech) name stays
+    assert got["Archer/S03/Archer.S01E01.Mole.Hunt.mkv"].endswith("/Season 01/Archer - S01E01 - Hon na krtka.mkv")

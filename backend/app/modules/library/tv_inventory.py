@@ -13,6 +13,7 @@ and Plex disagree. Every file: which episode, and what is wrong with it:
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -128,15 +129,32 @@ class Inventory:
 _COMMON = {"the", "and", "for", "with", "from", "part", "cast", "dil", "pro", "jak", "kde", "tak", "ale", "nebo", "who", "what"}
 
 
+_PART = re.compile(r"(?i)\b(?:part|pt|cast|část|díl|dil|chapter|kapitola)\.?\s*([ivx]+|\d+)\b|\b([ivx]{1,4}|\d)\s*$")
+_ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10}
+
+
+def _part(name: str) -> int | None:
+    """The part a name says ("Heart of Archness: Part II" → 2, "Kapitola 3" → 3), None when it says none."""
+    m = _PART.search(name or "")
+    if not m:
+        return None
+    token = (m.group(1) or m.group(2)).lower()
+    return int(token) if token.isdigit() else _ROMAN.get(token)
+
+
 def same_episode(a: str, b: str, strict: bool = False) -> bool:
-    """Two names of one episode (Plex's and TMDB's) — a word in common is enough; an empty or generic
-    name ("Epizoda 3") says nothing, so it agrees (strict: it does not)."""
+    """Two names of one episode (Plex's and TMDB's) — a word in common is enough, unless they name other
+    parts ("… Part I" / "… Part II"); an empty or generic name ("Epizoda 3") says nothing, so it agrees
+    (strict: it does not)."""
     from app.core.naming import episode_title
     from app.utils.tv_parser import normalize_for_search
     wa = {w for w in normalize_for_search(episode_title(a or "")).split() if len(w) > 2} - _COMMON
     wb = {w for w in normalize_for_search(episode_title(b or "")).split() if len(w) > 2} - _COMMON
     if not wa or not wb:
         return not strict
+    pa, pb = _part(a), _part(b)
+    if pa is not None and pb is not None and pa != pb:
+        return False
     return bool(wa & wb)
 
 

@@ -614,6 +614,11 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
             # the file's own numbers (an absolute mapping changes season/episode later); a file may hold
             # more episodes ("S07E21E22", "s04e01+02") — Plex lists such a file under one of them
             own = parse_episode(f["filename"])
+            if not ep_nfo and own.season is not None and own.episodes and not own.bare \
+                    and (own.season, own.episodes[0]) != (entry["season"], entry["episode"]) \
+                    and re.search(r"(?i)s\d{1,2}\s?e\d{1,3}|\d{1,2}x\d{2,3}", f["filename"]):
+                # the name's own SxxEyy beats the old parser (it read "Archer.S00E06" as S01E06)
+                entry["season"], entry["episode"] = own.season, own.episodes[0]
             entry["file_episodes"] = own.episodes if len(own.episodes) > 1 and own.season == entry["season"] \
                 and own.episodes[0] == entry["episode"] else [entry["episode"]]
             entry["file_season"] = entry["season"]
