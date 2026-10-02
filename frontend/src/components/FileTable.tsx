@@ -304,7 +304,7 @@ export default function FileTable({
   if (files.length === 0) return <p className="text-zinc-500 text-sm py-6">Nic nenalezeno.</p>;
 
   return (
-    <div className="w-full overflow-x-auto">
+    <div className="w-full">
       {choosing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setChoosing(null)}>
           <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-xl w-full mx-4 space-y-4" onClick={(e) => e.stopPropagation()}>
@@ -384,24 +384,13 @@ export default function FileTable({
       )}
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-3 text-xs">
-        <FilterGroup label="Zvuk" value={filters.audio} onChange={(v) => updateFilters({ audio: v as AudioFilter })}
-          options={[["all", "Vše"], ["local", "CZ/SK zvuk"], ["local_or_subs", "CZ/SK zvuk nebo titulky"], ["langs", "Vlastní…"]]} />
-        {filters.audio === "langs" && (
-          <div className="flex flex-wrap items-center gap-1" title="Soubor musí mít zvuk ve všech vybraných jazycích (neověřené soubory podle názvu)">
-            <span className="text-zinc-500 mr-1">musí mít:</span>
-            {audioLangChoices.map((l) => (
-              <Chip key={l} active={filters.audioLangs.includes(l)}
-                onClick={() => updateFilters({ audioLangs: filters.audioLangs.includes(l)
-                  ? filters.audioLangs.filter((x) => x !== l) : [...filters.audioLangs, l] })}>
-                {l === "cs" ? "CZ" : l.toUpperCase()}
-              </Chip>
-            ))}
-            <label className="ml-2 flex items-center gap-1 text-zinc-400" title="Žádný jiný jazyk zvuku než vybrané">
-              <input type="checkbox" checked={filters.audioOnly} onChange={(e) => updateFilters({ audioOnly: e.target.checked })} />
-              jen tyto
-            </label>
-          </div>
-        )}
+        <div className="flex items-center gap-1">
+          <FilterGroup label="Zvuk" value={filters.audio} onChange={(v) => updateFilters({ audio: v as AudioFilter })}
+            options={[["all", "Vše"], ["local", "CZ/SK zvuk"], ["local_or_subs", "CZ/SK zvuk nebo titulky"]]} />
+          <AudioLangPicker choices={audioLangChoices} active={filters.audio === "langs"} langs={filters.audioLangs}
+            only={filters.audioOnly} onChange={(patch) => updateFilters({ audio: "langs", ...patch })}
+            onClear={() => updateFilters({ audio: "all", audioLangs: [], audioOnly: false })} />
+        </div>
         <MultiGroup label="Rozlišení" values={filters.qualities} onChange={(v) => updateFilters({ qualities: v })}
           options={[["2160p", "4K"], ["1080p", "1080p"], ["720p", "720p"], ["SD", "SD"]]} />
         <MultiGroup label="Zdroj" values={filters.sources} onChange={(v) => updateFilters({ sources: v })}
@@ -410,6 +399,7 @@ export default function FileTable({
           options={[["recommended", "Doporučené"], ["quality", "Kvalita"], ["bitrate", "Bitrate"], ["size", "Velikost"]]} />
       </div>
 
+      <div className="w-full overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-zinc-800 text-zinc-400 text-left">
@@ -485,6 +475,7 @@ export default function FileTable({
           })}
         </tbody>
       </table>
+      </div>
       <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-zinc-500">
         <span>Zobrazeno {view.length} z {rows.length}{rows.length < files.length ? ` (${files.length} souborů, stejné sloučeny)` : ""}</span>
         {verify.running && <span className="animate-pulse">· ověřuji u zdrojů {verify.done}/{verify.total}…</span>}
@@ -630,6 +621,54 @@ function FilterGroup({ label, value, options, onChange }: { label: string; value
     <div className="flex items-center gap-1">
       <span className="text-zinc-500 mr-1">{label}:</span>
       {options.map(([v, l]) => <Chip key={v} active={value === v} onClick={() => onChange(v)}>{l}</Chip>)}
+    </div>
+  );
+}
+
+const langLabel = (l: string) => (l === "cs" ? "CZ" : l.toUpperCase());
+
+/** "Vlastní…": a chip that drops a small panel down over the list — pick the audio languages, it closes again. */
+function AudioLangPicker({ choices, active, langs, only, onChange, onClear }: {
+  choices: string[]; active: boolean; langs: string[]; only: boolean;
+  onChange: (patch: { audioLangs?: string[]; audioOnly?: boolean }) => void; onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  const label = active && langs.length ? langs.map(langLabel).join("+") + (only ? " (jen)" : "") : "Vlastní…";
+  return (
+    <div ref={box} className="relative">
+      <Chip active={active && langs.length > 0} onClick={() => setOpen(!open)}>{label} ▾</Chip>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-zinc-700 bg-zinc-900 p-3 shadow-xl space-y-2">
+          <p className="text-zinc-400">Zvuk musí obsahovat:</p>
+          <div className="grid grid-cols-3 gap-1.5">
+            {choices.map((l) => (
+              <label key={l} className="flex items-center gap-1 text-zinc-300">
+                <input type="checkbox" checked={langs.includes(l)}
+                  onChange={(e) => onChange({ audioLangs: e.target.checked ? [...langs, l] : langs.filter((x) => x !== l) })} />
+                {langLabel(l)}
+              </label>
+            ))}
+          </div>
+          <label className="flex items-center gap-1.5 text-zinc-400" title="Žádný jiný jazyk zvuku než vybrané">
+            <input type="checkbox" checked={only} onChange={(e) => onChange({ audioOnly: e.target.checked })} />
+            jen tyto (nic jiného)
+          </label>
+          <p className="text-[10px] text-zinc-600">neověřené soubory podle názvu</p>
+          <div className="flex justify-between pt-1">
+            <button onClick={() => { onClear(); setOpen(false); }} className="text-zinc-500 hover:text-zinc-300">Zrušit filtr</button>
+            <button onClick={() => setOpen(false)} className="rounded bg-violet-600 px-2.5 py-0.5 text-white hover:bg-violet-500">Hotovo</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
