@@ -124,7 +124,9 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
             order = (order[0], order[1], int(m.group(1)))      # "Nejhorší auto všech dob 2": its 2nd part
         # TMDB's Czech name, else the file's own (the user's language — TMDB may have only English ones)
         tmdb = tmdb_title(season, episode)
-        return season, [episode], (tmdb if tmdb and (czech(tmdb) or not file_title) else file_title) or plex_title, order
+        # Plex's name only when Plex shows this episode (else it is the name of the number the file had)
+        plex_here = plex_title if plex and (plex[0], plex[1]) == (season, episode) else ""
+        return season, [episode], (tmdb if tmdb and (czech(tmdb) or not file_title) else file_title) or plex_here, order
 
     if mode == "tmdb":
         if facts.get("tmdb_episode") and facts.get("tmdb_sure"):

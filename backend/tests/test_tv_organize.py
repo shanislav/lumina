@@ -368,3 +368,14 @@ def test_copies_of_one_episode_are_versions_not_parts(tmp_path):
                                    root, SETTINGS, mode="tmdb")
     names = sorted(os.path.basename(op["dst"]) for op in plan["ops"])
     assert names == ["Z ohnivé výhně - S05E02 - Schiavona (2).mkv", "Z ohnivé výhně - S05E02 - Schiavona.mkv"]
+
+
+def test_the_users_word_does_not_take_plexs_name_of_the_old_number(tmp_path):
+    """Top Gear "14x06" is S14E07 (50 min, not the 76-min Bolivia special): Plex shows it as S14E06 "Bolivijský
+    speciál" — that name is the old number's; TMDB's S14E07 has none, so the file goes without a name."""
+    root = str(tmp_path)
+    a = touch(root, "TG/Season 14/Top Gear - S14E06 - Bolivijský speciál.avi")
+    rows = [row(a, "TG", 14, [6], file=[14, [6]], plex=[14, 6, "Bolivijský speciál"], title="", manual=[14, 7, ""])]
+    plan = organize_tv.plan_folder(rows, {"tmdb_id": 45, "title": "Top Gear", "year": 2002}, {}, {(14, 7): "7. epizoda"},
+                                   root, SETTINGS)
+    assert [os.path.basename(op["dst"]) for op in plan["ops"]] == ["Top Gear - S14E07.avi"]
