@@ -20,6 +20,7 @@ A plan is computed per *show folder* (the first folder under the TV library, as 
 import json
 import logging
 import os
+import re
 import time
 import uuid
 
@@ -142,6 +143,24 @@ def _sidecars(folder_entries: list[str], folder: str, old_stem: str) -> list[str
     return out
 
 
+_SUB_WORD = re.compile(r"(cz|cze|cs|sk|slo|en|eng)(?:tit|titulky|sub|subs)")
+_SUB_LANG = {"cz": "cs", "cze": "cs", "cs": "cs", "sk": "sk", "slo": "sk", "en": "en", "eng": "en"}
+
+
+def subtitle_rest(name: str, old_stem: str) -> str:
+    """What a subtitle file keeps after the video's new stem: its language (".cs", also from "-CZtit"),
+    forced and SDH (".en.sdh.srt") — Plex reads those."""
+    ext = os.path.splitext(name)[1].lower()
+    suffix = subtitle_suffix(name)
+    words = [w for w in re.split(r"[.\s_\-\[\]()]+", os.path.splitext(name[len(old_stem):])[0].lower()) if w]
+    if not suffix.startswith(".") or suffix.startswith(".forced"):
+        lang = next((_SUB_LANG[m.group(1)] for w in words if (m := _SUB_WORD.fullmatch(w))), "")
+        suffix = (f".{lang}" if lang else "") + suffix
+    if any(w in ("sdh", "cc", "hi") for w in words):
+        suffix += ".sdh"
+    return suffix + ext
+
+
 def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_titles: dict[tuple[int, int], str],
                 root: str, settings: dict, mode: str = "files", blocked: str = "") -> dict:
     """Plan for one show folder. rows: its tv_files rows (facts parsed, episodes a list). show: {tmdb_id, title,
@@ -207,6 +226,7 @@ def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_title
         return listing[d]
 
     planned: set[str] = set()
+    taken = {os.path.normcase(d) for d in renames.values()}
     for src, dst in renames.items():
         ops.append({"kind": "video", "src": src, "dst": dst})
         planned.add(src)
@@ -216,8 +236,14 @@ def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_title
             if path in planned:
                 continue
             ext = os.path.splitext(e)[1].lower()
-            rest = subtitle_suffix(e) + ext if ext in SUBTITLE_EXTS else e[len(old_stem):]
-            ops.append({"kind": "sidecar", "src": path, "dst": os.path.join(os.path.dirname(dst), new_stem + rest)})
+            rest = subtitle_rest(e, old_stem) if ext in SUBTITLE_EXTS else e[len(old_stem):]
+            target = os.path.join(os.path.dirname(dst), new_stem + rest)
+            base, tail = target[:-len(ext)] if ext else target, ext
+            n = 2
+            while os.path.normcase(target) in taken:            # two subtitles of one language: ".2.srt"
+                target, n = f"{base}.{n}{tail}", n + 1
+            taken.add(os.path.normcase(target))
+            ops.append({"kind": "sidecar", "src": path, "dst": target})
             planned.add(path)
 
     # extras folders and everything else: the same place under the new show folder

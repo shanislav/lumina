@@ -203,3 +203,22 @@ async def test_episode_versions_and_deleting_one(db_tv):
     assert ep["file_path"] == b and ep["has_file"] == 1                          # the other version takes its place
     await episodes.delete_file(db, ep, b, root)
     assert (await episodes.episode(db, 1))["has_file"] == 0
+def test_subtitles_keep_language_sdh_and_never_collide():
+    rest = organize_tv.subtitle_rest
+    assert rest("S01E01.CHe-CZtit.srt", "S01E01.CHe") == ".cs.srt"
+    assert rest("S01E01.CHe.srt", "S01E01.CHe") == ".srt"
+    assert rest("Urgent S01E01 07 00.eng.sdh.srt", "Urgent S01E01 07 00") == ".en.sdh.srt"
+    assert rest("Urgent S01E01 07 00.cze.forced.srt", "Urgent S01E01 07 00") == ".cs.forced.srt"
+
+
+def test_two_subtitles_of_one_name_get_numbers(tmp_path):
+    root = str(tmp_path)
+    a = touch(root, "Chernobyl/S01E01.CHe.avi")
+    touch(root, "Chernobyl/S01E01.CHe.srt")
+    touch(root, "Chernobyl/S01E01.CHe.cs.srt")
+    touch(root, "Chernobyl/S01E01.CHe-CZtit.srt")
+    plan = organize_tv.plan_folder([row(a, "Chernobyl", 1, [1], file=[1, [1]])], {"tmdb_id": 87108, "title": "Černobyl", "year": 2019},
+                                   {}, {}, root, SETTINGS)
+    names = sorted(os.path.basename(op["dst"]) for op in plan["ops"] if op["kind"] == "sidecar")
+    assert names == ["Černobyl - S01E01.cs.2.srt", "Černobyl - S01E01.cs.srt", "Černobyl - S01E01.srt"]
+    assert not plan["conflicts"]
