@@ -39,6 +39,11 @@ def _seeding_copy(path: str, torrent_hash: str) -> str:
 _monitor_running = False
 
 
+def _now() -> str:
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 async def _monitor_loop():
     """Background loop that runs as long as there are unprocessed downloads."""
     global _monitor_running
@@ -135,7 +140,8 @@ async def _monitor_loop():
 
                         if completed_path and Path(completed_path).exists():
                             logger.info("Download completed: %s. Emitting download.completed.", title)
-                            await events.emit("download.completed", {
+                            done_size = os.path.getsize(completed_path)     # before the library moves it
+                            done = await events.emit("download.completed", {
                                 "download_id": did,
                                 "tmdb_id": tmdb_id,
                                 "title": title,
@@ -144,7 +150,8 @@ async def _monitor_loop():
                                 "path": completed_path,
                                 "library_action": intent,
                             })
-                            cur.execute("UPDATE download_tracker SET processed = 1, status = 'complete' WHERE id = ?", (did,))
+                            cur.execute("UPDATE download_tracker SET processed = 1, status = 'complete', finished_at = ?, file_name = ?, size = ? "
+                                        "WHERE id = ?", (_now(), os.path.basename(done.get("path") or completed_path), done_size, did))
                             conn.commit()
                     except Exception as sub_e:
                         logger.error("Error processing %s: %s", title, sub_e)

@@ -30,8 +30,10 @@ async def test_over_the_limit_a_download_waits_and_starts_when_there_is_room(mon
     assert out["status"] == "queued"
 
     listed = (await router.list_downloads())["downloads"]
-    assert listed[0]["status"] == "queued" and listed[0]["filename"] == "Matrix (1999)"
-    assert listed[0]["requested_by"] == "shano" and listed[0]["mode"] == "replace"
+    # running ones first (the two tracked), then the queue
+    assert [d["status"] for d in listed][-1] == "queued" and listed[-1]["filename"] == "Matrix (1999)"
+    assert listed[-1]["requested_by"] == "shano" and listed[-1]["mode"] == "replace"
+    assert {d.get("gid") for d in listed[:2]} == {"g0", "g1"}
 
     # still full: nothing starts
     started = []
@@ -164,3 +166,26 @@ def test_profile_score_range_and_overall_bitrate():
     # profiles saved with the old video bitrate keep their limit
     old = profile_from_row({"id": 1, "name": "x", "is_default": 0, "config": '{"min_video_mbps": 3}'})
     assert old.min_mbps == 3
+
+
+async def test_the_download_list_is_lumina_history_newest_first():
+    import importlib
+    from app.modules.downloads import store
+    router = importlib.import_module("app.modules.downloads.router")
+
+    await _setup("3")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.executemany("INSERT INTO download_tracker (id, title, year, backend, status, processed, created_at, finished_at, "
+                         "file_name, size) VALUES (?, ?, 2000, 'aria2', ?, 1, ?, ?, ?, 5)",
+                         [(f"h{i}", f"Film {i}", "complete", f"2026-10-01 10:{i:02d}:00", f"2026-10-01 12:{i:02d}:00",
+                           f"Film {i}.mkv") for i in range(25)])
+        conn.execute("INSERT INTO download_tracker (id, title, backend, status, processed, created_at) "
+                     "VALUES ('old', 'Old', 'aria2', 'complete', 1, '2020-01-01 00:00:00')")
+    await store.prune_history()
+    out = await router.list_downloads(offset=0, limit=10)
+    assert out["downloads"] == [] and out["history_total"] == 25
+    assert [d["filename"] for d in out["history"][:2]] == ["Film 24.mkv", "Film 23.mkv"]
+    page3 = (await router.list_downloads(offset=20, limit=10))["history"]
+    assert len(page3) == 5 and page3[-1]["filename"] == "Film 0.mkv"
+    assert (await router.remove_download("h3", backend="history"))["ok"]
+    assert (await router.list_downloads())["history_total"] == 24

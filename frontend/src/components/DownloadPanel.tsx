@@ -32,6 +32,8 @@ function statusIcon(status: string): { icon: string; color: string } {
     case "queuedDL":
       return { icon: "\u23F3", color: "text-zinc-400" };        // ⏳
     case "removed":
+    case "cancelled":
+    case "not_found":
       return { icon: "\u2212", color: "text-zinc-600" };        // −
     default:
       return { icon: "\u2022", color: "text-zinc-500" };        // •
@@ -42,21 +44,30 @@ function isActive(status: string): boolean {
   return ["active", "downloading", "stalledDL", "forcedDL", "waiting", "queuedDL", "queued"].includes(status);
 }
 
+const HISTORY_PAGE = 10;
+
 export default function DownloadPanel() {
-  const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+  const [running, setRunning] = useState<DownloadItem[]>([]);
+  const [history, setHistory] = useState<DownloadItem[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE);
   const [expanded, setExpanded] = useState(true);
   const [loading, setLoading] = useState(true);
+  // running first, the queue under it, then the finished ones (newest on top)
+  const downloads = [...running, ...history];
 
   const refresh = useCallback(async () => {
     try {
-      const items = await getDownloads();
-      setDownloads(items);
+      const list = await getDownloads(historyLimit);
+      setRunning(list.downloads);
+      setHistory(list.history);
+      setHistoryTotal(list.history_total);
     } catch {
       // silent fail
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [historyLimit]);
 
   useEffect(() => {
     refresh();
@@ -64,8 +75,8 @@ export default function DownloadPanel() {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  const activeCount = downloads.filter((d) => isActive(d.status) && d.status !== "queued").length;
-  const queuedCount = downloads.filter((d) => d.status === "queued").length;
+  const activeCount = running.filter((d) => d.status !== "queued").length;
+  const queuedCount = running.filter((d) => d.status === "queued").length;
 
   async function stopAll(cancelRunning: boolean) {
     const q = cancelRunning
@@ -102,7 +113,7 @@ export default function DownloadPanel() {
             </span>
           )}
           {activeCount === 0 && queuedCount === 0 && downloads.length > 0 && (
-            <span className="text-xs text-zinc-500">{downloads.length} total</span>
+            <span className="text-xs text-zinc-500">{historyTotal} dokončených</span>
           )}
         </div>
         <svg
@@ -136,8 +147,9 @@ export default function DownloadPanel() {
             <div className="px-4 py-3 text-sm text-zinc-500 animate-pulse">Loading...</div>
           )}
           {downloads.map((dl, i) => {
-            const id = dl.gid || dl.hash || (dl.queue_id ? `q${dl.queue_id}` : String(i));
+            const id = dl.history ? `h${dl.id}` : dl.gid || dl.hash || (dl.queue_id ? `q${dl.queue_id}` : String(i));
             const queued = dl.status === "queued";
+            const firstDone = dl.history && i === running.length;
             const total = dl.total_length || 0;
             const done = dl.completed_length || 0;
             const pct =
@@ -152,6 +164,7 @@ export default function DownloadPanel() {
 
             return (
               <div key={id} className="px-4 py-2.5 space-y-1.5">
+                {firstDone && <div className="-mt-1 pb-1 text-[11px] uppercase tracking-wide text-zinc-600">Dokončené</div>}
                 <div className="flex items-center gap-3">
                   <span className={`text-sm ${color}`}>{icon}</span>
                   {dl.tmdb_id && dl.content_type !== "tv" ? (
@@ -192,10 +205,12 @@ export default function DownloadPanel() {
                       ▶ hned
                     </button>
                   )}
-                  {(dl.gid || dl.hash || dl.queue_id) && (
+                  {(dl.gid || dl.hash || dl.queue_id || dl.history) && (
                     <button
                       onClick={async () => {
-                        if (dl.queue_id) {
+                        if (dl.history) {
+                          await removeDownload(dl.id!, "history");
+                        } else if (dl.queue_id) {
                           await removeDownload(String(dl.queue_id), "queue");
                         } else if (dl.hash && dl.backend === "qbittorrent") {
                           await removeDownload(dl.hash, "qbittorrent", active);
@@ -209,7 +224,7 @@ export default function DownloadPanel() {
                           ? "text-zinc-600 hover:text-red-400"
                           : "text-zinc-600 hover:text-zinc-400"
                       }`}
-                      title={queued ? "Odebrat z fronty" : active ? "Zrušit stahování" : "Odstranit"}
+                      title={dl.history ? "Odebrat ze seznamu (soubor v knihovně zůstane)" : queued ? "Odebrat z fronty" : active ? "Zrušit stahování" : "Odstranit"}
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -219,6 +234,12 @@ export default function DownloadPanel() {
                 </div>
                 {queued ? (
                   <div className="text-xs text-zinc-500">ve frontě · {dl.queue_pos}. na řadě</div>
+                ) : dl.history ? (
+                  <div className="text-xs text-zinc-500">
+                    {{ complete: "staženo", cancelled: "zrušeno", error: "selhalo", removed: "zrušeno", not_found: "zmizelo z klienta" }[dl.status] ?? dl.status}
+                    {(dl.finished_at || dl.created_at) && ` · ${(dl.finished_at || dl.created_at)!.slice(0, 16)}`}
+                    {dl.total_length > 0 && ` · ${formatSize(dl.total_length)}`}
+                  </div>
                 ) : (
                 <div className="flex items-center gap-3">
                   {/* Progress bar */}
@@ -253,6 +274,12 @@ export default function DownloadPanel() {
               </div>
             );
           })}
+          {history.length < historyTotal && (
+            <button onClick={() => setHistoryLimit((n) => n + HISTORY_PAGE)}
+              className="w-full px-4 py-2 text-xs text-violet-300 hover:text-violet-200">
+              Zobrazit dalších {Math.min(HISTORY_PAGE, historyTotal - history.length)} (celkem {historyTotal})
+            </button>
+          )}
         </div>
       )}
     </div>

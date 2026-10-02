@@ -11,7 +11,7 @@ from app.modules.downloads import tasks
 from app.modules.downloads.monitor import ensure_monitor_running
 from app.modules.downloads.router import on_download_request, router
 from app.modules.downloads.queue import DOWNLOAD_QUEUE
-from app.modules.downloads.store import DOWNLOAD_TRACKER_V1
+from app.modules.downloads.store import DOWNLOAD_TRACKER_V1, prune_history
 
 module = Module(
     name="downloads",
@@ -30,9 +30,13 @@ module = Module(
         add_column("download_tracker", "created_at", "TEXT DEFAULT ''"),
         # downloads over the limit of concurrent ones wait here
         DOWNLOAD_QUEUE,
+        # the download list is Lumina's own history (aria2 / qBittorrent forget finished ones)
+        add_column("download_tracker", "finished_at", "TEXT DEFAULT ''"),
+        add_column("download_tracker", "file_name", "TEXT DEFAULT ''"),
+        add_column("download_tracker", "size", "INTEGER DEFAULT 0"),
     ],
     subscriptions=[Subscription("download.request", on_download_request)],
-    on_startup=[ensure_monitor_running],
+    on_startup=[ensure_monitor_running, prune_history],
     permissions=[Permission("download", "Stahovat (a rušit stahování)", default=True)],
     tasks=[TaskSource(tasks.read, "download")],
 )

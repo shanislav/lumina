@@ -53,6 +53,58 @@ async def tracked() -> dict[str, dict]:
         await db.close()
 
 
+HISTORY_DAYS = 180
+
+
+async def prune_history() -> None:
+    """Finished downloads older than half a year leave the list."""
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM download_tracker WHERE processed = 1 AND "
+                         "COALESCE(NULLIF(finished_at, ''), created_at) < datetime('now', ?)", (f"-{HISTORY_DAYS} days",))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def history(offset: int = 0, limit: int = 10) -> tuple[list[dict], int]:
+    """Finished / failed / cancelled downloads, the newest first, and how many there are."""
+    db = await get_db()
+    try:
+        total = (await (await db.execute("SELECT COUNT(*) FROM download_tracker WHERE processed = 1")).fetchone())[0]
+        cursor = await db.execute(
+            "SELECT * FROM download_tracker WHERE processed = 1 "
+            "ORDER BY COALESCE(NULLIF(finished_at, ''), created_at) DESC LIMIT ? OFFSET ?", (limit, offset))
+        rows = [dict(r) for r in await cursor.fetchall()]
+    finally:
+        await db.close()
+    out = []
+    for r in rows:
+        intent = json.loads(r["intent"]) if r.get("intent") else {}
+        title = r["title"] or ""
+        out.append({
+            "id": r["id"], "backend": r["backend"], "status": r["status"] or "complete",
+            "filename": r.get("file_name") or (f"{title} ({r['year']})" if r.get("year") else title),
+            "total_length": r.get("size") or 0, "completed_length": r.get("size") or 0, "download_speed": 0,
+            "source_label": r.get("source_label") or "", "tmdb_id": r["tmdb_id"], "film": title,
+            "requested_by": r.get("requested_by") or "", "created_at": r.get("created_at") or "",
+            "finished_at": r.get("finished_at") or "", "mode": intent.get("mode") or "",
+            "content_type": r.get("content_type") or "movie",
+        })
+    return out, total
+
+
+async def forget(download_id: str) -> bool:
+    """Take a finished download off the list."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("DELETE FROM download_tracker WHERE id = ? AND processed = 1", (download_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
 async def source_labels() -> dict[str, str]:
     """gid / torrent hash -> source label of the downloads Lumina started."""
     db = await get_db()

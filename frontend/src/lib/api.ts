@@ -318,18 +318,28 @@ export interface DownloadItem {
   content_type?: string;
   queue_id?: number;          // waiting for a free slot (status "queued")
   queue_pos?: number;
+  id?: string;                // a finished one (history)
+  finished_at?: string;
+  history?: boolean;
 }
 
-export async function getDownloads(): Promise<DownloadItem[]> {
-  const res = await apiFetch(`${API_BASE}/api/downloads`);
+export interface DownloadList {
+  downloads: DownloadItem[];  // running, then the queue
+  history: DownloadItem[];    // finished, the newest first
+  history_total: number;
+}
+
+export async function getDownloads(historyLimit = 10): Promise<DownloadList> {
+  const res = await apiFetch(`${API_BASE}/api/downloads?limit=${historyLimit}`);
   if (!res.ok) throw new Error(`Failed to load downloads: ${res.status}`);
   const data = await res.json();
-  return data.downloads;
+  return { downloads: data.downloads, history: (data.history ?? []).map((d: DownloadItem) => ({ ...d, history: true })),
+           history_total: data.history_total ?? 0 };
 }
 
 export async function removeDownload(
   identifier: string,
-  backend: "aria2" | "qbittorrent" | "queue" = "aria2",
+  backend: "aria2" | "qbittorrent" | "queue" | "history" = "aria2",
   active: boolean = false,
 ): Promise<void> {
   const params = new URLSearchParams();

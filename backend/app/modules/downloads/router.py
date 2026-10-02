@@ -126,77 +126,50 @@ async def on_download_request(payload: dict) -> None:
 
 
 @router.get("/downloads")
-async def list_downloads() -> dict:
-    """List all active + recent downloads from Aria2 and qBittorrent."""
-    from app.modules.downloads.store import tracked
+async def list_downloads(offset: int = 0, limit: int = 10) -> dict:
+    """Lumina's downloads: what downloads now (live state from aria2 / qBittorrent), what waits in the
+    queue, then the history — finished first, the newest on top, a page at a time."""
+    import sqlite3
+
+    from app.db import DB_PATH
+    from app.modules.downloads import queue
+    from app.modules.downloads.store import history, tracked
 
     cfg = await get_effective_settings()
-    downloads: list[dict] = []
     known = await tracked()
-    labels = {k: v["source_label"] for k, v in known.items() if v["source_label"]}
+    with sqlite3.connect(DB_PATH) as conn:
+        running = conn.execute("SELECT id, backend FROM download_tracker WHERE processed = 0 ORDER BY created_at DESC").fetchall()
 
-    # Aria2
+    active: list[dict] = []
+    aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"]) if any(b == "aria2" for _, b in running) else None
+    qbt = (QBittorrentClient(cfg["qbittorrent_url"], cfg["qbittorrent_username"], cfg["qbittorrent_password"])
+           if cfg.get("qbittorrent_url") and any(b == "qbittorrent" for _, b in running) else None)
     try:
-        aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
-        try:
-            active = await aria2.tell_active()
-            for d in active:
-                d["backend"] = "aria2"
-                d["source_label"] = labels.get(d.get("gid", ""), "")
-            downloads.extend(active)
-
-            stopped = await aria2.tell_stopped(0, 10)
-            for d in stopped:
-                d["backend"] = "aria2"
-                d["source_label"] = labels.get(d.get("gid", ""), "")
-            downloads.extend(stopped)
-        finally:
-            await aria2.close()
-    except Exception as e:
-        # polled every few seconds — debug only, a stopped aria2 must not flood the log
-        logger.debug("Aria2 unavailable for the download list: %s", e)
-
-    # qBittorrent
-    if cfg.get("qbittorrent_url"):
-        try:
-            qbt = QBittorrentClient(
-                cfg["qbittorrent_url"],
-                cfg["qbittorrent_username"],
-                cfg["qbittorrent_password"],
-            )
+        for did, backend in running:
+            info = known.get(did) or {}
+            item = {"backend": backend, "status": "active", "total_length": 0, "completed_length": 0,
+                    "download_speed": 0, "filename": info.get("film") or did}
             try:
-                await qbt.login()
-                resp = await qbt._http.get(
-                    f"{qbt._base_url}/api/v2/torrents/info",
-                    params={"sort": "added_on", "reverse": "true", "limit": "20"},
-                )
-                resp.raise_for_status()
-                for t in resp.json():
-                    h = t.get("hash", "")
-                    downloads.append({
-                        "hash": h,
-                        "status": t.get("state", "unknown"),
-                        "total_length": t.get("total_size", 0),
-                        "completed_length": t.get("downloaded", 0),
-                        "download_speed": t.get("dlspeed", 0),
-                        "filename": t.get("name", ""),
-                        "backend": "qbittorrent",
-                        "progress": t.get("progress", 0),
-                        "source_label": labels.get(h, "Torrent"),
-                    })
-            finally:
-                await qbt.close()
-        except Exception as e:
-            logger.debug("qBittorrent unavailable for the download list: %s", e)
+                if backend == "aria2" and aria2:
+                    item.update(await aria2.get_status(did))
+                elif backend == "qbittorrent" and qbt:
+                    t = await qbt.get_status(did)
+                    item.update({"hash": did, "status": t.get("state", "unknown"), "total_length": t.get("total_size", 0),
+                                 "completed_length": t.get("downloaded", 0), "download_speed": t.get("download_speed", 0),
+                                 "filename": t.get("name") or item["filename"], "progress": t.get("progress", 0)})
+            except Exception as e:     # polled every few seconds — a stopped client must not flood the log
+                logger.debug("Live state of %s unavailable: %s", did, e)
+            item.setdefault("gid" if backend == "aria2" else "hash", did)
+            item.update({"source_label": info.get("source_label") or ("Torrent" if backend == "qbittorrent" else ""),
+                         **{k: info.get(k) for k in ("tmdb_id", "film", "requested_by", "created_at", "mode", "content_type")}})
+            active.append(item)
+    finally:
+        if aria2:
+            await aria2.close()
+        if qbt:
+            await qbt.close()
 
-    # what Lumina knows of each (film, who asked, when); the newest first
-    for d in downloads:
-        info = known.get(d.get("gid") or d.get("hash") or "") or {}
-        d.update({k: info.get(k) for k in ("tmdb_id", "film", "requested_by", "created_at", "mode", "content_type")})
-    downloads.sort(key=lambda d: d.get("created_at") or "", reverse=True)
-
-    # waiting for a free slot — on top, in the order they will start
-    from app.modules.downloads import queue
+    # waiting for a free slot — in the order they will start
     waiting = []
     for i, q in enumerate(await queue.items()):
         r = q["request"]
@@ -209,7 +182,8 @@ async def list_downloads() -> dict:
             "tmdb_id": r.get("tmdb_id"), "film": title, "requested_by": q["requested_by"], "created_at": q["created_at"],
             "mode": (r.get("library_action") or {}).get("mode") or "", "content_type": r.get("content_type") or "movie",
         })
-    return {"downloads": waiting + downloads, "limit": await queue.limit()}
+    done, total = await history(max(0, offset), max(1, min(limit, 200)))
+    return {"downloads": active + waiting, "history": done, "history_total": total, "limit": await queue.limit()}
 
 
 @router.delete("/download/{identifier}", dependencies=[Depends(require("download"))])
@@ -229,6 +203,10 @@ async def remove_download(
         if item and item["request"].get("tmdb_id"):
             await events.emit("download.cancelled", {"tmdb_ids": [item["request"]["tmdb_id"]], "stop_all": False})
         return {"ok": bool(item)}
+    if backend == "history":
+        # off the list only — the file is in the library (and a torrent keeps seeding)
+        from app.modules.downloads.store import forget
+        return {"ok": await forget(identifier)}
     if backend == "qbittorrent":
         if not cfg.get("qbittorrent_url"):
             raise HTTPException(503, "qBittorrent is not configured")
