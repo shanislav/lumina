@@ -784,3 +784,85 @@ async def episode_delete_file(episode_id: int, body: EpisodeFile) -> dict:
             raise HTTPException(400, str(e))
     finally:
         await db.close()
+
+
+# ─── Which episode each file is: the user's word, an AI suggestion (docs SERIALY) ───
+
+async def _folder_files(db, root: str, folder: str) -> tuple[int | None, list[dict]]:
+    f = await (await db.execute("SELECT tmdb_id FROM tv_folders WHERE folder = ?", (folder,))).fetchone()
+    rows = await (await db.execute(
+        "SELECT f.file_path, f.season, f.episodes, f.status, f.note, f.facts, m.media FROM tv_files f "
+        "LEFT JOIN tv_media m USING (file_path) WHERE f.folder = ? ORDER BY f.file_path", (folder,))).fetchall()
+    files = []
+    for r in rows:
+        facts = json.loads(r["facts"] or "{}")
+        eps = json.loads(r["episodes"] or "[]")
+        files.append({"path": r["file_path"], "file": os.path.relpath(r["file_path"], root).replace(os.sep, "/"),
+                      "name": os.path.basename(r["file_path"]), "own": facts.get("title") or "",
+                      "season": r["season"], "episode": eps[0] if eps else None, "status": r["status"], "note": r["note"] or "",
+                      "manual": bool(facts.get("manual")), "plex": facts.get("plex"),
+                      "duration": (json.loads(r["media"] or "{}").get("duration_s") or 0) if r["media"] else 0})
+    return (f[0] if f else None), files
+
+
+@router.get("/tv/folder", dependencies=[Depends(require("library.view"))])
+async def tv_folder_detail(folder: str) -> dict:
+    """A show folder's files (number, own name, length, state, the user's word) and TMDB's episodes of the show."""
+    from app.config import tv_library_dir
+    from app.modules.library import episode_names
+    cfg = await get_effective_settings()
+    root = tv_library_dir(cfg)
+    client = TMDBClient(cfg["tmdb_api_key"])
+    db = await get_db()
+    try:
+        tmdb_id, files = await _folder_files(db, root, folder)
+        if not tmdb_id:
+            raise HTTPException(400, "Seriál složky není určený — vyber ho nejdřív")
+        cat = await episode_names.catalog(client, db, tmdb_id)
+        episodes = [{"season": s, "episode": e, "cs": naming.episode_title(v["cs"]) and v["cs"] or "", "en": v["en"],
+                     "runtime": v["runtime"], "air": v["air"]} for (s, e), v in sorted(cat.items())]
+        return {"folder": folder, "tmdb_id": tmdb_id, "groq": bool(cfg.get("groq_api_key")),
+                "files": [{k: v for k, v in f.items() if k != "path"} for f in files if f["status"] != "extra"],
+                "episodes": episodes}
+    finally:
+        await client.close()
+        await db.close()
+
+
+class TvAiMap(BaseModel):
+    folder: str
+    season: int | None = None          # the files of this season (by their number now); None = all
+    files: list[str] | None = None     # or these files (relative to the TV library)
+
+
+@router.post("/tv/ai-map", dependencies=[Depends(require("library.edit"))])
+async def tv_ai_map(body: TvAiMap) -> dict:
+    """AI (Groq) suggests which TMDB episode each file is — a suggestion the user accepts or not."""
+    from app.config import tv_library_dir
+    from app.modules.library import ai_episodes, episode_names
+    cfg = await get_effective_settings()
+    root = tv_library_dir(cfg)
+    client = TMDBClient(cfg["tmdb_api_key"])
+    db = await get_db()
+    try:
+        tmdb_id, files = await _folder_files(db, root, body.folder)
+        if not tmdb_id:
+            raise HTTPException(400, "Seriál složky není určený")
+        files = [f for f in files if f["status"] != "extra"
+                 and (body.season is None or f["season"] == body.season)
+                 and (not body.files or f["file"] in body.files)]
+        if not files:
+            raise HTTPException(400, "Žádné soubory k návrhu")
+        cat = await episode_names.catalog(client, db, tmdb_id)
+        try:
+            found = await ai_episodes.suggest(cfg, files, cat, body.season)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"Groq: {e or type(e).__name__}")
+        for s in found:
+            s["file"] = os.path.relpath(s.pop("path"), root).replace(os.sep, "/")
+        return {"suggestions": found, "asked": len(files)}
+    finally:
+        await client.close()
+        await db.close()

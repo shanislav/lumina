@@ -871,7 +871,7 @@ export interface MediaInfo {
 
 export interface ScanStatus {
   running: boolean;
-  phase?: "movies" | "tv" | "done";
+  phase?: "movies" | "tv" | "tv_media" | "done";
   total?: number;
   done?: number;
   current?: string;
@@ -1841,6 +1841,65 @@ export async function getEpisodeDetail(id: number): Promise<EpisodeDetail> {
 export async function deleteEpisodeFile(id: number, filePath: string): Promise<{ deleted: string[] }> {
   const res = await apiFetch(`${API_BASE}/api/library/episodes/${id}/delete-file`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file_path: filePath }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
+}
+
+// ── Which episode each file is (backend library: tv/folder, tv/episode-override, tv/ai-map) ──
+
+export interface TvFolderFile {
+  file: string;                 // relative to the TV library
+  name: string;
+  own: string;                  // the episode's name in the file's first name
+  season: number | null;
+  episode: number | null;
+  status: string;
+  note: string;
+  manual: boolean;              // the user's word
+  plex: [number, number, string] | null;
+  duration: number;
+}
+
+export interface TvCatalogEpisode { season: number; episode: number; cs: string; en: string; runtime: number; air: string }
+
+export interface TvFolderDetail {
+  folder: string;
+  tmdb_id: number;
+  groq: boolean;
+  files: TvFolderFile[];
+  episodes: TvCatalogEpisode[];
+}
+
+export interface TvAiSuggestion {
+  file: string;
+  season: number;
+  episode: number;
+  confidence: number;
+  title: string;
+  agrees: boolean;              // Lumina's own rules say the same
+  rules: string;                // Lumina's rules surely say another episode ("S05E03")
+  same: boolean;                // the number it has now
+  warning?: string;
+}
+
+export async function getTvFolder(folder: string): Promise<TvFolderDetail> {
+  const res = await apiFetch(`${API_BASE}/api/library/tv/folder?folder=${encodeURIComponent(folder)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
+}
+
+/** The user's word on which episode a file is (season/episode null = no word, the scan decides). */
+export async function setEpisodeOverride(file: string, season: number | null, episode: number | null, note = ""): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/library/tv/episode-override`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file, season, episode, note }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+}
+
+export async function suggestEpisodesAi(folder: string, season: number | null, files?: string[]): Promise<{ suggestions: TvAiSuggestion[]; asked: number }> {
+  const res = await apiFetch(`${API_BASE}/api/library/tv/ai-map`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder, season, files }),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
   return res.json();

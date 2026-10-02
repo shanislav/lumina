@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthGate";
+import EpisodeMapper from "@/components/EpisodeMapper";
 import { Suggestion, TvInventory as Inventory, TvInventoryFolder, getTvInventory, setTvOverride, suggest } from "@/lib/api";
 
 /**
@@ -68,6 +69,7 @@ function Folder({ f, labels, problems, canEdit, expanded, toggle, onChanged }: {
   expanded: boolean; toggle: () => void; onChanged: () => void;
 }) {
   const [choosing, setChoosing] = useState(false);
+  const [mapping, setMapping] = useState(false);
   async function choose(tmdbId: number | null) {
     await setTvOverride(f.folder, tmdbId);
     setChoosing(false);
@@ -103,8 +105,15 @@ function Folder({ f, labels, problems, canEdit, expanded, toggle, onChanged }: {
         </div>
       )}
       {canEdit && !(f.disagree || !f.tmdb_id) && !choosing && (
-        <button onClick={() => setChoosing(true)} className="ml-4 mt-0.5 text-[11px] text-zinc-500 hover:text-violet-300">jiný seriál…</button>
+        <span className="ml-4 mt-0.5 flex gap-3 text-[11px]">
+          <button onClick={() => setMapping(true)} className={problems ? "text-violet-300 hover:text-violet-200" : "text-zinc-500 hover:text-violet-300"}
+            title="Který díl je který soubor — ručně nebo s návrhem AI">
+            Upravit díly…
+          </button>
+          <button onClick={() => setChoosing(true)} className="text-zinc-500 hover:text-violet-300">jiný seriál…</button>
+        </span>
       )}
+      {mapping && <EpisodeMapper folder={f.folder} title={f.title ?? undefined} onClose={() => setMapping(false)} onSaved={onChanged} />}
       {expanded && (
         <div className="mt-1.5 space-y-0.5 pl-4">
           {f.problems.length === 0 ? <p className="text-zinc-500">Všechny soubory v pořádku.</p> : f.problems.map((p) => (
