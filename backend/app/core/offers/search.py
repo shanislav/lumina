@@ -160,10 +160,12 @@ class Offers:
 
 async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_id: int | None = None,
                       media_type: str = "movie", use_ai: bool = True, wikidata_id: str | None = None,
-                      season: int | None = None, episode: int | None = None) -> Offers:
+                      season: int | None = None, episode: int | None = None, torrent: bool = True) -> Offers:
     """All files of a film on all sources, judged by rules (+ AI for unclear ones).
     A TV show with season + episode: the files of that episode (and packs that hold it)."""
     sources = SourceRegistry.get().sources
+    if not torrent:          # the user does not want torrents (for this show)
+        sources = [src for src in sources if src.source_type.value not in TORRENT_SOURCES]
     prefs = prefs_from_settings(cfg)
     ctx = MovieContext(year=year_of(query))
     if not sources:
