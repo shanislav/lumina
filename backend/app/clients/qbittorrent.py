@@ -68,7 +68,8 @@ class QBittorrentClient:
             data={"username": self._username, "password": self._password},
         )
         resp.raise_for_status()
-        if resp.text.strip() != "Ok.":
+        # 204 without a body: no login needed (address in qBittorrent's "bypass authentication" list)
+        if resp.status_code != 204 and resp.text.strip() != "Ok.":
             raise RuntimeError(f"qBittorrent login failed: {resp.text}")
         self._logged_in = True
         logger.info("qBittorrent login successful")
