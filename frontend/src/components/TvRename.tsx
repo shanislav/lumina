@@ -63,6 +63,15 @@ export default function TvRename({ onChanged }: { onChanged?: () => void }) {
     setError(null);
     try {
       const plex = await getPlexMigration("show").catch(() => null);
+      // the movies' migration has Plex's scanning off for the whole server: TV renames would go unseen
+      if (plex?.other_running) {
+        setError("Běží přejmenování filmů s Plexem — nejdřív ho dokonči (Opravit názvy filmů → Dokončit), pak seriály.");
+        return;
+      }
+      if (plex?.configured && !plex.error && !plex.active && !window.confirm(
+        "Přejmenování s Plexem neběží — Plex si nezapamatuje zhlédnuté díly a do příštího prohledání může hlásit chybějící soubory. Pokračovat bez něj?")) {
+        return;
+      }
       let res: TvOrganizeResult;
       if (plex?.active) {
         setStep("Přejmenovávám soubory…");

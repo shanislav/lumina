@@ -453,8 +453,8 @@ def _episode_by_title(name: str, titles: dict[tuple[int, int], str]) -> tuple[in
     """The one TMDB episode a name surely is (``title_score``), None when none or more."""
     if not name:
         return None
-    scored = sorted(((tv_inventory.title_score(name, t), key) for key, t in titles.items() if t), reverse=True)
-    if scored and scored[0][0] >= tv_inventory.STRONG and (len(scored) < 2 or scored[1][0] < scored[0][0]):
+    scored = sorted(((tv_inventory.title_match(name, t), key) for key, t in titles.items() if t), reverse=True)
+    if scored and scored[0][0][0] >= tv_inventory.STRONG and (len(scored) < 2 or scored[1][0] < scored[0][0]):
         return scored[0][1]
     return None
 
@@ -512,14 +512,14 @@ async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int,
             if any(tv_inventory.same_episode(name, t, strict=True) for t in titles.get(episode, [])):
                 continue
         own = next((t for t in titles.get(episode, []) if t), "")
-        scored = sorted(((max(tv_inventory.title_score(name, t) for t in other), n, other) for n, other in titles.items()
+        scored = sorted(((max(tv_inventory.title_match(name, t) for t in other), n, other) for n, other in titles.items()
                          if n != episode and any(tv_inventory.same_episode(name, t, strict=True) for t in other)),
-                        key=lambda x: (-x[0], x[1]))
+                        key=lambda x: (-x[0][0], -x[0][1], x[1]))
         if scored:
-            score, n, other = scored[0]
+            (score, _common), n, other = scored[0]
             plex_name = next((nm for w, nm in names if w == "Plex"), "")
             sure = (who == "soubor" and score >= tv_inventory.STRONG
-                    and (len(scored) < 2 or scored[1][0] < score)
+                    and (len(scored) < 2 or scored[1][0] < scored[0][0])
                     and not (plex_name and tv_inventory.title_score(name, plex_name) >= tv_inventory.STRONG))
             return f"{who}: „{name}“ = v TMDB E{n:02d} „{other[0]}“ (E{episode:02d} je „{own}“)", n, sure
     return "", None, False

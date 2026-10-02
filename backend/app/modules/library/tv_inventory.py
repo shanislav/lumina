@@ -164,16 +164,30 @@ STRONG = 0.67      # a name this close to TMDB's names the episode surely (renum
 def title_score(a: str, b: str) -> float:
     """How surely two names are one episode, 0–1: the share of the shorter name's words the other has
     (a two-part TMDB episode "X / Y" holds both files' names); other parts are 0."""
+    return title_match(a, b)[0]
+
+
+def title_match(a: str, b: str) -> tuple[float, int]:
+    """(title_score, words in common) — of two equally sure names the one sharing more words wins
+    ("Davný protivník": TMDB "Dávný protivník" before "Protivníci")."""
     from app.core.naming import episode_title
     from app.utils.tv_parser import normalize_for_search
     wa = {w for w in normalize_for_search(episode_title(a or "")).split() if len(w) > 2} - _COMMON
     wb = {w for w in normalize_for_search(episode_title(b or "")).split() if len(w) > 2} - _COMMON
     if not wa or not wb:
-        return 0.0
+        return 0.0, 0
     pa, pb = _part(a), _part(b)
     if pa is not None and pb is not None and pa != pb:
-        return 0.0
-    return len(wa & wb) / min(len(wa), len(wb))
+        return 0.0, 0
+    short, other = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
+    common = sum(1 for w in short if _close_word(w, other))
+    return common / len(short), common
+
+
+def _close_word(word: str, words: set[str]) -> bool:
+    """The word is there, or one spelled a little differently ("ikova" / "ikeova", a typo, a lost letter)."""
+    from difflib import SequenceMatcher
+    return word in words or (len(word) >= 4 and any(len(w) >= 4 and SequenceMatcher(None, word, w).ratio() >= 0.8 for w in words))
 
 
 async def overrides(db) -> dict[str, int]:
