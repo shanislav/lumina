@@ -462,12 +462,15 @@ def _absolute_episode(order: list[tuple[int, int]], number: int) -> tuple[int, i
 
 
 async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int, season: int, episode: int,
-                              names: list[tuple[str, str]]) -> tuple[str, int | None]:
+                              names: list[tuple[str, str]]) -> tuple[str, int | None, bool]:
     """Why the file is another TMDB episode than its number says — its name (in the file, or Plex's)
     is TMDB's name of another episode of the season (Czech or English). "" when a name fits, or only
     reads differently (Plex in English, TMDB in Czech is no problem). Big Bang S12: the file
     "S12E24 Stockholmský syndrom" is part of TMDB's E23; Plex follows TMDB there, so the file's own
-    name tells it. Returns (why, TMDB's number of the episode)."""
+    name tells it. Returns (why, TMDB's number of the episode, sure): sure = the file's own name is
+    clearly (``title_score``) that one episode and no other, and Plex does not show the file's name — the
+    renamer may then number the file by it (South Park S01: "S01E02 Posilovač 4000" is TMDB's E03; Plex
+    shows E02 "Sopka")."""
     key = (tmdb_id, season)
     if key not in cache:
         titles: dict[int, list[str]] = {}
@@ -490,10 +493,17 @@ async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int,
             if any(tv_inventory.same_episode(name, t, strict=True) for t in titles.get(episode, [])):
                 continue
         own = next((t for t in titles.get(episode, []) if t), "")
-        for n, other in sorted(titles.items()):
-            if n != episode and any(tv_inventory.same_episode(name, t, strict=True) for t in other):
-                return f"{who}: „{name}“ = v TMDB E{n:02d} „{other[0]}“ (E{episode:02d} je „{own}“)", n
-    return "", None
+        scored = sorted(((max(tv_inventory.title_score(name, t) for t in other), n, other) for n, other in titles.items()
+                         if n != episode and any(tv_inventory.same_episode(name, t, strict=True) for t in other)),
+                        key=lambda x: (-x[0], x[1]))
+        if scored:
+            score, n, other = scored[0]
+            plex_name = next((nm for w, nm in names if w == "Plex"), "")
+            sure = (who == "soubor" and score >= tv_inventory.STRONG
+                    and (len(scored) < 2 or scored[1][0] < score)
+                    and not (plex_name and tv_inventory.title_score(name, plex_name) >= tv_inventory.STRONG))
+            return f"{who}: „{name}“ = v TMDB E{n:02d} „{other[0]}“ (E{episode:02d} je „{own}“)", n, sure
+    return "", None, False
 
 
 async def _lumina_show(client: TMDBClient, db, episodes: list[dict], show_name: str, year) -> tuple[int | None, str]:
@@ -774,16 +784,16 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                                               f"Plex S{(hint.get('season') or 0):02d}E{(hint.get('episode') or 0):02d}"
                 elif not cursor.rowcount:
                     status, note = "not_in_tmdb", "TMDB tento díl nezná (jiné číslování?)"
-                    other, n = await _tmdb_other_episode(client, db, season_titles, tmdb_id, ep_data["season"],
-                                                         ep_data["episode"], names)
+                    other, n, sure = await _tmdb_other_episode(client, db, season_titles, tmdb_id, ep_data["season"],
+                                                               ep_data["episode"], names)
                     if other:
                         note = f"TMDB díl pod tímto číslem nemá · {other.split(' (E')[0]}"
-                        facts["tmdb_episode"] = n
+                        facts["tmdb_episode"], facts["tmdb_sure"] = n, sure
                 elif (found := await _tmdb_other_episode(client, db, season_titles, tmdb_id, ep_data["season"],
                                                          ep_data["episode"], names))[0]:
                     # Big Bang S12: TMDB has the two-part finale as E23 and the farewell special as E24
                     status, note = "tmdb_other", found[0]
-                    facts["tmdb_episode"] = found[1]
+                    facts["tmdb_episode"], facts["tmdb_sure"] = found[1], found[2]
                 elif not hint and plex_votes:
                     status, note = "not_in_plex", "Plex soubor nezná"
                 inventory.file(ep_data["file_path"], folder or show_name, tmdb_id, ep_data["season"],

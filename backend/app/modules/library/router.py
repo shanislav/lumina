@@ -647,7 +647,9 @@ def _tv_plan_view(plan: dict, root: str) -> dict:
         kinds[op["kind"]] = kinds.get(op["kind"], 0) + 1
     return {
         **{k: plan.get(k) for k in ("folder", "tmdb_id", "title", "year", "numbering", "conflicts", "blocked",
-                                    "tips", "media_missing", "renumbered")},
+                                    "tips", "media_missing", "renumbered", "suggested", "sure_names")},
+        "renumber": [{**r, "file": rel(r["file"])} for r in plan.get("renumber", [])],
+        "unsure": [{**u, "file": rel(u["file"])} for u in plan.get("unsure", [])],
         "source_folder": rel(plan["source_folder"]),
         "target_folder": rel(plan["target_folder"]),
         "kinds": kinds,

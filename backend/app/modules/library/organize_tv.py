@@ -5,8 +5,12 @@ A plan is computed per *show folder* (the first folder under the TV library, as 
 - every episode file goes to ``{show folder}/{season folder}/{name}`` by the TV templates
   (core/naming.episode_paths); its subtitles, NFO and thumbnails (same file stem) go with it
 - the numbers stay the user's: what Plex shows (it reads them from the names), else the file's own;
-  an anime numbered through keeps the scan's mapping. Per show the user may choose TMDB's numbering
-  instead (``tv_naming``): two files TMDB made one episode become its parts (" - pt1", " - pt2")
+  an anime numbered through keeps the scan's mapping. Per show the user may choose numbering by the
+  episode's name instead (``tv_naming`` "tmdb"): a file whose own name is surely TMDB's other episode
+  (South Park S01: "S01E02 Posilovač 4000" = TMDB E03, a Czech airing order) takes that number; two files
+  TMDB made one episode become its parts (" - pt1", " - pt2"). Episodes may trade numbers (E02 ↔ E03);
+  one that would land on a number another episode keeps is left as it is and shown as unsure. Suggested
+  (not chosen) for a show where the scan found such files.
 - the episode's name: Plex's (clean, in the user's language), else the file's own (also when Plex shows
   another episode's name for that number), else TMDB's; a generic one ("Epizoda 3") is no name
 - the show's name: TMDB's in the renamer's language — or Plex's when it is one of TMDB's names of the
@@ -31,8 +35,9 @@ from app.modules.library.organize import (
     OrganizeError,
     _conflicts,
     _ensure_dir,
+    move_many,
     naming_settings,
-    path_moved,
+    paths_moved,
     subtitle_suffix,
 )
 
@@ -63,9 +68,10 @@ async def show_details(client, db, tmdb_id: int) -> dict | None:
     return data
 
 
-async def numbering(db, tmdb_id: int) -> str:
+async def numbering(db, tmdb_id: int) -> str | None:
+    """The user's choice for the show, None when there is none."""
     row = await (await db.execute("SELECT numbering FROM tv_naming WHERE tmdb_id = ?", (tmdb_id,))).fetchone()
-    return row[0] if row and row[0] in NUMBERINGS else "files"
+    return row[0] if row and row[0] in NUMBERINGS else None
 
 
 async def set_numbering(db, tmdb_id: int, value: str) -> None:
@@ -103,7 +109,7 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
     order = (file_season or 0, file_eps[0] if file_eps else 0)
 
     if mode == "tmdb":
-        if facts.get("tmdb_episode"):
+        if facts.get("tmdb_episode") and facts.get("tmdb_sure"):
             season, episodes = row["season"], [facts["tmdb_episode"]]
         else:
             season, episodes = scan[0], list(scan[1])
@@ -168,6 +174,45 @@ def subtitle_rest(name: str, old_stem: str) -> str:
     return suffix + ext
 
 
+def _own_numbers(row: dict) -> tuple[int, list[int]]:
+    """The numbers the episode has now — Plex's (what the user sees), else the file's."""
+    plex = row["facts"].get("plex")
+    file_season, file_eps = row["facts"].get("file") or [row["season"], row["episodes"]]
+    if plex:
+        return plex[0], (list(file_eps) if plex[0] == file_season and plex[1] in file_eps else [plex[1]])
+    return file_season, list(file_eps)
+
+
+def _settle(wanted: list[tuple], mode: str, tmdb_titles: dict) -> tuple[list[tuple], list[dict]]:
+    """Numbering by names, checked for the whole show: no two episodes may end on one number — unless
+    TMDB's episode there names them both (its two parts). Episodes trading numbers are fine. A renumbered
+    episode landing where another one stays goes back to its own number (both are listed as unsure)."""
+    unsure: list[dict] = []
+    wanted = list(wanted)
+    while True:
+        claims: dict[tuple[int, int], list[int]] = {}
+        for i, (_row, s, e, _t, _o) in enumerate(wanted):
+            claims.setdefault((s, e[0]), []).append(i)
+        back: set[int] = set()
+        for (s, n), idx in claims.items():
+            if len({wanted[i][4] for i in idx}) < 2:
+                continue                                   # one episode (or versions of it)
+            title = tmdb_titles.get((s, n), "")
+            names = [wanted[i][0]["facts"].get("title") or "" for i in idx]
+            if title and all(tv_inventory.title_score(nm, title) >= tv_inventory.STRONG for nm in names)                     and all(tv_inventory.title_score(x, y) < tv_inventory.STRONG
+                            for j, x in enumerate(names) for y in names[j + 1:]):
+                continue                                   # TMDB's two-part episode: both its names, each another
+            back |= {i for i in idx if (wanted[i][1], wanted[i][2]) != _own_numbers(wanted[i][0])}
+        if not back:
+            return wanted, unsure
+        for i in back:
+            row = wanted[i][0]
+            s, e, t, o = episode_target(row, "files", tmdb_titles)
+            unsure.append({"file": row["file_path"], "why": f"podle názvu {naming.episode_label(wanted[i][1], wanted[i][2])}, "
+                                                           f"to číslo ale zůstává jinému dílu — nechávám {naming.episode_label(s, e)}"})
+            wanted[i] = (row, s, e, t, o)
+
+
 def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_titles: dict[tuple[int, int], str],
                 root: str, settings: dict, mode: str = "files", blocked: str = "") -> dict:
     """Plan for one show folder. rows: its tv_files rows (facts parsed, episodes a list). show: {tmdb_id, title,
@@ -190,6 +235,10 @@ def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_title
             continue
         season, episodes, title, order = episode_target(row, mode, tmdb_titles)
         wanted.append((row, season, episodes, title, order))
+
+    unsure: list[dict] = []
+    if mode == "tmdb":
+        wanted, unsure = _settle(wanted, mode, tmdb_titles)
 
     # TMDB's numbering may give one episode two files: TMDB's two-part episode = the user's two episodes
     by_target: dict[tuple, list] = {}
@@ -284,6 +333,10 @@ def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_title
         # makes them new items — the migration pairs them by file and gives back watched / date added
         "renumbered": sum(1 for row, s, e, _t, _o in wanted
                           if row["facts"].get("plex") and [s, e[0]] != row["facts"]["plex"][:2]),
+        # what the numbering by names changes, and what it left as it was
+        "renumber": [{"file": row["file_path"], "from": naming.episode_label(*_own_numbers(row)), "to": naming.episode_label(s, e),
+                      "title": t} for row, s, e, t, _o in wanted if (s, e) != _own_numbers(row)] if mode == "tmdb" else [],
+        "unsure": unsure,
     }
 
 
@@ -302,7 +355,7 @@ def tips(rows: list[dict]) -> list[str]:
     if not other:
         return []
     return [f"Plex u {len(other)} dílů ukazuje název jiného dílu (řadí podle TMDB, soubory podle TheTVDB nebo vysílání). "
-            "V Plexu: Upravit seriál → Pokročilé → Pořadí dílů = TheTVDB. Nebo tady zvol „čísla podle TMDB“."]
+            "V Plexu: Upravit seriál → Pokročilé → Pořadí dílů = TheTVDB. Nebo tady zvol „čísla podle názvu dílu“."]
 
 
 async def _rows(db, folder: str | None = None) -> list[dict]:
@@ -338,9 +391,14 @@ async def plan_show(db, client, folder: str, root: str, settings: dict | None = 
     blocked = ""
     if not override and f["lumina_tmdb_id"] and f["plex_tmdb_id"] and f["lumina_tmdb_id"] != f["plex_tmdb_id"]:
         blocked = "Lumina a Plex se neshodnou, který seriál to je — rozhodni v Kontrole knihovny seriálů"
-    mode = await numbering(db, tmdb_id)
+    chosen = await numbering(db, tmdb_id)
+    # numbering by names suggested where the scan found files surely named as TMDB's other episodes
+    sure = sum(1 for r in rows if r["facts"].get("tmdb_sure"))
+    mode = chosen or ("tmdb" if sure else "files")
     plan = plan_folder(rows, {"tmdb_id": tmdb_id, "title": title, "year": details.get("year")}, media, tmdb_titles,
                        root, settings, mode, blocked)
+    plan["suggested"] = chosen is None and mode == "tmdb"
+    plan["sure_names"] = sure
     plan["tips"] = tips(rows)
     plan["media_missing"] = sum(1 for r in rows if r["status"] != "extra" and r["file_path"] not in media)
     return plan
@@ -379,27 +437,12 @@ async def apply_plan(db, plan: dict, root: str, batch_id: str | None = None) -> 
     if plan["conflicts"]:
         raise OrganizeError("; ".join(plan["conflicts"]))
     batch_id = batch_id or uuid.uuid4().hex[:12]
-    done: list[dict] = []
-    try:
-        for op in plan["ops"]:
-            if os.path.exists(op["dst"]) and os.path.normcase(op["dst"]) != os.path.normcase(op["src"]):
-                raise OrganizeError(f"Cíl mezitím vznikl: {op['dst']}")
-            _ensure_dir(os.path.dirname(op["dst"]))
-            os.rename(op["src"], op["dst"])
-            done.append(op)
-    except (OSError, OrganizeError) as e:
-        for op in reversed(done):
-            try:
-                os.rename(op["dst"], op["src"])
-            except OSError:
-                logger.exception("Rollback of %s failed", op["dst"])
-        raise OrganizeError(f"Oprava selhala, vráceno zpět: {e}") from e
-
+    done = plan["ops"]
+    move_many([(op["src"], op["dst"]) for op in done])          # episodes trading numbers wait on a temporary name
     for op in done:
         await db.execute("INSERT INTO file_operations (batch_id, movie_id, src, dst) VALUES (?, NULL, ?, ?)",
                          (batch_id, op["src"], op["dst"]))
-        if op["kind"] == "video":
-            await path_moved(db, op["src"], op["dst"])
+    await paths_moved(db, [(op["src"], op["dst"]) for op in done if op["kind"] == "video"])
     # the user's choice of the folder's show goes with the folder
     new_folder = os.path.relpath(plan["target_folder"], root).split(os.sep)[0]
     if new_folder != plan["folder"]:

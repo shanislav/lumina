@@ -158,6 +158,24 @@ def same_episode(a: str, b: str, strict: bool = False) -> bool:
     return bool(wa & wb)
 
 
+STRONG = 0.67      # a name this close to TMDB's names the episode surely (renumbering by it)
+
+
+def title_score(a: str, b: str) -> float:
+    """How surely two names are one episode, 0–1: the share of the shorter name's words the other has
+    (a two-part TMDB episode "X / Y" holds both files' names); other parts are 0."""
+    from app.core.naming import episode_title
+    from app.utils.tv_parser import normalize_for_search
+    wa = {w for w in normalize_for_search(episode_title(a or "")).split() if len(w) > 2} - _COMMON
+    wb = {w for w in normalize_for_search(episode_title(b or "")).split() if len(w) > 2} - _COMMON
+    if not wa or not wb:
+        return 0.0
+    pa, pb = _part(a), _part(b)
+    if pa is not None and pb is not None and pa != pb:
+        return 0.0
+    return len(wa & wb) / min(len(wa), len(wb))
+
+
 async def overrides(db) -> dict[str, int]:
     rows = await (await db.execute("SELECT folder, tmdb_id FROM tv_folder_overrides")).fetchall()
     return {r[0]: r[1] for r in rows}

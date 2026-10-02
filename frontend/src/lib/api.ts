@@ -1757,6 +1757,10 @@ export interface TvOrganizePlan {
   tips: string[];
   media_missing: number;
   renumbered: number;       // episodes Plex will show under another number (new items, state given back)
+  suggested: boolean;       // numbering by names proposed (files named as other episodes), not chosen yet
+  sure_names: number;
+  renumber: { file: string; from: string; to: string; title: string }[];
+  unsure: { file: string; why: string }[];
 }
 
 export interface TvOrganizeResult {
