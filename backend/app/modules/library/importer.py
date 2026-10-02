@@ -350,6 +350,27 @@ async def _process_movie_file(client: TMDBClient, db, path: str, videos_in_folde
 
 # ─── TV SHOWS (unchanged logic, moved from router.py) ───
 
+def _episode_by_folder(f: dict, tv_dir: str) -> dict | None:
+    """Names the old parser does not read ("chalupari-01-chudak-dedecek-hd-1975.mkv"): the episode from
+    core/episode_match, the show from its folder in the library (the first one under the TV folder)."""
+    from app.core.episode_match import parse_episode
+
+    info = parse_episode(f["filename"])
+    if len(info.episodes) != 1:
+        return None
+    rel = os.path.relpath(f["file_path"], tv_dir)
+    parts = rel.split(os.sep)
+    if len(parts) < 2 or rel.startswith(".."):
+        return None
+    season = info.season
+    if season is None:
+        m = re.search(r"(?:season|s[eé]rie|sezona)\s*(\d{1,2})|^s(\d{1,2})$", os.path.basename(os.path.dirname(f["file_path"])), re.I)
+        season = int(m.group(1) or m.group(2)) if m else 1
+    year = re.search(r"\((19|20)\d{2}\)", parts[0])
+    return {"show_name": re.sub(r"\s*\((19|20)\d{2}\)\s*$", "", parts[0]).strip(), "season": season,
+            "episode": info.episodes[0], "year": year.group(0)[1:-1] if year else None}
+
+
 async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
     # --- Scan TV shows ---
     if tv_dir:
@@ -360,7 +381,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
         for f in tv_files:
             # Try episode .nfo for accurate S/E numbers
             ep_nfo = _parse_episode_nfo(f["file_path"])
-            parsed = parse_tv_filename(f["filename"], f["file_path"])
+            parsed = parse_tv_filename(f["filename"], f["file_path"]) or _episode_by_folder(f, tv_dir)
 
             if ep_nfo:
                 # NFO has season/episode — merge with parsed or create new

@@ -49,3 +49,13 @@ def test_season_view_counts_and_files_tmdb_does_not_list():
     view = store.season_view(season, eps, owned, "local_or_temp", ["cs", "sk"], TODAY)
     assert view["counts"] == {"owned": 2, "temp": 1, "missing": 1, "upcoming": 0}
     assert [e["episode"] for e in view["episodes"]] == [1, 2, 3, 9]
+
+
+def test_scan_reads_episodes_the_old_parser_misses(tmp_path):
+    from app.modules.library.importer import _episode_by_folder
+    show = tmp_path / "CHALUPÁŘI"
+    path = show / "chalupari-01-chudak-dedecek-hd-1975-cs-78pt.mkv"
+    got = _episode_by_folder({"filename": path.name, "file_path": str(path)}, str(tmp_path))
+    assert got == {"show_name": "CHALUPÁŘI", "season": 1, "episode": 1, "year": None}
+    loose = tmp_path / "x.mkv"
+    assert _episode_by_folder({"filename": "x.mkv", "file_path": str(loose)}, str(tmp_path)) is None
