@@ -27,7 +27,7 @@ export default function SearchBar({ onSearch, onPick, loading, initialQuery }: P
 
   useEffect(() => {
     const q = query.trim();
-    if (!onPick || !typed.current || q.length < 2) { setItems([]); return; }
+    if (!onPick || !typed.current || q.length < 3) { setItems([]); return; }
     const ctrl = new AbortController();
     const t = setTimeout(() => {
       suggest(q, ctrl.signal).then((s) => { setItems(s); setActive(-1); setOpen(true); }).catch(() => {});
