@@ -43,8 +43,9 @@ def intervals(srt: str) -> list[tuple[float, float]]:
 def speech_tracks(video: str, tracks: int) -> list[np.ndarray]:
     """Speech activity (0/1 per 10 ms) of the first audio tracks — one pass over the file."""
     tracks = max(1, min(tracks, MAX_TRACKS))
-    chains = ";".join(f"[0:a:{i}]aformat=channel_layouts=mono,aresample=16000,highpass=f=250,lowpass=f=3500[t{i}]"
-                      for i in range(tracks))
+    # every track: mono 16 kHz s16, the voice band (amerge needs the formats fixed)
+    chains = ";".join(f"[0:a:{i}]aresample=16000,highpass=f=250,lowpass=f=3500,"
+                      f"aformat=sample_fmts=s16:sample_rates=16000:channel_layouts=mono[t{i}]" for i in range(tracks))
     if tracks > 1:
         chains += ";" + "".join(f"[t{i}]" for i in range(tracks)) + f"amerge=inputs={tracks}[out]"
         out_label = "[out]"
