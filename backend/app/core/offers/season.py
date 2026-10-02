@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from app.clients.tmdb import TMDBClient
 from app.core.episode_match import _plain, parse_episode
 from app.core.film_match import tokens
-from app.core.offers.details import cached_details
+from app.core.offers.details import cached_details, get_details
 from app.core.offers.evaluate import MovieContext, evaluate
 from app.core.offers.search import _clean_title, _norm, _unique_names, search_sources
 from app.core.quality import Prefs, prefs_from_settings
@@ -37,6 +37,7 @@ TECH = {
     "aac", "ac3", "eac3", "dd", "ddp", "dd5", "ddp5", "atmos", "dts", "truehd",
     "hdr", "hdr10", "dv", "proper", "repack",
 }
+SAMPLE_SETS = 6          # releases whose one sample file is verified at its source
 BITRATE_SPLIT = 1.8      # an episode with 1.8× more / less data per minute than its set's median is another encode
 
 
@@ -149,16 +150,48 @@ def plan_season(sets: list[dict], wanted: list[int]) -> list[dict]:
     return plan
 
 
+async def _verify_samples(out: SeasonOffers, titles: list[str], runtime: int) -> bool:
+    """One file of each of the best releases verified at its source (real resolution, codec, sound);
+    the other episodes of the release are encoded alike, so they take its findings (their own size).
+    One request per release instead of one per episode."""
+    samples = []
+    for st in out.sets[:SAMPLE_SETS]:
+        files = list(st["episodes"].values())
+        if any(f.get("verified") for f in files):
+            continue
+        sample = next((f for f in files if f["source"] == "webshare"), files[0])
+        if sample["source"] in ("webshare", "fastshare"):
+            samples.append((st, sample))
+    if not samples:
+        return False
+    got = await get_details([{"source_id": f["source_id"], "ident": f["ident"], "name": f["name"]} for _, f in samples])
+    changed = False
+    for st, sample in samples:
+        details = got.get(f"{sample['source_id']}:{sample['ident']}")
+        if not details:
+            continue
+        for f in st["episodes"].values():
+            mine = details if f is sample else {**details, "bitrate": 0, "duration_s": 0}   # sizes differ
+            ctx = MovieContext(titles=titles, runtime=runtime, episode={"season": out.season,
+                               "episode": (f.get("episodes") or out.episodes)[0]})
+            ev = evaluate(f["name"], f["size"], ctx, out.prefs, mine)
+            f.update({**ev, "verified": f is sample, "sampled": True,
+                      "quality": ev["resolution"] or f.get("quality") or "unknown"})
+        changed = True
+    return changed
+
+
 def season_queries(titles: list[str], season: int) -> tuple[list[str], list[str]]:
     """WebShare finds a whole season by "Show S03" (measured: Sex Education S03 — all 8 episodes in
     100 results); FastShare answers the plain name; trackers name packs "Show 1. - S03", "komplet"."""
     names = [_clean_title(t) for t in _unique_names(titles)]
-    names = [n for n in names if len(_norm(n)) >= 2][:2]
+    names = [n for n in names if len(_norm(n)) >= 2]
     if not names:
         return [], []
     ss = f"S{season:02d}"
-    ddl = [f"{n} {ss}" for n in names] + [names[0]]
+    # the local name first, then the English one (trackers know shows by it) — not every translation
     latin = next((n for n in names if n.isascii() and re.search(r"[A-Za-z]", n)), names[0])
+    ddl = _unique_names([f"{names[0]} {ss}", f"{latin} {ss}"]) + [names[0]]
     return ddl, [f"{latin} {ss}", latin]
 
 
@@ -203,6 +236,8 @@ async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[
                          "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders,
                          "quality": ev["resolution"] or "unknown", "relevance_score": 0, "episodes": mine, **ev})
     out.sets = group_sets(out.rows, season, wanted, runtime)
+    if await _verify_samples(out, titles, runtime):
+        out.sets = group_sets(out.rows, season, wanted, runtime)
     out.packs = sorted((r for r in out.rows if r.get("pack")), key=lambda r: (-(r.get("lang_tier", 0) >= 2), -r["quality_score"]))
     out.plan = plan_season(out.sets, wanted)
     logger.info("Season %s S%02d: %d files, %d sets, %d packs, plan %d/%d", show.get("title"), season, len(out.rows),
