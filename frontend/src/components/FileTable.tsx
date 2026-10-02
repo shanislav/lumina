@@ -388,8 +388,7 @@ export default function FileTable({
           <FilterGroup label="Zvuk" value={filters.audio} onChange={(v) => updateFilters({ audio: v as AudioFilter })}
             options={[["all", "Vše"], ["local", "CZ/SK zvuk"], ["local_or_subs", "CZ/SK zvuk nebo titulky"]]} />
           <AudioLangPicker choices={audioLangChoices} active={filters.audio === "langs"} langs={filters.audioLangs}
-            only={filters.audioOnly} onChange={(patch) => updateFilters({ audio: "langs", ...patch })}
-            onClear={() => updateFilters({ audio: "all", audioLangs: [], audioOnly: false })} />
+            only={filters.audioOnly} onChange={(patch) => updateFilters({ audio: "langs", ...patch })} />
         </div>
         <MultiGroup label="Rozlišení" values={filters.qualities} onChange={(v) => updateFilters({ qualities: v })}
           options={[["2160p", "4K"], ["1080p", "1080p"], ["720p", "720p"], ["SD", "SD"]]} />
@@ -628,9 +627,9 @@ function FilterGroup({ label, value, options, onChange }: { label: string; value
 const langLabel = (l: string) => (l === "cs" ? "CZ" : l.toUpperCase());
 
 /** "Vlastní…": a chip that drops a small panel down over the list — pick the audio languages, it closes again. */
-function AudioLangPicker({ choices, active, langs, only, onChange, onClear }: {
+function AudioLangPicker({ choices, active, langs, only, onChange }: {
   choices: string[]; active: boolean; langs: string[]; only: boolean;
-  onChange: (patch: { audioLangs?: string[]; audioOnly?: boolean }) => void; onClear: () => void;
+  onChange: (patch: { audioLangs?: string[]; audioOnly?: boolean }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement | null>(null);
@@ -663,11 +662,7 @@ function AudioLangPicker({ choices, active, langs, only, onChange, onClear }: {
             <input type="checkbox" checked={only} onChange={(e) => onChange({ audioOnly: e.target.checked })} />
             jen tyto (nic jiného)
           </label>
-          <p className="text-[10px] text-zinc-600">neověřené soubory podle názvu</p>
-          <div className="flex justify-between pt-1">
-            <button onClick={() => { onClear(); setOpen(false); }} className="text-zinc-500 hover:text-zinc-300">Zrušit filtr</button>
-            <button onClick={() => { if (langs.length) onChange({}); else onClear(); setOpen(false); }} className="rounded bg-violet-600 px-2.5 py-0.5 text-white hover:bg-violet-500">Hotovo</button>
-          </div>
+          <p className="text-[10px] text-zinc-600">neověřené soubory podle názvu · zavře klik mimo nebo Esc</p>
         </div>
       )}
     </div>
