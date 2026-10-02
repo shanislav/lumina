@@ -30,7 +30,8 @@ export default function SearchBar({ onSearch, onPick, loading, initialQuery }: P
     if (!onPick || !typed.current || q.length < 3) { setItems([]); return; }
     const ctrl = new AbortController();
     const t = setTimeout(() => {
-      suggest(q, ctrl.signal).then((s) => { setItems(s); setActive(-1); setOpen(true); }).catch(() => {});
+      // an answer that arrives after Enter / a pick must not open the list again
+      suggest(q, ctrl.signal).then((s) => { if (!typed.current) return; setItems(s); setActive(-1); setOpen(true); }).catch(() => {});
     }, 250);
     return () => { clearTimeout(t); ctrl.abort(); };
   }, [query, onPick]);
@@ -53,7 +54,9 @@ export default function SearchBar({ onSearch, onPick, loading, initialQuery }: P
     if (open && active >= 0 && items[active]) { pick(items[active]); return; }
     const trimmed = query.trim();
     if (!trimmed) return;
+    typed.current = false;
     setOpen(false);
+    setItems([]);
     onSearch(trimmed);
   }
 
@@ -70,7 +73,7 @@ export default function SearchBar({ onSearch, onPick, loading, initialQuery }: P
         type="text"
         value={query}
         onChange={(e) => { typed.current = true; setQuery(e.target.value); }}
-        onFocus={() => items.length && setOpen(true)}
+        onFocus={() => typed.current && items.length && setOpen(true)}
         onKeyDown={onKey}
         placeholder="Film, seriál nebo herec…"
         autoComplete="off"
