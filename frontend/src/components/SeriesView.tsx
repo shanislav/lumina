@@ -1,0 +1,270 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import FileTable from "@/components/FileTable";
+import { useAuth } from "@/components/AuthGate";
+import {
+  MovieContext, QualityProfile, ScoredFile, SeriesDetail, SeriesEpisode, SeriesLangMode, SeriesSeason,
+  getProfiles, getSeries, saveSeriesSettings, searchFiles,
+} from "@/lib/api";
+
+/**
+ * A TV show (backend modules/series): every season with the state of each episode, the show's settings,
+ * and finding + downloading one episode (the common file table with the episode's files).
+ */
+
+const STATE: Record<SeriesEpisode["state"], { label: string; cls: string; dot: string }> = {
+  owned: { label: "mám", cls: "text-emerald-300", dot: "bg-emerald-500" },
+  temp: { label: "čeká na dabing", cls: "text-amber-300", dot: "bg-amber-400" },
+  missing: { label: "chybí", cls: "text-red-300", dot: "bg-red-500" },
+  upcoming: { label: "nevyšlo", cls: "text-zinc-500", dot: "bg-zinc-600" },
+};
+const LANG_MODES: [SeriesLangMode, string, string][] = [
+  ["local_or_temp", "CZ/SK, jinak hned EN", "Stáhne se nejlepší dostupný jazyk hned; díl bez CZ/SK čeká na dabing a nahradí se, až vyjde."],
+  ["local_only", "Jen CZ/SK", "Stahuje se jen dabovaná verze (např. pro děti)."],
+  ["original", "Originál", "Dabing se nehledá."],
+];
+const L = (code: string) => (code === "cs" ? "CZ" : code.toUpperCase());
+const se = (s: number, e: number) => `S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}`;
+const czDate = (d: string) => (d ? new Date(d).toLocaleDateString("cs-CZ") : "");
+
+export default function SeriesView({ tmdbId }: { tmdbId: number }) {
+  const { can } = useAuth();
+  const [data, setData] = useState<SeriesDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<Record<number, boolean>>({});
+  const [searching, setSearching] = useState<{ season: number; episode: number } | null>(null);
+
+  const load = (fresh = false) =>
+    getSeries(tmdbId, fresh).then((d) => {
+      setData(d);
+      setError(null);
+      // open the seasons with something missing (the first one when all is there)
+      setOpen((prev) => Object.keys(prev).length ? prev : Object.fromEntries(
+        d.seasons.filter((s) => s.counts.missing || s.counts.temp).slice(0, 2).map((s) => [s.season_number, true])));
+    }).catch((e) => setError(e instanceof Error ? e.message : "Chyba"));
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tmdbId]);
+
+  if (error) return <main className="p-8 text-red-400">{error}</main>;
+  if (!data) return <main className="p-8 text-zinc-500">Načítám seriál…</main>;
+  const { show, totals } = data;
+
+  return (
+    <main className="mx-auto max-w-6xl space-y-5 px-4 py-6">
+      <header className="flex gap-4">
+        {show.poster_url && (
+          <Image src={show.poster_url} alt="" width={120} height={180} unoptimized
+            className="h-[180px] w-[120px] flex-shrink-0 rounded-lg object-cover" />
+        )}
+        <div className="min-w-0 space-y-1.5">
+          <h1 className="text-2xl font-semibold text-zinc-100">
+            {show.title} {show.year && <span className="text-zinc-500 font-normal">({show.year})</span>}
+          </h1>
+          {show.original_title && show.original_title !== show.title && <p className="text-sm text-zinc-500">{show.original_title}</p>}
+          <p className="text-xs text-zinc-400">
+            {[show.status === "Ended" ? "ukončený" : show.status === "Canceled" ? "zrušený" : show.status ? "vysílá se" : "",
+              `${data.seasons.length} sérií`, show.networks.join(", "), show.genres.slice(0, 3).join(", "),
+              show.rating ? `★ ${show.rating}` : ""].filter(Boolean).join(" · ")}
+          </p>
+          <p className="text-xs">
+            <span className="text-emerald-300">mám {totals.owned}</span>
+            {totals.temp > 0 && <span className="text-amber-300"> · čeká na dabing {totals.temp}</span>}
+            <span className="text-red-300"> · chybí {totals.missing}</span>
+            {totals.upcoming > 0 && <span className="text-zinc-500"> · nevyšlo {totals.upcoming}</span>}
+            {show.next_episode && (
+              <span className="text-zinc-400"> · další díl {se(show.next_episode.season, show.next_episode.episode)} {czDate(show.next_episode.air_date)}</span>
+            )}
+          </p>
+          {show.overview && <p className="line-clamp-3 max-w-3xl text-sm text-zinc-400">{show.overview}</p>}
+        </div>
+      </header>
+
+      <SettingsPanel data={data} onSaved={() => load()} editable={can("library.edit")} />
+
+      <div className="space-y-2">
+        {data.seasons.map((s) => (
+          <Season key={s.season_number} season={s} open={!!open[s.season_number]}
+            toggle={() => setOpen((o) => ({ ...o, [s.season_number]: !o[s.season_number] }))}
+            canSearch={can("search")} searching={searching}
+            onSearch={(episode) => setSearching(searching?.season === s.season_number && searching.episode === episode
+              ? null : { season: s.season_number, episode })}>
+            {searching?.season === s.season_number && (
+              <EpisodeSearch data={data} season={s.season_number} episode={searching.episode}
+                onDownloaded={() => setTimeout(() => load(), 1500)} />
+            )}
+          </Season>
+        ))}
+      </div>
+      <button onClick={() => load(true)} className="text-xs text-zinc-500 hover:text-zinc-300">Načíst znovu z TMDB</button>
+    </main>
+  );
+}
+
+function SettingsPanel({ data, onSaved, editable }: { data: SeriesDetail; onSaved: () => void; editable: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [profiles, setProfiles] = useState<QualityProfile[]>([]);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { if (open) getProfiles("tv").then(setProfiles).catch(() => {}); }, [open]);
+  const { own, effective } = data.settings;
+  const mode = LANG_MODES.find(([m]) => m === effective.lang_mode);
+
+  async function save(values: Parameters<typeof saveSeriesSettings>[1]) {
+    setSaving(true);
+    try { await saveSeriesSettings(data.show.tmdb_id, values); onSaved(); } finally { setSaving(false); }
+  }
+  const field = "rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-50";
+  const def = <span className="text-zinc-600"> (výchozí)</span>;
+
+  return (
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900/50">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm">
+        <span className="text-zinc-200">Nastavení seriálu</span>
+        <span className="text-xs text-zinc-500">
+          {data.profile.name} · {mode?.[1]} · {effective.torrent ? "i torrenty" : "bez torrentů"}
+          {effective.monitor ? " · hlídat nové díly" : ""} {open ? "▲" : "▼"}
+        </span>
+      </button>
+      {open && (
+        <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-2.5 px-4 pb-4 text-xs">
+          <label className="text-zinc-400">Profil kvality</label>
+          <div>
+            <select disabled={!editable || saving} value={own.profile_id ?? ""} className={field}
+              onChange={(e) => save({ profile_id: e.target.value === "" ? null : Number(e.target.value) })}>
+              <option value="">výchozí pro seriály</option>
+              {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            {own.profile_id == null && def}
+          </div>
+
+          <label className="text-zinc-400 self-start pt-1">Jazyk</label>
+          <div className="space-y-1">
+            <select disabled={!editable || saving} value={own.lang_mode ?? ""} className={field}
+              onChange={(e) => save({ lang_mode: (e.target.value || null) as SeriesLangMode | null })}>
+              <option value="">výchozí ({LANG_MODES.find(([m]) => m === data.settings.defaults.lang_mode)?.[1]})</option>
+              {LANG_MODES.map(([m, label]) => <option key={m} value={m}>{label}</option>)}
+            </select>
+            <p className="text-[11px] text-zinc-500">{mode?.[2]}</p>
+          </div>
+
+          <label className="text-zinc-400">Torrenty</label>
+          <TriState value={own.torrent} fallback={data.settings.defaults.torrent ?? true} disabled={!editable || saving}
+            yes="hledat i na torrentech" no="jen WebShare / FastShare" onChange={(v) => save({ torrent: v })} />
+
+          <label className="text-zinc-400">Nové díly</label>
+          <TriState value={own.monitor} fallback={data.settings.defaults.monitor ?? false} disabled={!editable || saving}
+            yes="hlídat (automatika přijde později)" no="nehlídat" onChange={(v) => save({ monitor: v })} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TriState({ value, fallback, yes, no, disabled, onChange }: {
+  value: boolean | null; fallback: boolean; yes: string; no: string; disabled: boolean; onChange: (v: boolean | null) => void;
+}) {
+  return (
+    <select disabled={disabled} value={value == null ? "" : value ? "1" : "0"}
+      onChange={(e) => onChange(e.target.value === "" ? null : e.target.value === "1")}
+      className="w-fit rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-50">
+      <option value="">výchozí ({fallback ? yes : no})</option>
+      <option value="1">{yes}</option>
+      <option value="0">{no}</option>
+    </select>
+  );
+}
+
+function Season({ season, open, toggle, canSearch, searching, onSearch, children }: {
+  season: SeriesSeason; open: boolean; toggle: () => void; canSearch: boolean;
+  searching: { season: number; episode: number } | null; onSearch: (episode: number) => void; children?: React.ReactNode;
+}) {
+  const c = season.counts;
+  const total = season.episodes.length || 1;
+  return (
+    <section className="rounded-lg border border-zinc-800">
+      <button onClick={toggle} className="flex w-full items-center gap-3 px-4 py-2.5 text-left">
+        <span className="w-28 text-sm font-medium text-zinc-100">{season.name || `Série ${season.season_number}`}</span>
+        <span className="flex h-2 flex-1 overflow-hidden rounded bg-zinc-800" title={`mám ${c.owned}, čeká na dabing ${c.temp}, chybí ${c.missing}, nevyšlo ${c.upcoming}`}>
+          {(["owned", "temp", "missing", "upcoming"] as const).map((k) => c[k] > 0 && (
+            <span key={k} className={STATE[k].dot} style={{ width: `${(c[k] / total) * 100}%` }} />
+          ))}
+        </span>
+        <span className="w-44 text-right text-xs text-zinc-400">
+          {c.owned + c.temp}/{season.episodes.length - c.upcoming}
+          {c.temp > 0 && <span className="text-amber-300"> · {c.temp} EN</span>}
+          {c.missing > 0 && <span className="text-red-300"> · chybí {c.missing}</span>}
+        </span>
+        <span className="text-xs text-zinc-500">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-zinc-800">
+          {season.episodes.map((ep) => {
+            const active = searching?.season === season.season_number && searching.episode === ep.episode;
+            return (
+              <div key={ep.episode}>
+                <div className={`flex items-center gap-3 px-4 py-1.5 text-xs ${active ? "bg-violet-950/30" : "hover:bg-zinc-900/60"}`}>
+                  <span className={`h-2 w-2 flex-shrink-0 rounded-full ${STATE[ep.state].dot}`} />
+                  <span className="w-16 font-mono text-zinc-400">{se(season.season_number, ep.episode)}</span>
+                  <span className="min-w-0 flex-1 truncate text-zinc-200" title={ep.overview}>{ep.name || "—"}</span>
+                  <span className="hidden w-20 text-zinc-500 sm:block">{czDate(ep.air_date)}</span>
+                  <span className={`w-28 ${STATE[ep.state].cls}`}
+                    title={ep.file ? `${ep.file.filename}\n${(ep.file.size / 1e9).toFixed(2)} GB` : ""}>
+                    {ep.file ? [ep.file.quality, ep.file.languages.map(L).join("+")].filter(Boolean).join(" · ") || STATE[ep.state].label
+                      : STATE[ep.state].label}
+                  </span>
+                  {canSearch && ep.state !== "upcoming" ? (
+                    <button onClick={() => onSearch(ep.episode)} className="w-20 text-right text-violet-300 hover:text-violet-200">
+                      {active ? "Zavřít" : ep.state === "owned" ? "Jiná verze" : "Hledat"}
+                    </button>
+                  ) : <span className="w-20" />}
+                </div>
+                {active && children}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function EpisodeSearch({ data, season, episode, onDownloaded }: {
+  data: SeriesDetail; season: number; episode: number; onDownloaded: () => void;
+}) {
+  const [files, setFiles] = useState<ScoredFile[]>([]);
+  const [movie, setMovie] = useState<MovieContext | null>(null);
+  const [preferLocal, setPreferLocal] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const ep = data.seasons.find((s) => s.season_number === season)?.episodes.find((e) => e.episode === episode);
+  const torrent = data.settings.effective.torrent;
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setError(null);
+    searchFiles(data.show.title, undefined, data.show.original_title, data.show.tmdb_id, "tv", null,
+      { season, episode, torrent })
+      .then((r) => { if (live) { setFiles(r.files); setMovie(r.movie); setPreferLocal(r.prefer_local_audio); } })
+      .catch((e) => live && setError(e instanceof Error ? e.message : "Chyba"))
+      .finally(() => live && setLoading(false));
+    return () => { live = false; };
+  }, [data.show.tmdb_id, data.show.title, data.show.original_title, season, episode, torrent]);
+
+  // an owned episode is replaced (EN waiting for the dub, or the user wants another version)
+  const action = useMemo(() => ({ mode: "episode" as const, season, episode, replace: !!ep?.file }), [season, episode, ep?.file]);
+  return (
+    <div className="space-y-2 border-y border-violet-900/40 bg-zinc-950/60 px-4 py-3">
+      <p className="text-xs text-zinc-400">
+        Soubory dílu <span className="text-zinc-200">{se(season, episode)}</span>
+        {ep?.file && <> · stažený soubor nahradí <span className="text-zinc-300">{ep.file.filename}</span></>}
+        {!torrent && " · bez torrentů (nastavení seriálu)"}
+      </p>
+      {error ? <p className="text-xs text-red-400">{error}</p> : (
+        <FileTable files={files} loading={loading} tmdb_id={data.show.tmdb_id} title={data.show.title}
+          year={data.show.year ?? undefined} mediaType="tv" movie={movie} preferLocalAudio={preferLocal}
+          profileId={data.profile.id} libraryAction={action} onDownloadStarted={onDownloaded} />
+      )}
+    </div>
+  );
+}

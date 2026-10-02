@@ -98,6 +98,10 @@ function HomeContent() {
 
   // Handle incoming movie from Discover page — go straight to file search
   const handleDiscoverMovie = useCallback(async (movie: TMDBMovie) => {
+    if (movie.media_type === "tv" && movie.tmdb_id) {
+      window.location.assign(`/series?tmdb=${movie.tmdb_id}`);
+      return;
+    }
     setSelectedMovie(movie);
     setMovies([]);
     setFiles([]);
@@ -188,6 +192,10 @@ function HomeContent() {
   }
 
   async function handleSelectMovie(movie: TMDBMovie) {
+    if (movie.media_type === "tv" && movie.tmdb_id) {
+      router.push(`/series?tmdb=${movie.tmdb_id}`);     // a show has its own page with seasons and episodes
+      return;
+    }
     setUpgradeId(null);
     setSelectedMovie(movie);
     setFiles([]);

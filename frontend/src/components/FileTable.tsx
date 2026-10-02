@@ -45,6 +45,8 @@ interface Props {
   /** Told what the profile would take now (null while unknown): the page header shows it with a
    *  download button, and "+ Chci" only when nothing suits. */
   onPick?: (pick: PickOffer | null) => void;
+  /** TV episode: what the library does with the download (which episode, replace the owned file). */
+  libraryAction?: LibraryAction;
 }
 
 /** An offer is an upgrade when its score is higher than the owned version's and it does not
@@ -97,7 +99,7 @@ interface Row {
 
 export default function FileTable({
   files, loading, onDownloadStarted, tmdb_id, title, year, mediaType, owned = [], movie, preferLocalAudio = true,
-  upgradeFrom = null, profileId, onPick,
+  upgradeFrom = null, profileId, onPick, libraryAction,
 }: Props) {
   const { can } = useAuth();
   const [onlyBetter, setOnlyBetter] = useState(true);
@@ -273,7 +275,7 @@ export default function FileTable({
       setChoosing(file);
       return;
     }
-    runDownload(file);
+    runDownload(file, libraryAction);
   }
 
   async function runDownload(file: ScoredFile, action?: LibraryAction) {

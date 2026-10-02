@@ -441,6 +441,10 @@ export default function LibraryPage() {
   }
 
   async function handleShowClick(show: LibraryShow) {
+    if (show.tmdb_id) {
+      router.push(`/series?tmdb=${show.tmdb_id}`);       // the show's page: seasons, settings, finding episodes
+      return;
+    }
     setShowLoading(true);
     try {
       const detail = await getShowDetail(show.tmdb_id);

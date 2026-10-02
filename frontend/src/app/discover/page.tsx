@@ -68,6 +68,10 @@ export default function DiscoverPage() {
   }, []);
 
   function handleSearch(movie: TMDBMovie) {
+    if (movie.media_type === "tv" && movie.tmdb_id) {
+      router.push(`/series?tmdb=${movie.tmdb_id}`);
+      return;
+    }
     const movieData = btoa(encodeURIComponent(JSON.stringify(movie)));
     router.push(`/?movie=${movieData}`);
   }

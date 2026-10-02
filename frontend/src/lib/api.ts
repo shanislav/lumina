@@ -135,6 +135,7 @@ export interface MovieContext {
   titles: string[];
   year: number | null;
   runtime: number;
+  episode?: { season: number; episode: number } | null;   // a TV episode instead of a film
 }
 
 export interface SearchFilesResult {
@@ -261,8 +262,14 @@ export async function searchFiles(
   tmdbId?: number,
   mediaType?: string,
   wikidataId?: string | null,
+  episode?: { season: number; episode: number; torrent?: boolean },
 ): Promise<SearchFilesResult> {
   const params = new URLSearchParams({ query });
+  if (episode) {
+    params.set("season", String(episode.season));
+    params.set("episode", String(episode.episode));
+    if (episode.torrent === false) params.set("torrent", "false");
+  }
   if (wikidataId) params.set("wikidata_id", wikidataId);
   if (language) params.set("language", language);
   if (originalTitle && originalTitle !== query) params.set("original_title", originalTitle);
@@ -1119,7 +1126,8 @@ export interface OwnedVersion {
 }
 
 /** What to do with an owned movie once a download finishes. */
-export type LibraryAction = { mode: "version" } | { mode: "replace"; file_id: number };
+export type LibraryAction = { mode: "version" } | { mode: "replace"; file_id: number }
+  | { mode: "episode"; season: number; episode: number; replace?: boolean };
 
 export async function getOwned(tmdbIds: number[]): Promise<Record<string, OwnedVersion[]>> {
   const ids = tmdbIds.filter(Boolean);
@@ -1551,5 +1559,91 @@ export async function downloadSubtitle(movieId: number, body: { file_id: number;
 export async function testOpenSubtitles(): Promise<{ api_key: boolean; account: boolean | null }> {
   const res = await apiFetch(`${API_BASE}/api/subtitles/test`, { method: "POST" });
   if (!res.ok) throw await errorOf(res);
+  return res.json();
+}
+
+
+// ── TV shows (backend modules/series) ──
+
+export type SeriesLangMode = "local_or_temp" | "local_only" | "original";
+
+export interface SeriesSettingValues {
+  profile_id: number | null;
+  lang_mode: SeriesLangMode | null;
+  torrent: boolean | null;
+  monitor: boolean | null;
+}
+
+export interface SeriesEpisodeFile {
+  filename: string;
+  file_path: string;
+  size: number;
+  quality: string;
+  languages: string[];
+}
+
+export interface SeriesEpisode {
+  episode: number;
+  name: string;
+  air_date: string;
+  runtime: number;
+  overview: string;
+  state: "owned" | "temp" | "missing" | "upcoming";
+  file: SeriesEpisodeFile | null;
+}
+
+export interface SeriesSeason {
+  season_number: number;
+  episode_count: number;
+  name: string;
+  air_date: string;
+  poster_url: string | null;
+  episodes: SeriesEpisode[];
+  counts: { owned: number; temp: number; missing: number; upcoming: number };
+}
+
+export interface SeriesDetail {
+  show: {
+    tmdb_id: number; title: string; original_title: string; year: number | null; first_air_date: string;
+    status: string; overview: string; poster_url: string | null; networks: string[]; genres: string[];
+    rating: number; episode_runtime: number; titles: string[];
+    last_episode: { season: number; episode: number; air_date: string; name: string } | null;
+    next_episode: { season: number; episode: number; air_date: string; name: string } | null;
+  };
+  settings: { own: SeriesSettingValues; effective: SeriesSettingValues & { lang_mode: SeriesLangMode; torrent: boolean; monitor: boolean };
+              defaults: SeriesSettingValues };
+  profile: { id: number; name: string };
+  seasons: SeriesSeason[];
+  totals: { owned: number; temp: number; missing: number; upcoming: number };
+  local_langs: string[];
+  in_library: boolean;
+}
+
+export async function getSeries(tmdbId: number, fresh = false): Promise<SeriesDetail> {
+  const res = await apiFetch(`${API_BASE}/api/series/${tmdbId}${fresh ? "?fresh=true" : ""}`);
+  if (!res.ok) throw new Error(`Seriál se nenačetl: ${res.status}`);
+  return res.json();
+}
+
+/** Only the keys to change; null = back to the default. */
+export async function saveSeriesSettings(tmdbId: number, values: Partial<SeriesSettingValues>): Promise<SeriesDetail["settings"]> {
+  const res = await apiFetch(`${API_BASE}/api/series/${tmdbId}/settings`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values }),
+  });
+  if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
+  return res.json();
+}
+
+export async function getSeriesDefaults(): Promise<SeriesSettingValues> {
+  const res = await apiFetch(`${API_BASE}/api/series/defaults/settings`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function saveSeriesDefaults(values: Partial<SeriesSettingValues>): Promise<SeriesSettingValues> {
+  const res = await apiFetch(`${API_BASE}/api/series/defaults/settings`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values }),
+  });
+  if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
   return res.json();
 }
