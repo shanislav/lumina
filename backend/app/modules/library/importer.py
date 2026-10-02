@@ -427,7 +427,8 @@ def _episode_by_folder(f: dict, tv_dir: str) -> dict | None:
 
 _TITLE_AFTER = re.compile(r"(?i)(?:s\d{1,2}\s?e\d{1,3}(?:-?e\d{1,3})*|\b\d{1,2}x\d{2,3})[\s._-]*(.*)$")
 _TITLE_NOISE = re.compile(r"(?i)\[[^\]]*\]|\([^)]*\)|\b(?:\d{3,4}p|x26[45]|h\.?26[45]|hevc|web-?dl|webrip|bluray|bdrip|hdtv|dvdrip|"
-                          r"cz|sk|en|eng|cze|dab(?:ing)?|tit(?:ulky)?|multi|aac|ac3|dts|5\.1)\b.*$")
+                          r"cz|sk|en|eng|cze|dab(?:ing)?|tit(?:ulky)?|multi|aac|ac3|dts|5\.1|"
+                          r"ai-?upscale|upscale|dvb-?[ct]|sdtv|full ?hd|xvid|divx|dvd|fs)\b.*$")
 
 
 def _title_in_name(filename: str) -> str:

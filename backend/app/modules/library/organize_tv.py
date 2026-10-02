@@ -31,7 +31,7 @@ import uuid
 from app.core import naming
 from app.core.release_name import SUBTITLE_EXTS, VIDEO_EXTS
 from app.modules.library import tv_inventory
-from app.modules.library.episode_names import czech
+from app.modules.library.episode_names import catalog, czech
 from app.modules.library.organize import (
     OrganizeError,
     _conflicts,
@@ -146,9 +146,13 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
         row["status"] == "tmdb_other"
         or (None not in parts and parts[0] != parts[1])
         or (row["status"] == "not_in_tmdb" and not tv_inventory.same_episode(file_title, plex_title, strict=True)))
-    if row["status"] == "tmdb_other" and file_title or other:
+    if len(episodes) > 1:
+        # a file of more episodes: the first one's name (Plex shows the last one's)
+        title = tmdb_title(season, episodes[0]) or file_title or plex_title
+    elif row["status"] == "tmdb_other" and file_title or other:
         title = file_title
-    elif file_title and plex_title and czech(file_title) and not czech(plex_title) and plex_title.isascii():
+    elif file_title and plex_title and czech(file_title) and not czech(plex_title) and plex_title.isascii() \
+            and tv_inventory.title_score(file_title, plex_title) < tv_inventory.STRONG:
         title = file_title          # the file's Czech name before Plex's English one (TMDB without a Czech name)
     elif plex_title or file_title:
         title = plex_title or file_title
@@ -431,6 +435,9 @@ async def plan_show(db, client, folder: str, root: str, settings: dict | None = 
         (folder,))).fetchall()}
     tmdb_titles = {(r[0], r[1]): r[2] or "" for r in await (await db.execute(
         "SELECT season, episode, episode_title FROM library_episodes WHERE show_tmdb_id = ?", (tmdb_id,))).fetchall()}
+    # TMDB's names: Czech, else English (Chernobyl has no Czech names of its episodes)
+    for key, entry in (await catalog(client, db, tmdb_id)).items():
+        tmdb_titles[key] = entry["cs"] if naming.episode_title(entry["cs"]) else (entry["en"] or entry["cs"])
     override = await (await db.execute("SELECT 1 FROM tv_folder_overrides WHERE folder = ?", (folder,))).fetchone()
     blocked = ""
     if not override and f["lumina_tmdb_id"] and f["plex_tmdb_id"] and f["lumina_tmdb_id"] != f["plex_tmdb_id"]:
