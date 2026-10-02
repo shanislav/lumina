@@ -186,6 +186,71 @@ class TMDBClient:
             ],
         }
 
+    async def get_tv_full(self, tmdb_id: int, language: str = "cs-CZ") -> dict:
+        """A TV show for its page and for finding its files: names in all languages, seasons,
+        the usual episode length, what aired last / airs next."""
+        resp = await self._http.get(
+            f"{API_BASE}/tv/{tmdb_id}",
+            params={"api_key": self._api_key, "language": language,
+                    "append_to_response": "translations,alternative_titles,external_ids"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        first = data.get("first_air_date", "") or ""
+        original_language = data.get("original_language", "")
+        titles_by_lang: dict[str, str] = {}
+        if original_language and data.get("original_name"):
+            titles_by_lang[original_language] = data["original_name"]
+        for tr in data.get("translations", {}).get("translations", []):
+            lang = tr.get("iso_639_1")
+            name = ((tr.get("data") or {}).get("name") or "").strip()
+            if lang and name and lang not in titles_by_lang:
+                titles_by_lang[lang] = name
+        titles = {data.get("name", ""), data.get("original_name", "")}
+        titles.update(t for lang, t in titles_by_lang.items() if lang in ("cs", "sk", "en"))
+        alternative = [
+            (a.get("title") or "").strip()
+            for a in (data.get("alternative_titles") or {}).get("results", [])
+            if a.get("iso_3166_1") in ("US", "GB", "CZ", "SK")
+        ]
+        runtimes = [r for r in data.get("episode_run_time") or [] if r]
+
+        def _ep(e: dict | None) -> dict | None:
+            if not e:
+                return None
+            return {"season": e.get("season_number"), "episode": e.get("episode_number"),
+                    "air_date": e.get("air_date") or "", "name": e.get("name") or ""}
+
+        return {
+            "tmdb_id": tmdb_id,
+            "title": data.get("name", ""),
+            "original_title": data.get("original_name", ""),
+            "year": int(first[:4]) if len(first) >= 4 else None,
+            "first_air_date": first,
+            "status": data.get("status") or "",            # Returning Series | Ended | Canceled …
+            "in_production": bool(data.get("in_production")),
+            "original_language": original_language,
+            "overview": data.get("overview", ""),
+            "poster_url": f"{IMG_BASE}{data['poster_path']}" if data.get("poster_path") else None,
+            "networks": [n.get("name", "") for n in data.get("networks") or [] if n.get("name")],
+            "genres": [g.get("name", "") for g in data.get("genres") or [] if g.get("name")],
+            "rating": round(float(data.get("vote_average") or 0), 1),
+            "episode_runtime": round(sum(runtimes) / len(runtimes)) if runtimes else 0,
+            "imdb_id": (data.get("external_ids") or {}).get("imdb_id") or "",
+            "tvdb_id": (data.get("external_ids") or {}).get("tvdb_id") or 0,
+            "titles": sorted(t for t in titles if t),
+            "alternative_titles": sorted({t for t in alternative if t} - titles),
+            "titles_by_lang": titles_by_lang,
+            "last_episode": _ep(data.get("last_episode_to_air")),
+            "next_episode": _ep(data.get("next_episode_to_air")),
+            "seasons": [
+                {"season_number": x.get("season_number", 0), "episode_count": x.get("episode_count", 0),
+                 "name": x.get("name", ""), "air_date": x.get("air_date") or "",
+                 "poster_url": f"{IMG_BASE}{x['poster_path']}" if x.get("poster_path") else None}
+                for x in data.get("seasons", []) if x.get("season_number", 0) > 0      # not specials (S00)
+            ],
+        }
+
     async def get_season(self, tmdb_id: int, season_number: int, language: str = "cs-CZ") -> list[dict]:
         """Fetch episodes for a specific season."""
         resp = await self._http.get(
@@ -200,6 +265,7 @@ class TMDBClient:
                 "name": ep.get("name", ""),
                 "air_date": ep.get("air_date", ""),
                 "overview": ep.get("overview", ""),
+                "runtime": ep.get("runtime") or 0,
             }
             for ep in data.get("episodes", [])
         ]

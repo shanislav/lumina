@@ -96,6 +96,20 @@ def torrent_query_list(query: str, en_title: str = "", original_title: str = "")
     return out[:2]
 
 
+def episode_queries(titles: list[str], season: int, episode: int) -> tuple[list[str], list[str]]:
+    """(DDL queries, torrent queries) for one episode. Uploaders name episodes "Show S01E03" (sometimes
+    "Show 1x03") after the local or the English name; torrent trackers also have the whole season
+    ("Show S01") — a pack holds the episode too."""
+    names = [_clean_title(t) for t in _unique_names(titles)]
+    names = [n for n in names if len(_norm(n)) >= 2][:3]
+    if not names:
+        return [], []
+    se = f"S{season:02d}E{episode:02d}"
+    ddl = [f"{n} {se}" for n in names] + [f"{names[0]} {season}x{episode:02d}"]
+    latin = next((n for n in names if n.isascii() and re.search(r"[A-Za-z]", n)), names[0])
+    return ddl[:MAX_DDL_QUERIES], [f"{latin} {se}", f"{latin} S{season:02d}"]
+
+
 def _unique_names(names: list[str]) -> list[str]:
     out: list[str] = []
     for n in names:
@@ -145,8 +159,10 @@ class Offers:
 
 
 async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_id: int | None = None,
-                      media_type: str = "movie", use_ai: bool = True, wikidata_id: str | None = None) -> Offers:
-    """All files of a film on all sources, judged by rules (+ AI for unclear ones)."""
+                      media_type: str = "movie", use_ai: bool = True, wikidata_id: str | None = None,
+                      season: int | None = None, episode: int | None = None) -> Offers:
+    """All files of a film on all sources, judged by rules (+ AI for unclear ones).
+    A TV show with season + episode: the files of that episode (and packs that hold it)."""
     sources = SourceRegistry.get().sources
     prefs = prefs_from_settings(cfg)
     ctx = MovieContext(year=year_of(query))
@@ -174,6 +190,20 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
                 ctx.people = full.get("people", [])
                 ctx.other_parts = full.get("other_parts", [])
                 ctx.namesakes = await _namesakes(client, full, ctx.titles)
+            elif season and episode:
+                show = await client.get_tv_full(tmdb_id)
+                by_lang = show.get("titles_by_lang") or {}
+                en_title = by_lang.get("en", "")
+                local_titles = [by_lang.get(l, "") for l in prefs.local_langs]
+                ctx.titles = [*local_titles, show.get("title", ""), en_title, show.get("original_title", ""),
+                              *show.get("alternative_titles", [])]
+                ctx.runtime = show.get("episode_runtime") or 0
+                try:
+                    ep = next((e for e in await client.get_season(tmdb_id, season)
+                               if e["episode_number"] == episode), None)
+                    ctx.runtime = (ep or {}).get("runtime") or ctx.runtime
+                except Exception as e:
+                    logger.info("TMDB season %s of tmdb=%s failed: %s", season, tmdb_id, e)
             else:
                 en_title = await client.get_english_title(tmdb_id, media_type)
         except Exception as e:
@@ -198,6 +228,10 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
             local_titles = film["titles"][:2]
     ctx.titles = _unique_names([re.sub(r"\b(19|20)\d{2}\b", "", query).strip(), original_title,
                                 en_title, *ctx.titles])
+    if media_type == "tv" and season and episode:
+        ctx.episode = {"season": season, "episode": episode}
+        ctx.year = None           # years in episode names are the show's, not a mismatch
+        use_ai = False            # the episode rules know packs and other episodes; the AI knows films
 
 
     async def _safe_search(source, q: str) -> list[SearchResult]:
@@ -213,8 +247,11 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     # DDL sources get a few cleaned variants (short local title, full local title, English title);
     # torrent indexers at most two: Prowlarr asks its trackers one query after another (~1.5 s each),
     # a year in the query only narrows what the plain title finds, the film check sorts the rest out
-    ddl = ddl_queries(query, original_title, en_title, local_titles, ctx.year)
-    torrent_queries = torrent_query_list(query, en_title, original_title)
+    if ctx.episode:
+        ddl, torrent_queries = episode_queries(ctx.titles, season, episode)
+    else:
+        ddl = ddl_queries(query, original_title, en_title, local_titles, ctx.year)
+        torrent_queries = torrent_query_list(query, en_title, original_title)
     tasks = [
         _safe_search(source, q)
         for source in sources

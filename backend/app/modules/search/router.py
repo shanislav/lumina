@@ -219,11 +219,15 @@ async def search_files(
     tmdb_id: int | None = None,
     media_type: str | None = None,
     wikidata_id: str | None = None,
+    season: int | None = None,
+    episode: int | None = None,
 ) -> "SearchFilesResponse":
-    """All files of a film on all sources, judged (app/core/offers)."""
+    """All files of a film on all sources, judged (app/core/offers). A TV show with season + episode:
+    the files of that episode."""
     cfg = await get_effective_settings()
     offers = await find_offers(cfg, query, original_title=original_title or "", tmdb_id=tmdb_id,
-                               media_type=media_type or "movie", wikidata_id=wikidata_id)
+                               media_type=media_type or "movie", wikidata_id=wikidata_id,
+                               season=season, episode=episode)
     return SearchFilesResponse(movie=offers.movie.as_dict(), prefer_local_audio=offers.prefs.prefer_local_audio,
                                files=[ScoredFile(**row) for row in offers.rows])
 
