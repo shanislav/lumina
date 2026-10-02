@@ -129,12 +129,13 @@ class Inventory:
 _COMMON = {"the", "and", "for", "with", "from", "part", "cast", "dil", "pro", "jak", "kde", "tak", "ale", "nebo", "who", "what"}
 
 
-_PART = re.compile(r"(?i)\b(?:part|pt|cast|část|díl|dil|chapter|kapitola)\.?\s*([ivx]+|\d+|první|prvni|druhá|druha|třetí|treti|čtvrtá|ctvrta)\b"
+_PART = re.compile(r"(?i)\b(?:part|pt|cast|část|díl|dil|chapter|kapitola)\.?\s*([ivx]+|\d+|první|prvni|druhá|druha|třetí|treti|čtvrtá|ctvrta|one|two|three|four)\b"
                    r"|\b(\d)\s*\.?\s*(?:část|cast|díl|dil)\b|\b([ivx]{1,4}|\d)\s*$|\((\d)\)\s*$")
-_PART_WORDS = {"part", "cast", "dil", "chapter", "kapitola", "prvni", "druha", "treti", "ctvrta"}
+_PART_WORDS = {"part", "cast", "dil", "chapter", "kapitola", "prvni", "druha", "treti", "ctvrta", "one", "two", "three", "four"}
 _PART_WORD = re.compile(r"\d+(?:cast|dil|part)|[ivx]{1,4}")
 _ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10,
-          "první": 1, "prvni": 1, "druhá": 2, "druha": 2, "třetí": 3, "treti": 3, "čtvrtá": 4, "ctvrta": 4}
+          "první": 1, "prvni": 1, "druhá": 2, "druha": 2, "třetí": 3, "treti": 3, "čtvrtá": 4, "ctvrta": 4,
+          "one": 1, "two": 2, "three": 3, "four": 4}
 
 
 def _part(name: str) -> int | None:
@@ -184,8 +185,8 @@ def title_match(a: str, b: str) -> tuple[float, int]:
     pa, pb = _part(a), _part(b)
     if pa is not None and pb is not None and pa != pb:
         return 0.0, 0
-    if (pa is None) != (pb is None) and (pa or pb) != 1:
-        return 0.0, 0                     # "Velký Al 2" is no "Velký Al" (a first part may go unnamed)
+    if (pa is None) != (pb is None):
+        return 0.0, 0                     # "Velký Al 2" is no "Velký Al"; "Space Race" may be either part
     # the part is compared above — its words ("část", "druhá", "1část") are no name
     if pa is not None or pb is not None:
         wa, wb = (ws - _PART_WORDS - {w for w in ws if _PART_WORD.fullmatch(w)} or ws for ws in (wa, wb))
