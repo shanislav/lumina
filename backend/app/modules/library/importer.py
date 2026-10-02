@@ -449,13 +449,16 @@ def _bare_title(filename: str) -> str:
     return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
 
 
-def _episode_by_title(name: str, titles: dict[tuple[int, int], str]) -> tuple[int, int] | None:
-    """The one TMDB episode a name surely is (``title_score``), None when none or more."""
+def _episode_by_title(name: str, titles: dict[tuple[int, int], str], season: int | None = None) -> tuple[int, int] | None:
+    """The one TMDB episode a name surely is (``title_score``), None when none or more. Of equally good
+    names the same name wins ("Podzemní zápas" before "Zápas o podzemní dráhu"), then the file's season."""
     if not name:
         return None
-    scored = sorted(((tv_inventory.title_match(name, t), key) for key, t in titles.items() if t), reverse=True)
-    if scored and scored[0][0][0] >= tv_inventory.STRONG and (len(scored) < 2 or scored[1][0] < scored[0][0]):
-        return scored[0][1]
+    norm = normalize_for_search(name)
+    scored = sorted(((*tv_inventory.title_match(name, t), normalize_for_search(t) == norm, key[0] == season, key)
+                     for key, t in titles.items() if t), reverse=True)
+    if scored and scored[0][0] >= tv_inventory.STRONG and (len(scored) < 2 or scored[1][:4] < scored[0][:4]):
+        return scored[0][4]
     return None
 
 
@@ -501,7 +504,7 @@ async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int,
     for who, name in names:
         if not name:
             continue
-        if any(tv_inventory.same_episode(name, t, strict=True) for t in titles.get(episode, [])):
+        if any(tv_inventory.title_score(name, t) >= tv_inventory.STRONG for t in titles.get(episode, [])):
             continue
         if len(titles.get(episode, [])) < 2:                      # English names only when needed (one call)
             try:
@@ -509,7 +512,7 @@ async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int,
                     titles.setdefault(ep["episode_number"], []).append(ep.get("name") or "")
             except Exception:
                 titles.setdefault(episode, []).append("")
-            if any(tv_inventory.same_episode(name, t, strict=True) for t in titles.get(episode, [])):
+            if any(tv_inventory.title_score(name, t) >= tv_inventory.STRONG for t in titles.get(episode, [])):
                 continue
         own = next((t for t in titles.get(episode, []) if t), "")
         scored = sorted(((max(tv_inventory.title_match(name, t) for t in other), n, other) for n, other in titles.items()
@@ -763,7 +766,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 elif ep_data.get("bare") and (ep_data["season"], ep_data["episode"]) not in in_tmdb:
                     # "Pokemon/2/37.Davný protivník.avi": TMDB's S02 has 36 — the name tells the episode (S02E36)
                     # before the number is taken as an absolute one
-                    by_name = _episode_by_title(_bare_title(ep_data["filename"]), named)
+                    by_name = _episode_by_title(_bare_title(ep_data["filename"]), named, ep_data["season"])
                     if by_name:
                         ep_data["season"], ep_data["episode"] = by_name
                         absolute = None
@@ -791,7 +794,8 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 )
                 stats["episodes_matched"] += 1
                 hint = ep_data.get("hint") or {}
-                file_title = _title_in_name(ep_data["filename"])
+                # "S01E02 Posilovač 4000", "02.Panika v Oblázkovém městě" (Pokémon: a bare number, then the name)
+                file_title = _title_in_name(ep_data["filename"]) or _bare_title(ep_data["filename"])
                 names = [("soubor", file_title), ("Plex", hint.get("episode_title") or "")]
                 facts: dict = {"file": [ep_data.get("file_season", ep_data["season"]),
                                         ep_data.get("file_episodes") or [ep_data["episode"]]],

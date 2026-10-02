@@ -153,3 +153,9 @@ def test_czech_parts():
     assert tv_inventory._part("Zkažený žaludek 1část") == 1 and tv_inventory._part("Zkažený žaludek, část druhá") == 2
     assert tv_inventory.title_score("Zkažený žaludek 2část", "Zkažený žaludek, část první") == 0
     assert tv_inventory.title_score("Zkažený žaludek 2část", "Zkažený žaludek, část druhá") == 1
+
+
+def test_one_shared_word_is_no_match():
+    """Kutil Tim S04E05 "V očích to není" is not TMDB's E05 "Není tak zlý, je nezodpovědný" (only "není")."""
+    assert tv_inventory.title_score("V očích to není", "Není tak zlý, je nezodpovědný") < tv_inventory.STRONG
+    assert importer._bare_title("02.Panika v Oblázkovém městě.avi") == "Panika v Oblázkovém městě"
