@@ -44,7 +44,7 @@ class OpenSubtitlesClient:
         if not api_key:
             raise OpenSubtitlesError("OpenSubtitles není nastavené (API klíč v Nastavení)")
         self._key, self._user, self._password = api_key, username, password
-        self._http = httpx.AsyncClient(timeout=30, headers={
+        self._http = httpx.AsyncClient(timeout=30, follow_redirects=True, headers={
             "Api-Key": api_key, "User-Agent": USER_AGENT, "Accept": "application/json"})
 
     async def close(self) -> None:
@@ -54,7 +54,9 @@ class OpenSubtitlesClient:
                      foreign_parts: str = "include", moviehash: str = "") -> list[dict]:
         """foreign_parts: include | only (forced subtitles) | exclude."""
         params: dict = {"languages": ",".join(sorted({l.lower() for l in languages})),
-                        "foreign_parts_only": foreign_parts, "order_by": "download_count", "type": "movie"}
+                        "order_by": "download_count", "type": "movie"}
+        if foreign_parts != "include":            # the default — leaving it out avoids a redirect
+            params["foreign_parts_only"] = foreign_parts
         if tmdb_id:
             params["tmdb_id"] = tmdb_id
         elif imdb_id:
@@ -63,7 +65,8 @@ class OpenSubtitlesClient:
             params["query"] = query
         if moviehash:
             params["moviehash"] = moviehash
-        resp = await self._http.get(f"{API}/subtitles", params=params)
+        # the API redirects to its canonical URL: parameters sorted by name, defaults left out
+        resp = await self._http.get(f"{API}/subtitles", params=dict(sorted(params.items())))
         if resp.status_code in (401, 403):
             raise OpenSubtitlesError("OpenSubtitles odmítlo API klíč")
         resp.raise_for_status()
