@@ -440,6 +440,25 @@ def _title_in_name(filename: str) -> str:
     return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
 
 
+def _bare_title(filename: str) -> str:
+    """The episode's name after a bare number ("37.Davný protivník.avi" → "Davný protivník")."""
+    m = re.match(r"\s*\d{1,3}\s*[._ -]+\s*(.+)$", os.path.splitext(filename)[0])
+    if not m:
+        return ""
+    title = _TITLE_NOISE.sub("", m.group(1).replace(".", " ").replace("_", " ")).strip(" -")
+    return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
+
+
+def _episode_by_title(name: str, titles: dict[tuple[int, int], str]) -> tuple[int, int] | None:
+    """The one TMDB episode a name surely is (``title_score``), None when none or more."""
+    if not name:
+        return None
+    scored = sorted(((tv_inventory.title_score(name, t), key) for key, t in titles.items() if t), reverse=True)
+    if scored and scored[0][0] >= tv_inventory.STRONG and (len(scored) < 2 or scored[1][0] < scored[0][0]):
+        return scored[0][1]
+    return None
+
+
 _ABSOLUTE = re.compile(r"(?<![0-9])(\d{3})(?![0-9]|p\b|i\b|\s?kbps)")
 
 
@@ -724,9 +743,10 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
 
             # Anime numbered through ("Naruto 104", "[CNT]_Naruto_153_"): a bare number its season does not
             # have is the absolute number — season and episode from the number of episodes in TMDB's seasons
-            order = [tuple(r) for r in await (await db.execute(
-                "SELECT season, episode FROM library_episodes WHERE show_tmdb_id = ? AND season > 0 ORDER BY season, episode",
-                (tmdb_id,))).fetchall()]
+            named = {(r[0], r[1]): r[2] or "" for r in await (await db.execute(
+                "SELECT season, episode, episode_title FROM library_episodes WHERE show_tmdb_id = ? AND season > 0 "
+                "ORDER BY season, episode", (tmdb_id,))).fetchall()}
+            order = list(named)
             in_tmdb = set(order)
             sizes: dict[int, int] = {}
             for s, _ in order:
@@ -741,8 +761,15 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 if through and number:
                     absolute = _absolute_episode(order, number)
                 elif ep_data.get("bare") and (ep_data["season"], ep_data["episode"]) not in in_tmdb:
-                    absolute = _absolute_episode(order, ep_data["episode"])
-                    number = ep_data["episode"]
+                    # "Pokemon/2/37.Davný protivník.avi": TMDB's S02 has 36 — the name tells the episode (S02E36)
+                    # before the number is taken as an absolute one
+                    by_name = _episode_by_title(_bare_title(ep_data["filename"]), named)
+                    if by_name:
+                        ep_data["season"], ep_data["episode"] = by_name
+                        absolute = None
+                    else:
+                        absolute = _absolute_episode(order, ep_data["episode"])
+                        number = ep_data["episode"]
                 else:
                     absolute = None
                 if absolute:

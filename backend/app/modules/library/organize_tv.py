@@ -96,6 +96,15 @@ def show_title(details: dict, settings: dict, plex_title: str = "") -> str:
     return plex_title if plex_title and plex_title.casefold() in known else tmdb
 
 
+_PT = re.compile(r"(?i)[ ._-]+(?:pt|part|cd)\s?(\d)\s*$")
+
+
+def _pt(path: str) -> int:
+    """The part a file already is ("… - pt2.mkv" → 2), 0 when none."""
+    m = _PT.search(os.path.splitext(os.path.basename(path))[0])
+    return int(m.group(1)) if m else 0
+
+
 def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]) -> tuple[int, list[int], str, tuple]:
     """(season, episodes, the episode's name, order key) of an inventory file. row: tv_files row with
     "facts" parsed and "episodes" a list."""
@@ -106,7 +115,7 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
     file_title = _named(facts.get("title") or "")
     plex_title = _named(plex[2]) if plex else ""
     tmdb_title = lambda s, e: _named(tmdb_titles.get((s, e), ""))  # noqa: E731
-    order = (file_season or 0, file_eps[0] if file_eps else 0)
+    order = (file_season or 0, file_eps[0] if file_eps else 0, _pt(row["file_path"]))
 
     if mode == "tmdb":
         if facts.get("tmdb_episode") and facts.get("tmdb_sure"):
@@ -247,8 +256,10 @@ def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_title
     candidates: list[tuple[dict, str]] = []
     for (season, episodes), items in sorted(by_target.items()):
         items.sort(key=lambda it: it[4])
-        # with the user's numbers two files of one number are versions of it, not parts
-        orders = sorted({it[4] for it in items}) if mode == "tmdb" else []
+        # with the user's numbers two files of one number are versions of it, not parts — unless they are
+        # named as parts already ("… - pt1", "… - pt2": what an earlier rename by TMDB's numbering made)
+        parts = mode == "tmdb" or (len(items) > 1 and all(it[4][2] for it in items))
+        orders = sorted({it[4] for it in items}) if parts else []
         for row, _s, _e, title, order in items:
             ext = os.path.splitext(row["file_path"])[1]
             show_rel, season_rel, name = naming.episode_paths(
@@ -395,8 +406,11 @@ async def plan_show(db, client, folder: str, root: str, settings: dict | None = 
     # numbering by names suggested where the scan found files surely named as TMDB's other episodes
     sure = sum(1 for r in rows if r["facts"].get("tmdb_sure"))
     mode = chosen or ("tmdb" if sure else "files")
-    plan = plan_folder(rows, {"tmdb_id": tmdb_id, "title": title, "year": details.get("year")}, media, tmdb_titles,
-                       root, settings, mode, blocked)
+    show = {"tmdb_id": tmdb_id, "title": title, "year": details.get("year")}
+    plan = plan_folder(rows, show, media, tmdb_titles, root, settings, mode, blocked)
+    if chosen is None and mode == "tmdb" and not plan["renumber"]:
+        mode = "files"                                     # nothing sure to renumber: no suggestion
+        plan = plan_folder(rows, show, media, tmdb_titles, root, settings, mode, blocked)
     plan["suggested"] = chosen is None and mode == "tmdb"
     plan["sure_names"] = sure
     plan["tips"] = tips(rows)

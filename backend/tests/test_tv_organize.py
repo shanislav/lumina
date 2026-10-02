@@ -247,3 +247,15 @@ def test_move_many_trades_places(tmp_path):
     open(b, "w").write("B")
     move_many([(a, b), (b, a)])
     assert open(a).read() == "B" and open(b).read() == "A"
+
+
+def test_parts_named_so_stay_parts(tmp_path):
+    """After a rename by TMDB's numbering both files say S12E23 — "- pt1" / "- pt2" keeps them parts."""
+    root = str(tmp_path)
+    stem = "Teorie velkého třesku (2007) {tmdb-1418}/Season 12/Teorie velkého třesku - S12E23 - Proměnlivá konstanta Stockholmský syndrom"
+    a, b = touch(root, stem + " - pt1.mkv"), touch(root, stem + " - pt2.mkv")
+    rows = [row(p, "Teorie velkého třesku (2007) {tmdb-1418}", 12, [23], file=[12, [23]], plex=[12, 23, "Proměnlivá konstanta / Stockholmský syndrom"],
+                title="Proměnlivá konstanta Stockholmský syndrom") for p in (a, b)]
+    show = {"tmdb_id": 1418, "title": "Teorie velkého třesku", "year": 2007}
+    for mode in ("files", "tmdb"):
+        assert not organize_tv.plan_folder(rows, show, {}, {(12, 23): "Proměnlivá konstanta / Stockholmský syndrom"}, root, SETTINGS, mode)["ops"]
