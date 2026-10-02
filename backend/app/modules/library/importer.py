@@ -453,14 +453,11 @@ def _absolute_in_name(filename: str) -> int | None:
     return None
 
 
-def _absolute_episode(sizes: dict[int, int], number: int) -> tuple[int, int] | None:
-    """(season, episode) of an absolute episode number by the seasons' sizes {1: 26, 2: 26, …}."""
-    left = number
-    for season in sorted(sizes):
-        if left <= sizes[season]:
-            return season, left
-        left -= sizes[season]
-    return None
+def _absolute_episode(order: list[tuple[int, int]], number: int) -> tuple[int, int] | None:
+    """(season, episode) of an absolute episode number: the number-th of TMDB's episodes in order
+    [(1, 1), (1, 2), …]. TMDB numbers some anime on through the seasons (Naruto S02 = E53–E104),
+    others from 1 in every season — the order is the same."""
+    return order[number - 1] if 0 < number <= len(order) else None
 
 
 async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int, season: int, episode: int,
@@ -705,9 +702,13 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
 
             # Anime numbered through ("Naruto 104", "[CNT]_Naruto_153_"): a bare number its season does not
             # have is the absolute number — season and episode from the number of episodes in TMDB's seasons
-            sizes = {r[0]: r[1] for r in await (await db.execute(
-                "SELECT season, MAX(episode) FROM library_episodes WHERE show_tmdb_id = ? AND season > 0 GROUP BY season",
-                (tmdb_id,))).fetchall()}
+            order = [tuple(r) for r in await (await db.execute(
+                "SELECT season, episode FROM library_episodes WHERE show_tmdb_id = ? AND season > 0 ORDER BY season, episode",
+                (tmdb_id,))).fetchall()]
+            in_tmdb = set(order)
+            sizes: dict[int, int] = {}
+            for s, _ in order:
+                sizes[s] = sizes.get(s, 0) + 1
             numbers = [_absolute_in_name(ep["filename"]) or (ep["episode"] if ep.get("bare") else None) for ep in episodes]
             known = [n for n in numbers if n]
             through = sizes and len(known) >= 0.8 * len(episodes) and len(known) >= 10 \
@@ -716,9 +717,9 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 # the whole show carries absolute numbers ("Naruto_CZ_027-02x01", "Naruto 104"): they are
                 # the only consistent ones (the uploader's SxE follow another season split than TMDB's)
                 if through and number:
-                    absolute = _absolute_episode(sizes, number)
-                elif ep_data.get("bare") and ep_data["episode"] > sizes.get(ep_data["season"], 0):
-                    absolute = _absolute_episode(sizes, ep_data["episode"])
+                    absolute = _absolute_episode(order, number)
+                elif ep_data.get("bare") and (ep_data["season"], ep_data["episode"]) not in in_tmdb:
+                    absolute = _absolute_episode(order, ep_data["episode"])
                     number = ep_data["episode"]
                 else:
                     absolute = None

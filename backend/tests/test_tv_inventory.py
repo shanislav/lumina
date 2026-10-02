@@ -38,8 +38,12 @@ class FakeTMDB:
                 "total_seasons": len(seasons), "total_episodes": sum(seasons.values()),
                 "seasons": [{"season_number": n} for n in seasons]}
 
+    through = False     # TMDB numbers the episodes on through the seasons (Naruto S02 = E53–E104)
+
     async def get_season(self, tmdb_id, n):
-        return [{"episode_number": e, "name": f"Epizoda {e}", "air_date": "2005-01-01"} for e in range(1, SHOWS[tmdb_id][3][n] + 1)]
+        seasons = SHOWS[tmdb_id][3]
+        first = sum(seasons[s] for s in seasons if s < n) if self.through else 0
+        return [{"episode_number": first + e, "name": f"Epizoda {e}", "air_date": "2005-01-01"} for e in range(1, seasons[n] + 1)]
 
 
 @pytest.fixture
@@ -75,10 +79,10 @@ async def tv(tmp_path):
     events._handlers.pop("library.collect_tv_hints", None)
 
 
-async def scan(root):
+async def scan(root, tmdb=None):
     db = await get_db()
     try:
-        await importer._scan_tv(FakeTMDB(), db, root, {"shows_found": 0, "episodes_matched": 0})
+        await importer._scan_tv(tmdb or FakeTMDB(), db, root, {"shows_found": 0, "episodes_matched": 0})
         return await tv_inventory.summary(db)
     finally:
         await db.close()
@@ -109,7 +113,8 @@ async def test_users_fix_wins(tv):
     assert scooby["tmdb_id"] == 18123 and scooby["source"] == "user" and scooby["counts"] == {"ok": 1}
 
 
-async def test_anime_absolute_numbers(tv):
+@pytest.mark.parametrize("through", [False, True])
+async def test_anime_absolute_numbers(tv, through):
     import pathlib
     root = pathlib.Path(tv)
     names = [f"Naruto/Naruto CZ dabing 1-20/Naruto_CZ_{n:03d}-01x{n:02d}.avi" for n in range(1, 11)]
@@ -117,11 +122,16 @@ async def test_anime_absolute_numbers(tv):
               "Naruto/6  129-153 cz tit/[CNT]_Naruto_130_[B4A3C9AA].mkv", "Naruto/Naruto CZ dabing 120-135/Naruto 135-cz-dabing.avi"]:
         (root / f).parent.mkdir(parents=True, exist_ok=True)
         (root / f).write_bytes(b"x")
-    await scan(tv)
+    tmdb = FakeTMDB()
+    tmdb.through = through
+    await scan(tv, tmdb)
     import sqlite3
     from app.db import DB_PATH
     with sqlite3.connect(DB_PATH) as conn:
         got = sorted(conn.execute("SELECT season, episode FROM library_episodes WHERE show_tmdb_id = 46260 AND has_file = 1").fetchall())
     # the whole show by its absolute numbers (TMDB: 52 + 52 + 54 + 62): 1–10 → S01; 040 (named 02x14) → S01E40;
-    # 104 → S02E52; 130 → S03E26; 135 → S03E31
-    assert got == [(1, n) for n in range(1, 11)] + [(1, 40), (2, 52), (3, 26), (3, 31)]
+    # 104 → S02E52; 130 → S03E26; 135 → S03E31 — or with TMDB's through numbering S02E104, S03E130, S03E135
+    if through:
+        assert got == [(1, n) for n in range(1, 11)] + [(1, 40), (2, 104), (3, 130), (3, 135)]
+    else:
+        assert got == [(1, n) for n in range(1, 11)] + [(1, 40), (2, 52), (3, 26), (3, 31)]
