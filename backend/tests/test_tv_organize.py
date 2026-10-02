@@ -103,7 +103,9 @@ def test_conflict_blocks(tmp_path):
     touch(root, "Loki (2021) {tmdb-84958}/Season 01/Loki - S01E01.mkv")      # the target is taken by another file
     plan = organize_tv.plan_folder([row(a, "Loki", 1, [1], file=[1, [1]])], {"tmdb_id": 84958, "title": "Loki", "year": 2021},
                                    {}, {}, root, SETTINGS)
-    assert plan["conflicts"] and "existuje" in plan["conflicts"][0]
+    # another file of the episode lies there already: this one is its next version, nothing is overwritten
+    assert not plan["conflicts"]
+    assert os.path.basename(plan["ops"][0]["dst"]) == "Loki - S01E01 (2).mkv"
 
 
 @pytest.fixture
