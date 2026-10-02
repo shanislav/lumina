@@ -181,6 +181,28 @@ def test_file_title_before_tmdb_generic_is_none(tmp_path):
     assert got["Final Space/S01/Final Space S01E04.mkv"].endswith("/Final Space - S01E04.mkv")
 
 
+async def test_episode_versions_and_deleting_one(db_tv):
+    from app.modules.library import episodes
+    db, root = db_tv
+    a = touch(root, "Loki/S01/Loki.S01E01.mkv")
+    touch(root, "Loki/S01/Loki.S01E01.cs.srt")
+    b = touch(root, "Loki/S01 4K/Loki.S01E01.2160p.mkv")
+    await db.execute("INSERT INTO library_shows (tmdb_id, title) VALUES (84958, 'Loki')")
+    await db.execute("INSERT INTO library_episodes (show_tmdb_id, season, episode, file_path, filename, has_file) "
+                     "VALUES (84958, 1, 1, ?, 'Loki.S01E01.mkv', 1)", (a,))
+    for p in (a, b):
+        await db.execute("INSERT INTO tv_files (file_path, folder, show_tmdb_id, season, episodes, status) VALUES (?, 'Loki', 84958, 1, '[1]', 'ok')", (p,))
+    await db.commit()
+    ep = await episodes.episode(db, 1)
+    assert [v["file_path"] for v in await episodes.versions(db, ep)] == [a, b]
+    with pytest.raises(ValueError):
+        await episodes.delete_file(db, ep, os.path.join(root, "Loki", "jiny.mkv"), root)
+    deleted = await episodes.delete_file(db, ep, a, root)
+    assert sorted(os.path.basename(p) for p in deleted) == ["Loki.S01E01.cs.srt", "Loki.S01E01.mkv"]
+    ep = await episodes.episode(db, 1)
+    assert ep["file_path"] == b and ep["has_file"] == 1                          # the other version takes its place
+    await episodes.delete_file(db, ep, b, root)
+    assert (await episodes.episode(db, 1))["has_file"] == 0
 def test_subtitles_keep_language_sdh_and_never_collide():
     rest = organize_tv.subtitle_rest
     assert rest("S01E01.CHe-CZtit.srt", "S01E01.CHe") == ".cs.srt"

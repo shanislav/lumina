@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { SubtitleResult, SubtitleStatus, SubtitleSync, downloadSubtitle, getSubtitleStatus, searchSubtitles, syncSubtitle } from "@/lib/api";
+import { SubtitleResult, SubtitleStatus, SubtitleSync, downloadSubtitle, getSubtitleStatus, searchSubtitles, syncSubtitle, MediaKind } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 
 const L = (code: string) => (code === "cs" ? "CZ" : (code || "?").toUpperCase());
@@ -14,7 +14,7 @@ function syncText(s: SubtitleSync): string {
 }
 
 /** Subtitles of a library film: what it has, whether it may need forced ones, OpenSubtitles search. */
-export default function SubtitlesPanel({ movieId }: { movieId: number }) {
+export default function SubtitlesPanel({ movieId, kind = "movie" }: { movieId: number; kind?: MediaKind }) {
   const { can } = useAuth();
   const [status, setStatus] = useState<SubtitleStatus | null>(null);
   const [results, setResults] = useState<SubtitleResult[] | null>(null);
@@ -23,8 +23,8 @@ export default function SubtitlesPanel({ movieId }: { movieId: number }) {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Record<number, string>>({});
 
-  const load = () => getSubtitleStatus(movieId).then(setStatus).catch(() => setStatus(null));
-  useEffect(() => { setResults(null); setError(null); setDone({}); load(); /* eslint-disable-next-line */ }, [movieId]);
+  const load = () => getSubtitleStatus(movieId, kind).then(setStatus).catch(() => setStatus(null));
+  useEffect(() => { setResults(null); setError(null); setDone({}); load(); /* eslint-disable-next-line */ }, [movieId, kind]);
   // while subtitles are being fitted to the sound: look again now and then
   const syncing = !!status?.external.some((f) => f.syncing);
   useEffect(() => {
@@ -35,7 +35,7 @@ export default function SubtitlesPanel({ movieId }: { movieId: number }) {
   }, [syncing, movieId]);
 
   async function resync(file: string) {
-    try { await syncSubtitle(movieId, file); } catch (e) { setError(e instanceof Error ? e.message : "Chyba"); }
+    try { await syncSubtitle(movieId, file, kind); } catch (e) { setError(e instanceof Error ? e.message : "Chyba"); }
     load();
   }
 
@@ -43,7 +43,7 @@ export default function SubtitlesPanel({ movieId }: { movieId: number }) {
     setSearching(forced ? "forced" : "all");
     setError(null);
     try {
-      const r = await searchSubtitles(movieId, forced);
+      const r = await searchSubtitles(movieId, forced, kind);
       setResults(r.results);
       setVideoFps(r.video_fps);
     } catch (e) {
@@ -56,7 +56,7 @@ export default function SubtitlesPanel({ movieId }: { movieId: number }) {
   async function download(r: SubtitleResult, replace = false) {
     setDone((d) => ({ ...d, [r.file_id]: "…" }));
     try {
-      const out = await downloadSubtitle(movieId, { file_id: r.file_id, language: r.language, forced: r.forced, fps: r.fps, replace });
+      const out = await downloadSubtitle(movieId, { file_id: r.file_id, language: r.language, forced: r.forced, fps: r.fps, replace }, kind);
       setDone((d) => ({ ...d, [r.file_id]: `✓ ${out.file}${out.note ? ` (${out.note})` : ""} · synchronizuji se zvukem${out.remaining != null ? ` · zbývá ${out.remaining} stažení dnes` : ""}` }));
       load();
     } catch (e) {
