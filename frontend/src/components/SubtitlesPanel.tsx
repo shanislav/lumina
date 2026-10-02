@@ -89,7 +89,9 @@ export default function SubtitlesPanel({ movieId }: { movieId: number }) {
               <span className="text-zinc-400">{L(f.lang)}{f.forced ? " forced" : ""}</span>
               {f.syncing ? <span className="text-violet-300 animate-pulse">synchronizuji se zvukem…</span>
                 : f.sync ? (
-                  <span className={f.sync.ok ? "text-zinc-500" : "text-orange-300"} title={f.sync.parts ? `posun po třetinách filmu: ${f.sync.parts.join(" / ")} s` : ""}>
+                  <span className={f.sync.ok ? "text-zinc-500" : "text-orange-300"} title={!f.sync.parts ? "" : f.sync.method === "začátky vět"
+                      ? `podle začátků vět (${f.sync.edge_hits} sedí na začátek řeči) · po třetinách filmu: ${f.sync.parts.map((p) => `${Math.round(p * 100)} %`).join(" / ")}`
+                      : `podle překryvu s řečí · posun po třetinách filmu: ${f.sync.parts.join(" / ")} s`}>
                     {syncText(f.sync)}{f.sync.cut_warning ? " · pozor: části filmu sedí jinak (jiný střih?)" : ""}
                   </span>
                 ) : <span className="text-zinc-600">nesynchronizováno</span>}

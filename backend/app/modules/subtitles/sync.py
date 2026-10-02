@@ -189,15 +189,23 @@ def fit(video: str, srt: str, audio_tracks: int = 1) -> dict:
         result.update({k: edge[k] for k in ("track", "scale", "scale_name", "shift")}, method="začátky vět")
     # the thirds alone, already rescaled: a different cut / drift shows as different shifts
     third = len(iv) // 3
-    parts = []
-    for part in (iv[:third], iv[third:2 * third], iv[2 * third:]):
-        if result["method"] == "začátky vět":
-            shift, _ = _onset_shift(onsets, subtitle_edges(part) * result["scale"])
-        else:
+    thirds = (iv[:third], iv[third:2 * third], iv[2 * third:])
+    if result["method"] == "začátky vět":
+        # too few starts per third to find a shift of their own: how many meet speech at the common shift
+        ratios = []
+        for part in thirds:
+            starts = subtitle_edges(part) * result["scale"]
+            ratios.append(round(_hits(onsets, starts, result["shift"]) / max(1, len(starts)), 2))
+        result["parts"] = ratios
+        overall = edge["hits"] / max(1, edge["edges"])
+        result["cut_warning"] = min(ratios) < overall / 3
+    else:
+        parts = []
+        for part in thirds:
             shift, _ = _best_shift(sp, part, result["scale"])
-        parts.append(round(shift, 2))
-    result["parts"] = parts
-    result["cut_warning"] = max(parts) - min(parts) > 1.0
+            parts.append(round(shift, 2))
+        result["parts"] = parts
+        result["cut_warning"] = max(parts) - min(parts) > 1.0
     changed = abs(result["shift"]) >= 0.1 or result["scale"] != 1.0
     result["ok"] = gain >= MIN_GAIN or clear_edges or not changed
     result["changed"] = changed and result["ok"]

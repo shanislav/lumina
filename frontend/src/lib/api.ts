@@ -1490,7 +1490,9 @@ export interface SubtitleSync {
   reason?: string;
   scale_name?: string;
   shift?: number;
-  parts?: number[];
+  parts?: number[];          // shift per third (s) — or, method "začátky vět", the share of starts that meet speech
+  method?: string;           // "překryv s řečí" | "začátky vět"
+  edge_hits?: string;
   cut_warning?: boolean;
   synced_at?: string;
 }
