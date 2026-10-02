@@ -31,6 +31,7 @@ import uuid
 from app.core import naming
 from app.core.release_name import SUBTITLE_EXTS, VIDEO_EXTS
 from app.modules.library import tv_inventory
+from app.modules.library.episode_names import czech
 from app.modules.library.organize import (
     OrganizeError,
     _conflicts,
@@ -143,6 +144,8 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
         or (row["status"] == "not_in_tmdb" and not tv_inventory.same_episode(file_title, plex_title, strict=True)))
     if row["status"] == "tmdb_other" and file_title or other:
         title = file_title
+    elif file_title and plex_title and czech(file_title) and not czech(plex_title) and plex_title.isascii():
+        title = file_title          # the file's Czech name before Plex's English one (TMDB without a Czech name)
     elif plex_title or file_title:
         title = plex_title or file_title
     elif (season, episodes[0]) == (scan[0], scan[1][0] if scan[1] else None) and row["status"] == "ok":

@@ -192,9 +192,15 @@ def title_match(a: str, b: str) -> tuple[float, int]:
 
 
 def _close_word(word: str, words: set[str]) -> bool:
-    """The word is there, or one spelled a little differently ("ikova" / "ikeova", a typo, a lost letter)."""
+    """The word is there, or a longer one spelled a little differently ("ikova" / "ikeova", a typo, a lost
+    letter) — short words must be the same ("dama" is no "damian", "homr" no "homer")."""
     from difflib import SequenceMatcher
-    return word in words or (len(word) >= 4 and any(len(w) >= 4 and SequenceMatcher(None, word, w).ratio() >= 0.8 for w in words))
+    return word in words or (len(word) >= 5 and any(len(w) >= 5 and SequenceMatcher(None, word, w).ratio() >= 0.8 for w in words))
+
+
+def normalized(text: str) -> str:
+    from app.utils.tv_parser import normalize_for_search
+    return normalize_for_search(text or "")
 
 
 async def overrides(db) -> dict[str, int]:

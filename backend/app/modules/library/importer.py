@@ -33,7 +33,7 @@ from app.modules.library.matcher import TRUSTED_HINTS, FileEvidence, decide, sco
 from app.core.release_name import VIDEO_EXTS, NameFacts, parse_name
 from app.modules.library.nfo import find_nfo, read_nfo
 from app.modules.library.notify import emit_movie_updated
-from app.modules.library import tv_inventory
+from app.modules.library import episode_names, tv_inventory
 from app.utils.tv_parser import normalize_for_search, parse_tv_filename
 
 logger = logging.getLogger(__name__)
@@ -440,6 +440,25 @@ def _title_in_name(filename: str) -> str:
     return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
 
 
+def _other_by_name(file_title: str, plex_name: str, fits, cat: dict, here: tuple[int, int], duration: int
+                   ) -> tuple[str, tuple[int, int], bool] | None:
+    """(why, TMDB's episode, sure) when a name — the file's own, else Plex's — is another TMDB episode than
+    the number says. Sure only by the file's own name, and only when Plex does not show the file's name
+    (Plex then shows the right episode already)."""
+    for who, name in (("soubor", file_title), ("Plex", plex_name)):
+        if not name or fits(name):
+            continue
+        key, sure = episode_names.best(name, cat, here[0], duration)
+        if not key or key == here:
+            continue
+        sure = sure and who == "soubor" and not (plex_name and tv_inventory.title_score(name, plex_name) >= tv_inventory.STRONG)
+        t = cat[key].get("cs") or cat[key].get("en")
+        own = cat.get(here, {}).get("cs") or cat.get(here, {}).get("en") or ""
+        where = f"S{key[0]:02d}E{key[1]:02d}" if key[0] != here[0] else f"E{key[1]:02d}"
+        return f"{who}: „{name}“ = v TMDB {where} „{t}“ (E{here[1]:02d} je „{own}“)", key, sure
+    return None
+
+
 def _bare_title(filename: str) -> str:
     """The episode's name after a bare number ("37.Davný protivník.avi" → "Davný protivník")."""
     m = re.match(r"\s*\d{1,3}\s*[._ -]+\s*(.+)$", os.path.splitext(filename)[0])
@@ -447,19 +466,6 @@ def _bare_title(filename: str) -> str:
         return ""
     title = _TITLE_NOISE.sub("", m.group(1).replace(".", " ").replace("_", " ")).strip(" -")
     return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
-
-
-def _episode_by_title(name: str, titles: dict[tuple[int, int], str], season: int | None = None) -> tuple[int, int] | None:
-    """The one TMDB episode a name surely is (``title_score``), None when none or more. Of equally good
-    names the same name wins ("Podzemní zápas" before "Zápas o podzemní dráhu"), then the file's season."""
-    if not name:
-        return None
-    norm = normalize_for_search(name)
-    scored = sorted(((*tv_inventory.title_match(name, t), normalize_for_search(t) == norm, key[0] == season, key)
-                     for key, t in titles.items() if t), reverse=True)
-    if scored and scored[0][0] >= tv_inventory.STRONG and (len(scored) < 2 or scored[1][:4] < scored[0][:4]):
-        return scored[0][4]
-    return None
 
 
 _ABSOLUTE = re.compile(r"(?<![0-9])(\d{3})(?![0-9]|p\b|i\b|\s?kbps)")
@@ -481,70 +487,6 @@ def _absolute_episode(order: list[tuple[int, int]], number: int) -> tuple[int, i
     [(1, 1), (1, 2), …]. TMDB numbers some anime on through the seasons (Naruto S02 = E53–E104),
     others from 1 in every season — the order is the same."""
     return order[number - 1] if 0 < number <= len(order) else None
-
-
-async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int, season: int, episode: int,
-                              names: list[tuple[str, str]]) -> tuple[str, int | None, bool, int]:
-    """Why the file is another TMDB episode than its number says — its name (in the file, or Plex's)
-    is TMDB's name of another episode of the season (Czech or English). "" when a name fits, or only
-    reads differently (Plex in English, TMDB in Czech is no problem). Big Bang S12: the file
-    "S12E24 Stockholmský syndrom" is part of TMDB's E23; Plex follows TMDB there, so the file's own
-    name tells it. Returns (why, TMDB's number of the episode, sure): sure = the file's own name is
-    clearly (``title_score``) that one episode and no other, and Plex does not show the file's name — the
-    renamer may then number the file by it (South Park S01: "S01E02 Posilovač 4000" is TMDB's E03; Plex
-    shows E02 "Sopka"). The file's own name is looked for in the seasons next to its one too (Pokémon: the
-    user's 2nd season starts with TMDB's S01E82 "Přátelé navěky"). The last value: TMDB's season of it."""
-    key = (tmdb_id, season)
-    if key not in cache:
-        titles: dict[int, list[str]] = {}
-        for n, t in await (await db.execute("SELECT episode, episode_title FROM library_episodes WHERE show_tmdb_id = ? AND season = ?",
-                                            (tmdb_id, season))).fetchall():
-            titles.setdefault(n, []).append(t or "")
-        cache[key] = titles
-    titles = cache[key]
-    for who, name in names:
-        if not name:
-            continue
-        if any(tv_inventory.title_score(name, t) >= tv_inventory.STRONG for t in titles.get(episode, [])):
-            continue
-        if len(titles.get(episode, [])) < 2:                      # English names only when needed (one call)
-            try:
-                for ep in await client.get_season(tmdb_id, season, language="en-US"):
-                    titles.setdefault(ep["episode_number"], []).append(ep.get("name") or "")
-            except Exception:
-                titles.setdefault(episode, []).append("")
-            if any(tv_inventory.title_score(name, t) >= tv_inventory.STRONG for t in titles.get(episode, [])):
-                continue
-        own = next((t for t in titles.get(episode, []) if t), "")
-        scored = sorted(((max(tv_inventory.title_match(name, t) for t in other), n, other) for n, other in titles.items()
-                         if n != episode and any(tv_inventory.same_episode(name, t, strict=True) for t in other)),
-                        key=lambda x: (-x[0][0], -x[0][1], x[1]))
-        plex_name = next((nm for w, nm in names if w == "Plex"), "")
-        plex_fits = bool(plex_name and tv_inventory.title_score(name, plex_name) >= tv_inventory.STRONG)
-        if (scored and scored[0][0][0] >= tv_inventory.STRONG) or who != "soubor":
-            if scored:
-                (score, _common), n, other = scored[0]
-                sure = (who == "soubor" and score >= tv_inventory.STRONG
-                        and (len(scored) < 2 or scored[1][0] < scored[0][0]) and not plex_fits)
-                return f"{who}: „{name}“ = v TMDB E{n:02d} „{other[0]}“ (E{episode:02d} je „{own}“)", n, sure, season
-            continue
-        # not in its season: the seasons next to it (a season split another way than TMDB's)
-        near = []
-        for s2 in (season - 1, season + 1):
-            if s2 < 1:
-                continue
-            for n2, t in await (await db.execute("SELECT episode, episode_title FROM library_episodes "
-                                                 "WHERE show_tmdb_id = ? AND season = ?", (tmdb_id, s2))).fetchall():
-                if t:
-                    near.append((tv_inventory.title_match(name, t), s2, n2, t))
-        near.sort(key=lambda x: (-x[0][0], -x[0][1]))
-        if near and near[0][0][0] >= tv_inventory.STRONG and (len(near) < 2 or near[1][0] < near[0][0]) and not plex_fits:
-            _m, s2, n2, t = near[0]
-            return f"{who}: „{name}“ = v TMDB S{s2:02d}E{n2:02d} „{t}“ (S{season:02d}E{episode:02d} je „{own}“)", n2, True, s2
-        if scored:
-            (score, _common), n, other = scored[0]
-            return f"{who}: „{name}“ = v TMDB E{n:02d} „{other[0]}“ (E{episode:02d} je „{own}“)", n, False, season
-    return "", None, False, season
 
 
 async def _lumina_show(client: TMDBClient, db, episodes: list[dict], show_name: str, year) -> tuple[int | None, str]:
@@ -691,10 +633,14 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
             show_groups[key].append(entry)
 
         stats["shows_found"] = len(show_groups)
+        # a file's first name (before Lumina renamed it): its own episode name is read from there
+        origin_of = episode_names.origins(await (await db.execute(
+            "SELECT src, dst FROM file_operations WHERE status = 'done' AND dst != '' ORDER BY id")).fetchall())
+        lengths = {r[0]: (json.loads(r[1] or "{}").get("duration_s") or 0)
+                   for r in await (await db.execute("SELECT file_path, media FROM tv_media")).fetchall()}
         marked: set[tuple[int, int, int]] = set()       # (show, season, episode) this scan found
         matched_paths: set[str] = set()                 # files this scan put under a show
         inventory = tv_inventory.Inventory()
-        season_titles: dict[tuple[int, int], dict[int, list[str]]] = {}
         for f, extra in extras:
             plex_named = extra.lower() in tv_inventory.EXTRA_DIRS or not extra
             inventory.file(f["file_path"], os.path.relpath(f["file_path"], tv_dir).split(os.sep)[0], None, None, [], "extra",
@@ -763,6 +709,14 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                     logger.warning("TMDB details failed for show '%s': %s", show_name, e)
                     continue
 
+            # TMDB's episodes in both languages, specials and seasons newer than the show's first scan too
+            cat = await episode_names.catalog(client, db, tmdb_id)
+            await db.executemany("INSERT OR IGNORE INTO library_episodes (show_tmdb_id, season, episode, episode_title, air_date) "
+                                 "VALUES (?, ?, ?, ?, ?)", [(tmdb_id, s, e, v["cs"], v["air"]) for (s, e), v in cat.items()])
+            own = episode_names.own_titles(
+                [(ep["file_path"], origin_of.get(ep["file_path"], ep["file_path"])) for ep in episodes],
+                lambda n: _title_in_name(n) or _bare_title(n))
+
             # Anime numbered through ("Naruto 104", "[CNT]_Naruto_153_"): a bare number its season does not
             # have is the absolute number — season and episode from the number of episodes in TMDB's seasons
             named = {(r[0], r[1]): r[2] or "" for r in await (await db.execute(
@@ -785,8 +739,9 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 elif ep_data.get("bare") and (ep_data["season"], ep_data["episode"]) not in in_tmdb:
                     # "Pokemon/2/37.Davný protivník.avi": TMDB's S02 has 36 — the name tells the episode (S02E36)
                     # before the number is taken as an absolute one
-                    by_name = _episode_by_title(_bare_title(ep_data["filename"]), named, ep_data["season"])
-                    if by_name:
+                    by_name, sure = episode_names.best(own.get(ep_data["file_path"], ""), cat, ep_data["season"],
+                                                       lengths.get(ep_data["file_path"], 0))
+                    if by_name and sure:
                         ep_data["season"], ep_data["episode"] = by_name
                         absolute = None
                     else:
@@ -813,9 +768,12 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 )
                 stats["episodes_matched"] += 1
                 hint = ep_data.get("hint") or {}
-                # "S01E02 Posilovač 4000", "02.Panika v Oblázkovém městě" (Pokémon: a bare number, then the name)
-                file_title = _title_in_name(ep_data["filename"]) or _bare_title(ep_data["filename"])
-                names = [("soubor", file_title), ("Plex", hint.get("episode_title") or "")]
+                # the file's own name ("S01E02 Posilovač 4000", "02.Panika v Oblázkovém městě"), from its first name
+                file_title = own.get(ep_data["file_path"], "")
+                plex_name = hint.get("episode_title") or ""
+                here = (ep_data["season"], ep_data["episode"])
+                fits = lambda nm: any(tv_inventory.title_score(nm, t) >= tv_inventory.STRONG  # noqa: E731
+                                      for t in (cat.get(here, {}).get("cs"), cat.get(here, {}).get("en")) if t)
                 facts: dict = {"file": [ep_data.get("file_season", ep_data["season"]),
                                         ep_data.get("file_episodes") or [ep_data["episode"]]],
                                "title": file_title}
@@ -832,18 +790,15 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                         and ep_data.get("numbers_from") != "plex" and not ep_data.get("absolute"):
                     status, note = "numbers", f"soubor S{ep_data['season']:02d}E{ep_data['episode']:02d}, " \
                                               f"Plex S{(hint.get('season') or 0):02d}E{(hint.get('episode') or 0):02d}"
-                elif not cursor.rowcount:
-                    status, note = "not_in_tmdb", "TMDB tento díl nezná (jiné číslování?)"
-                    other, n, sure, s2 = await _tmdb_other_episode(client, db, season_titles, tmdb_id, ep_data["season"],
-                                                                   ep_data["episode"], names)
+                elif (other := _other_by_name(file_title, plex_name, fits, cat, here, lengths.get(ep_data["file_path"], 0))) \
+                        or not cursor.rowcount:
+                    # Big Bang S12: TMDB has the two-part finale as E23 and the farewell special as E24; South
+                    # Park S01 in a Czech airing order; Pokémon's 2nd season starting with TMDB's S01E82
+                    status, note = ("tmdb_other", other[0]) if cursor.rowcount else (
+                        "not_in_tmdb", "TMDB díl pod tímto číslem nemá" + (f" · {other[0]}" if other else ""))
                     if other:
-                        note = f"TMDB díl pod tímto číslem nemá · {other.split(' (E')[0]}"
-                        facts["tmdb_episode"], facts["tmdb_sure"], facts["tmdb_season"] = n, sure, s2
-                elif (found := await _tmdb_other_episode(client, db, season_titles, tmdb_id, ep_data["season"],
-                                                         ep_data["episode"], names))[0]:
-                    # Big Bang S12: TMDB has the two-part finale as E23 and the farewell special as E24
-                    status, note = "tmdb_other", found[0]
-                    facts["tmdb_episode"], facts["tmdb_sure"], facts["tmdb_season"] = found[1], found[2], found[3]
+                        facts["tmdb_season"], facts["tmdb_episode"] = other[1]
+                        facts["tmdb_sure"] = other[2]
                 elif not hint and plex_votes:
                     status, note = "not_in_plex", "Plex soubor nezná"
                 inventory.file(ep_data["file_path"], folder or show_name, tmdb_id, ep_data["season"],
