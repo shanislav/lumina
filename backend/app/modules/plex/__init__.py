@@ -27,7 +27,9 @@ module = Module(
                 friends.TABLES, add_column("plex_friend_servers", "uri", "TEXT"),
                 add_column("plex_friend_servers", "token", "TEXT"), add_column("plex_friend_movies", "audio", "TEXT"),
                 # the migration of the TV library too: its episodes, the same one told by (show, season, episode)
-                add_column("plex_migration", "kind", "TEXT DEFAULT 'movie'"), add_column("plex_snapshot", "ident", "TEXT")],
+                add_column("plex_migration", "kind", "TEXT DEFAULT 'movie'"), add_column("plex_snapshot", "ident", "TEXT"),
+                # an item Plex added during the migration (maybe a lost one under another number)
+                add_column("plex_snapshot", "added", "INTEGER DEFAULT 0")],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=90),
                    Subscription("library.files_removed", on_files_removed),
                    Subscription("library.files_added", on_files_removed),     # the same: rescan the folder

@@ -231,16 +231,30 @@ def _keys(item: dict) -> list[tuple]:
                         ("imdb", item["imdb_id"]) if item.get("imdb_id") else None) if k]
 
 
-def compare(snapshot: dict[str, dict], now: list[dict]) -> dict:
-    """What happened to the movies since the snapshot. ``snapshot``: rating key → movie as saved."""
+def _final(name: str, renames: dict[str, str]) -> str:
+    seen = set()
+    while name in renames and name not in seen:
+        seen.add(name)
+        name = renames[name]
+    return name
+
+
+def compare(snapshot: dict[str, dict], now: list[dict], renames: dict[str, str] | None = None) -> dict:
+    """What happened to the movies since the snapshot. ``snapshot``: rating key → movie as saved (``added``:
+    one Plex added during the migration — it may be a lost one come back under another number).
+    ``renames``: file name → new file name, from Lumina's journal of the migration's batches (an episode
+    renumbered — "15 Prokletá pizza.avi" → "… S02E01 …" — is found by its file)."""
+    renames = renames or {}
     current = {m["rating_key"]: m for m in now}
     moved, missing, gone = [], [], []
     for key, old in snapshot.items():
         m = current.get(key)
         if m is None:
-            gone.append(old)
+            if not old.get("added"):
+                gone.append(old)
         elif m["missing"]:
-            missing.append(old)
+            if not old.get("added"):
+                missing.append(old)
         elif m["files"] != old["files"]:
             moved.append({**old, "files": m["files"], "old_files": old["files"]})
     # the same film: by its TMDB id, or IMDb id (an old item matched by IMDb only); an episode by its show and numbers
@@ -248,19 +262,21 @@ def compare(snapshot: dict[str, dict], now: list[dict]) -> dict:
     for o in missing + gone:
         lost |= {k: o for k in _keys(o)}
     # … or by its file name: a folder move keeps the names (a film Plex had wrong comes back as the right one)
-    lost |= {("file", os.path.basename(f)): o for o in missing + gone for f in o["files"]}
+    lost |= {("file", _final(os.path.basename(f), renames)): o for o in missing + gone for f in o["files"]}
     readded, new = [], []
     for m in now:
-        if m["rating_key"] in snapshot:
+        if m["rating_key"] in snapshot and not snapshot[m["rating_key"]].get("added"):
+            continue
+        if m["missing"]:
             continue
         old = (next((lost[k] for k in _keys(m) if k in lost), None)
                or next((lost[("file", os.path.basename(f))] for f in m["files"] if ("file", os.path.basename(f)) in lost), None))
         if old and old not in [r["old"] for r in readded]:
             readded.append({"old": old, "new": m})
-        else:
+        elif m["rating_key"] not in snapshot:
             new.append(m)
     return {"moved": moved, "missing": missing, "gone": gone, "readded": readded, "new": new,
-            "unchanged": len(snapshot) - len(moved) - len(missing) - len(gone)}
+            "unchanged": sum(1 for o in snapshot.values() if not o.get("added")) - len(moved) - len(missing) - len(gone)}
 
 
 def _brief(m: dict) -> dict:
@@ -286,7 +302,11 @@ async def check() -> dict:
         rows = await (await db.execute("SELECT * FROM plex_snapshot")).fetchall()
         snapshot = {r["rating_key"]: {**dict(r), "files": json.loads(r["files"]),
                                       "ident": json.loads(r["ident"]) if r["ident"] else None} for r in rows}
-        result = compare(snapshot, now)
+        # the migration's renames (Lumina's journal): a file Plex lost is found again under its new name
+        renames = {os.path.basename(src): os.path.basename(dst) for src, dst in await (await db.execute(
+            "SELECT src, dst FROM file_operations WHERE status = 'done' AND dst != '' AND created_at >= ? ORDER BY id",
+            (current["started_at"],))).fetchall()}
+        result = compare(snapshot, now, renames)
         # Plex made a new item but carried the date added and the watched state over (by the film's id):
         # nothing to repair — the new item takes the old one's place
         renewed = [r for r in result["readded"] if r["new"]["added_at"] == r["old"]["added_at"]
@@ -294,6 +314,7 @@ async def check() -> dict:
         result["readded"] = [r for r in result["readded"] if r not in renewed]
         for r in renewed:
             n = r["new"]
+            await db.execute("DELETE FROM plex_snapshot WHERE rating_key = ? AND added = 1", (n["rating_key"],))
             await db.execute("UPDATE plex_snapshot SET rating_key = ?, files = ?, tmdb_id = ?, imdb_id = ?, ident = ? "
                              "WHERE rating_key = ?", (n["rating_key"], json.dumps(n["files"]), n["tmdb_id"], n["imdb_id"],
                                                       json.dumps(n["ident"]) if n.get("ident") else None, r["old"]["rating_key"]))
@@ -318,7 +339,7 @@ async def check() -> dict:
         for m in result["new"]:
             await db.execute(
                 "INSERT INTO plex_snapshot (rating_key, tmdb_id, imdb_id, title, year, files, view_count, last_viewed_at, added_at, "
-                "ident) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "ident, added) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
                 (m["rating_key"], m["tmdb_id"], m["imdb_id"], m["title"], m["year"], json.dumps(m["files"]), m["view_count"],
                  m["last_viewed_at"], m["added_at"], json.dumps(m["ident"]) if m.get("ident") else None))
         report = {

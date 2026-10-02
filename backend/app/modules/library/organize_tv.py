@@ -280,6 +280,10 @@ def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_title
         "blocked": blocked,
         "conflicts": ([blocked] if blocked else []) + _conflicts(ops),
         "skipped": skipped,
+        # episodes whose number changes against Plex's (an anime numbered through, TMDB's numbering): Plex
+        # makes them new items — the migration pairs them by file and gives back watched / date added
+        "renumbered": sum(1 for row, s, e, _t, _o in wanted
+                          if row["facts"].get("plex") and [s, e[0]] != row["facts"]["plex"][:2]),
     }
 
 

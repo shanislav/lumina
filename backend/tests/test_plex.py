@@ -331,3 +331,21 @@ def test_episodes_compare_by_show_and_numbers():
     assert [m["rating_key"] for m in result["moved"]] == ["1"]
     assert [(r["old"]["rating_key"], r["new"]["rating_key"]) for r in result["readded"]] == [("2", "9")]
     assert not result["new"]
+
+
+def test_an_episode_renumbered_is_found_by_its_renamed_file():
+    """"15 Prokletá pizza.avi" (Plex S01E15) became "… S02E01 …": Plex made a new item, added during the
+    migration (already in the snapshot as such); the journal of renames pairs them."""
+    from app.modules.plex.migration import compare
+
+    def ep(key, s, e, f, missing=False, added=0, viewed=0):
+        return {"rating_key": key, "title": f"Scooby S{s:02d}E{e:02d}", "year": None, "tmdb_id": 652, "imdb_id": None,
+                "files": [f"/s/{f}"], "view_count": viewed, "last_viewed_at": None, "added_at": 1, "missing": missing,
+                "ident": [652, s, e], "added": added}
+    snapshot = {"1": ep("1", 1, 15, "15 Prokletá pizza .avi", viewed=1), "9": ep("9", 2, 1, "Scooby - S02E01 - Prokletá pizza.avi", added=1)}
+    now = [ep("1", 1, 15, "15 Prokletá pizza .avi", missing=True), ep("9", 2, 1, "Scooby - S02E01 - Prokletá pizza.avi")]
+    renames = {"15 Prokletá pizza .avi": "Scooby - S01E15 - Prokletá pizza.avi",
+               "Scooby - S01E15 - Prokletá pizza.avi": "Scooby - S02E01 - Prokletá pizza.avi"}
+    result = compare(snapshot, now, renames)
+    assert [(r["old"]["rating_key"], r["new"]["rating_key"]) for r in result["readded"]] == [("1", "9")]
+    assert not result["new"] and result["missing"][0]["rating_key"] == "1"
