@@ -1476,12 +1476,30 @@ export const finishPlexMigration = (emptyTrash: boolean, repair: boolean): Promi
 
 export interface SubtitleStatus {
   embedded: { lang: string; forced: boolean; title: string; codec: string }[];
-  external: { file: string; lang: string; forced: boolean }[];
+  external: { file: string; lang: string; forced: boolean; syncing?: boolean; sync?: SubtitleSync | null }[];
   spoken_languages: string[];
   needs_forced: boolean;
   has_forced: boolean;
   local_langs: string[];
   configured: boolean;
+}
+
+export interface SubtitleSync {
+  ok: boolean;
+  changed?: boolean;
+  reason?: string;
+  scale_name?: string;
+  shift?: number;
+  parts?: number[];
+  cut_warning?: boolean;
+  synced_at?: string;
+}
+
+export async function syncSubtitle(movieId: number, file: string): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/subtitles/movie/${movieId}/sync`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file }),
+  });
+  if (!res.ok) throw await errorOf(res);
 }
 
 export interface SubtitleResult {

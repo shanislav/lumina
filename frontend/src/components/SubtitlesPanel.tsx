@@ -1,10 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { SubtitleResult, SubtitleStatus, downloadSubtitle, getSubtitleStatus, searchSubtitles } from "@/lib/api";
+import { SubtitleResult, SubtitleStatus, SubtitleSync, downloadSubtitle, getSubtitleStatus, searchSubtitles, syncSubtitle } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 
 const L = (code: string) => (code === "cs" ? "CZ" : (code || "?").toUpperCase());
+
+function syncText(s: SubtitleSync): string {
+  if (!s.ok) return s.reason || "nesynchronizováno";
+  if (!s.changed) return "sedí se zvukem";
+  const shift = s.shift ? `posun ${s.shift > 0 ? "+" : ""}${s.shift.toFixed(2)} s` : "";
+  return ["upraveno podle zvuku", s.scale_name !== "stejné fps" ? s.scale_name : "", shift].filter(Boolean).join(" · ");
+}
 
 /** Subtitles of a library film: what it has, whether it may need forced ones, OpenSubtitles search. */
 export default function SubtitlesPanel({ movieId }: { movieId: number }) {
@@ -18,6 +25,19 @@ export default function SubtitlesPanel({ movieId }: { movieId: number }) {
 
   const load = () => getSubtitleStatus(movieId).then(setStatus).catch(() => setStatus(null));
   useEffect(() => { setResults(null); setError(null); setDone({}); load(); /* eslint-disable-next-line */ }, [movieId]);
+  // while subtitles are being fitted to the sound: look again now and then
+  const syncing = !!status?.external.some((f) => f.syncing);
+  useEffect(() => {
+    if (!syncing) return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncing, movieId]);
+
+  async function resync(file: string) {
+    try { await syncSubtitle(movieId, file); } catch (e) { setError(e instanceof Error ? e.message : "Chyba"); }
+    load();
+  }
 
   async function search(forced: boolean) {
     setSearching(forced ? "forced" : "all");
@@ -37,7 +57,7 @@ export default function SubtitlesPanel({ movieId }: { movieId: number }) {
     setDone((d) => ({ ...d, [r.file_id]: "…" }));
     try {
       const out = await downloadSubtitle(movieId, { file_id: r.file_id, language: r.language, forced: r.forced, fps: r.fps, replace });
-      setDone((d) => ({ ...d, [r.file_id]: `✓ ${out.file}${out.note ? ` (${out.note})` : ""}${out.remaining != null ? ` · zbývá ${out.remaining} dnes` : ""}` }));
+      setDone((d) => ({ ...d, [r.file_id]: `✓ ${out.file}${out.note ? ` (${out.note})` : ""} · synchronizuji se zvukem${out.remaining != null ? ` · zbývá ${out.remaining} stažení dnes` : ""}` }));
       load();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Chyba";
@@ -62,6 +82,27 @@ export default function SubtitlesPanel({ movieId }: { movieId: number }) {
           </span>
         )}
       </div>
+      {status.external.length > 0 && (
+        <div className="space-y-0.5">
+          {status.external.map((f) => (
+            <div key={f.file} className="flex flex-wrap items-center gap-x-2 text-[11px]">
+              <span className="text-zinc-400">{L(f.lang)}{f.forced ? " forced" : ""}</span>
+              {f.syncing ? <span className="text-violet-300 animate-pulse">synchronizuji se zvukem…</span>
+                : f.sync ? (
+                  <span className={f.sync.ok ? "text-zinc-500" : "text-orange-300"} title={f.sync.parts ? `posun po třetinách filmu: ${f.sync.parts.join(" / ")} s` : ""}>
+                    {syncText(f.sync)}{f.sync.cut_warning ? " · pozor: části filmu sedí jinak (jiný střih?)" : ""}
+                  </span>
+                ) : <span className="text-zinc-600">nesynchronizováno</span>}
+              {can("subtitles") && !f.syncing && f.file.toLowerCase().endsWith(".srt") && (
+                <button onClick={() => resync(f.file)} className="text-violet-300 hover:text-violet-200"
+                  title="Porovná titulky s místy, kde se ve filmu mluví, a opraví posun / fps (asi minutu)">
+                  Synchronizovat
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {can("subtitles") && (status.configured ? (
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={() => search(true)} disabled={!!searching} className="text-violet-300 hover:text-violet-200 disabled:opacity-40">
