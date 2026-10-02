@@ -50,6 +50,8 @@ type Tab = "filmy" | "serialy";
 type MovieFilter = "all" | "versions" | "review" | "unmatched";
 
 const GRID_PAGE = 120;
+// one collator for the whole sort — localeCompare(…, "cs", options) builds a new one on every compare (slow)
+const CS_TITLES = new Intl.Collator("cs", { sensitivity: "base", numeric: true });
 /** A grid card is ~150 px wide: TMDB w342 is plenty (w500 was ~2× the data). */
 const gridPoster = (url: string) => url.replace("/t/p/w500/", "/t/p/w342/");
 
@@ -262,7 +264,7 @@ export default function LibraryPage() {
   }
 
   const groups = useMemo(() => groupMovies(movies), [movies]);
-  const multiVersion = groups.filter((g) => g.versions.length > 1);
+  const multiVersion = useMemo(() => groups.filter((g) => g.versions.length > 1), [groups]);
   // identified movies only — a file without a movie has no meaningful quality overview
   const identified = useMemo(
     () => groups.filter((g) => g.main.status === "matched" || g.main.status === "manual"),
@@ -285,7 +287,8 @@ export default function LibraryPage() {
       : movieFilter === "versions" ? multiVersion
       : groups.filter((g) => g.main.status === movieFilter);
     const flag = QUALITY_FLAGS.find((f) => f.key === qualityFlag);
-    if (flag) list = list.filter((g) => identified.includes(g) && flag.test(bestVersion(g), g));
+    const isIdentified = new Set(identified);
+    if (flag) list = list.filter((g) => isIdentified.has(g) && flag.test(bestVersion(g), g));
     if (qualityFlag === "has_better") list = list.filter((g) => betterOf(g));
     if (librarySearch.trim()) {
       list = list.filter((g) => matches(librarySearch, g.main.title, g.main.original_title, g.main.year,
@@ -296,8 +299,8 @@ export default function LibraryPage() {
     const added = (g: MovieGroup) => g.versions.reduce((a, v) => (v.added_at > a ? v.added_at : a), "");
     // by title the Czech way (Č after C, "Šifra" under Š), the year second
     if (librarySort === "default") {
-      list = [...list].sort((a, b) => (a.main.title || a.main.filename).localeCompare(b.main.title || b.main.filename, "cs",
-        { sensitivity: "base", numeric: true }) || String(a.main.year).localeCompare(String(b.main.year)));
+      list = [...list].sort((a, b) => CS_TITLES.compare(a.main.title || a.main.filename, b.main.title || b.main.filename)
+        || String(a.main.year).localeCompare(String(b.main.year)));
     }
     if (librarySort === "quality_asc") list = [...list].sort((a, b) => score(a) - score(b));
     if (librarySort === "quality_desc") list = [...list].sort((a, b) => score(b) - score(a));
@@ -306,6 +309,11 @@ export default function LibraryPage() {
     return list;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, multiVersion, movieFilter, qualityFlag, librarySort, identified, upgradeChecks, librarySearch]);
+  // shown films that are identified (the quality panel's buttons) — once, not per render
+  const visibleIdentified = useMemo(() => {
+    const ids = new Set(identified);
+    return visibleGroups.filter((g) => ids.has(g));
+  }, [visibleGroups, identified]);
   const [versionsOf, setVersionsOf] = useState<MovieGroup | null>(null);
   // the grid draws a page of cards, more as it scrolls (770 cards with posters at once were slow)
   const [shown, setShown] = useState(GRID_PAGE);
@@ -588,19 +596,19 @@ export default function LibraryPage() {
             <div className="px-4 pb-3 pt-1 space-y-2">
               <div className="flex flex-wrap items-center gap-3 text-xs">
                 {canEdit && <button
-                  disabled={!!upgradeJob?.running || visibleGroups.filter((g) => identified.includes(g)).length === 0}
+                  disabled={!!upgradeJob?.running || visibleIdentified.length === 0}
                   onClick={async () => {
-                    const ids = visibleGroups.filter((g) => identified.includes(g)).map((g) => g.main.tmdb_id);
+                    const ids = visibleIdentified.map((g) => g.main.tmdb_id);
                     setUpgradeJob(await checkUpgrades(ids));
                   }}
                   title="Prohledá zdroje pro každý zobrazený film (postupně, šetrně k WS/FS) a porovná s tvou verzí"
                   className="rounded bg-violet-600 px-3 py-1 font-medium text-white hover:bg-violet-500 disabled:opacity-40"
                 >
-                  Hledat lepší verze ({Math.min(visibleGroups.filter((g) => identified.includes(g)).length, 1000)})
+                  Hledat lepší verze ({Math.min(visibleIdentified.length, 1000)})
                 </button>}
                 {canEdit && (
                   <BulkFilmSettings profiles={profiles}
-                    tmdbIds={visibleGroups.filter((g) => identified.includes(g) && g.main.tmdb_id).map((g) => g.main.tmdb_id)}
+                    tmdbIds={visibleIdentified.filter((g) => g.main.tmdb_id).map((g) => g.main.tmdb_id)}
                     onSaved={(job) => {
                       getFilmSettings().then(setFilmSettingsMap).catch(() => {});
                       if (job) setUpgradeJob(job);
