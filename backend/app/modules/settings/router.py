@@ -28,6 +28,7 @@ DEFAULTS = {
     "qbittorrent_password": "",
     "qbittorrent_path_map": "",
     "max_concurrent_downloads": "3",
+    "movies_torrent": "true",         # films: search torrents too (false = WebShare / FastShare only)
     "opensubtitles_api_key": "",      # subtitles module: search
     "opensubtitles_username": "",     # … and downloads (the account's daily limit)
     "opensubtitles_password": "",  # Lumina's downloads at once (DDL + torrents), the rest queue; 0 = no limit

@@ -147,6 +147,10 @@ const GENERAL_SECTIONS = [
       { key: "tv_media_dir", label: "Složka pro seriály", type: "folder", hint: "Pokud prázdné, seriály se stahují do složky pro filmy" },
       { key: "max_concurrent_downloads", label: "Max. souběžných stahování", type: "text",
         hint: "Kolik stahování Lumina pustí najednou (WebShare/FastShare i torrenty), ostatní čekají ve frontě. 0 = bez omezení. Výchozí 3" },
+      { key: "movies_torrent", label: "Torrenty u filmů", type: "select_static", options: [
+        { value: "true", label: "hledat i na torrentech" },
+        { value: "false", label: "jen WebShare / FastShare" },
+      ], hint: "Platí pro hledání, Chci i hlídání lepších verzí. Seriály mají vlastní přepínač (Seriály — výchozí nastavení, nebo u seriálu)" },
     ],
   },
   {

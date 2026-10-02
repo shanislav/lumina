@@ -81,3 +81,26 @@ def test_profile_takes_a_season_pack_only_when_nothing_else_suits():
     episode = {"film": "yes", "pack": False, "verified": False, "quality_score": 40, "resolution": "720p"}
     pack = {"film": "unsure", "pack": True, "verified": True, "quality_score": 70, "resolution": "1080p"}
     assert suitable([pack, episode], Profile()) == [episode, pack]
+
+
+async def test_torrents_switched_off_for_films(monkeypatch):
+    from types import SimpleNamespace
+    from app.core.offers import search
+
+    asked = []
+
+    class Src:
+        def __init__(self, kind):
+            self.source_type = SimpleNamespace(value=kind)
+            self.source_id = 1
+
+        async def search(self, q, limit=100):
+            asked.append(self.source_type.value)
+            return []
+
+    monkeypatch.setattr(search.SourceRegistry, "get", staticmethod(lambda: SimpleNamespace(sources=[Src("webshare"), Src("prowlarr")])))
+    await search.find_offers({"movies_torrent": "false"}, "Matrix 1999")
+    assert asked and "prowlarr" not in asked
+    asked.clear()
+    await search.find_offers({"movies_torrent": "true"}, "Matrix 1999")
+    assert "prowlarr" in asked

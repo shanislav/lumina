@@ -197,7 +197,9 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     """All files of a film on all sources, judged by rules (+ AI for unclear ones).
     A TV show with season + episode: the files of that episode (and packs that hold it)."""
     sources = SourceRegistry.get().sources
-    if not torrent:          # the user does not want torrents (for this show)
+    if media_type == "movie" and cfg.get("movies_torrent") == "false":
+        torrent = False      # switched off for films in Settings
+    if not torrent:          # the user does not want torrents (for this show / for films)
         sources = [src for src in sources if src.source_type.value not in TORRENT_SOURCES]
     prefs = prefs_from_settings(cfg)
     ctx = MovieContext(year=year_of(query))
