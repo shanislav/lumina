@@ -1438,10 +1438,14 @@ export interface PlexMigrationReport {
   readded: { title: string; year: number | null; old_key: string; new_key: string; watched: boolean; added_at: number | null }[];
 }
 
+export type PlexKind = "movie" | "show";
+
 export interface PlexMigration {
   configured: boolean;
   error?: string;
   active: boolean;
+  kind?: PlexKind;
+  other_running?: PlexKind | null;     // a migration of the other library runs (one at a time)
   section?: string;
   settings?: { id: string; title: string; on: boolean; was_on?: boolean }[];
   started_at?: string;
@@ -1451,8 +1455,8 @@ export interface PlexMigration {
 }
 
 /** null = the plex module is off */
-export async function getPlexMigration(): Promise<PlexMigration | null> {
-  const res = await apiFetch(`${API_BASE}/api/plex/migration`);
+export async function getPlexMigration(kind: PlexKind = "movie"): Promise<PlexMigration | null> {
+  const res = await apiFetch(`${API_BASE}/api/plex/migration?kind=${kind}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -1468,14 +1472,14 @@ async function plexMigrationPost(path: string, body?: object): Promise<any> {
   return res.json();
 }
 
-export const startPlexMigration = (): Promise<PlexMigration> => plexMigrationPost("start");
+export const startPlexMigration = (kind: PlexKind = "movie"): Promise<PlexMigration> => plexMigrationPost("start", { kind });
 
 /** One Plex scan + check, waiting until it is done. */
-export async function checkPlexMigrationAndWait(): Promise<PlexMigration | null> {
+export async function checkPlexMigrationAndWait(kind: PlexKind = "movie"): Promise<PlexMigration | null> {
   await plexMigrationPost("check");
   for (;;) {
     await new Promise((r) => setTimeout(r, 2000));
-    const state = await getPlexMigration();
+    const state = await getPlexMigration(kind);
     if (!state?.job?.running) {
       if (state?.job?.error) throw new Error(`Kontrola Plexu selhala: ${state.job.error}`);
       return state;
@@ -1731,6 +1735,58 @@ export async function getTvInventory(): Promise<TvInventory> {
   const res = await apiFetch(`${API_BASE}/api/library/tv/inventory`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+// ── TV renamer (backend modules/library/organize_tv) ──
+
+export interface TvOrganizeOp { kind: "video" | "sidecar" | "extra" | "other"; src: string; dst: string }
+
+export interface TvOrganizePlan {
+  folder: string;
+  tmdb_id: number;
+  title: string;
+  year: number | null;
+  numbering: "files" | "tmdb";
+  source_folder: string;
+  target_folder: string;
+  kinds: Record<string, number>;
+  ops: TvOrganizeOp[];
+  conflicts: string[];
+  blocked: string;
+  skipped: { file: string; why: string }[];
+  tips: string[];
+  media_missing: number;
+}
+
+export interface TvOrganizeResult {
+  batch_id: string | null;
+  done: { title: string; folder: string; ops: number; new_folder: string }[];
+  failed: { folder: string; error: string }[];
+}
+
+async function jsonOrError(res: Response) {
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getTvOrganizePlans(folder?: string): Promise<TvOrganizePlan[]> {
+  const q = folder !== undefined ? `?folder=${encodeURIComponent(folder)}` : "";
+  const data = await jsonOrError(await apiFetch(`${API_BASE}/api/library/tv/organize${q}`));
+  return folder !== undefined ? [data] : data;
+}
+
+/** stage "names": only new file names, files stay in their folders (the first half of a rename with Plex) */
+export async function applyTvOrganize(folders: string[], stage: "all" | "names" = "all"): Promise<TvOrganizeResult> {
+  return jsonOrError(await apiFetch(`${API_BASE}/api/library/tv/organize`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folders, stage }),
+  }));
+}
+
+/** How a show's files are numbered: the user's (files/Plex) or TMDB's. */
+export async function setTvNumbering(tmdbId: number, numbering: "files" | "tmdb"): Promise<void> {
+  await jsonOrError(await apiFetch(`${API_BASE}/api/library/tv/naming`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tmdb_id: tmdbId, numbering }),
+  }));
 }
 
 /** Which show a folder of the TV library is (null = let the scan decide again). */
