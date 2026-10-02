@@ -441,8 +441,8 @@ def _title_in_name(filename: str) -> str:
     return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
 
 
-def _other_by_name(file_title: str, plex_name: str, fits, cat: dict, here: tuple[int, int], duration: int
-                   ) -> tuple[str, tuple[int, int], bool] | None:
+def _other_by_name(file_title: str, plex_name: str, fits, cat: dict, here: tuple[int, int], duration: int,
+                   more: list[int] | None = None) -> tuple[str, tuple[int, int], bool] | None:
     """(why, TMDB's episode, sure) when a name — the file's own, else Plex's — is another TMDB episode than
     the number says. Sure only by the file's own name, and only when Plex does not show the file's name
     (Plex then shows the right episode already)."""
@@ -450,8 +450,8 @@ def _other_by_name(file_title: str, plex_name: str, fits, cat: dict, here: tuple
         if not name or fits(name):
             continue
         key, sure = episode_names.best(name, cat, here[0], duration)
-        if not key or key == here:
-            continue
+        if not key or key == here or (key[0] == here[0] and key[1] in (more or [])):
+            continue                     # a file of more episodes: Plex names it by another one of them
         sure = sure and who == "soubor" and not (plex_name and tv_inventory.title_score(name, plex_name) >= tv_inventory.STRONG)
         t = cat[key].get("cs") or cat[key].get("en")
         own = cat.get(here, {}).get("cs") or cat.get(here, {}).get("en") or ""
@@ -806,7 +806,8 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                         and ep_data.get("numbers_from") != "plex" and not ep_data.get("absolute"):
                     status, note = "numbers", f"soubor S{ep_data['season']:02d}E{ep_data['episode']:02d}, " \
                                               f"Plex S{(hint.get('season') or 0):02d}E{(hint.get('episode') or 0):02d}"
-                elif (other := _other_by_name(file_title, plex_name, fits, cat, here, lengths.get(ep_data["file_path"], 0))) \
+                elif (other := _other_by_name(file_title, plex_name, fits, cat, here, lengths.get(ep_data["file_path"], 0),
+                                              ep_data.get("file_episodes"))) \
                         or not cursor.rowcount:
                     # Big Bang S12: TMDB has the two-part finale as E23 and the farewell special as E24; South
                     # Park S01 in a Czech airing order; Pokémon's 2nd season starting with TMDB's S01E82
