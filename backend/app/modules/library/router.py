@@ -715,3 +715,46 @@ async def tv_naming(body: TvNaming) -> dict:
     finally:
         await db.close()
     return {"ok": True}
+
+
+# ─── One episode (its window on the show page) ───
+
+class EpisodeFile(BaseModel):
+    file_path: str
+
+
+@router.get("/episodes/{episode_id}", dependencies=[Depends(require("library.view"))])
+async def episode_detail(episode_id: int) -> dict:
+    """The episode with its files (versions) and their MediaInfo."""
+    from app.modules.library import episodes
+    db = await get_db()
+    try:
+        ep = await episodes.episode(db, episode_id)
+        if not ep or not ep["has_file"]:
+            raise HTTPException(404, "Díl v knihovně není")
+        return {"id": ep["id"], "show_tmdb_id": ep["show_tmdb_id"], "show_title": ep["show_title"], "season": ep["season"],
+                "episode": ep["episode"], "episode_title": ep["episode_title"], "air_date": ep["air_date"],
+                "file_path": ep["file_path"], "versions": await episodes.versions(db, ep)}
+    finally:
+        await db.close()
+
+
+@router.post("/episodes/{episode_id}/delete-file", dependencies=[Depends(require("library.delete"))])
+async def episode_delete_file(episode_id: int, body: EpisodeFile) -> dict:
+    """Delete one file of the episode from DISK — definitive (the UI asks first)."""
+    from app.config import tv_library_dir
+    from app.modules.library import episodes
+    root = tv_library_dir(await get_effective_settings())
+    if not root:
+        raise HTTPException(400, "Knihovna seriálů není nastavená")
+    db = await get_db()
+    try:
+        ep = await episodes.episode(db, episode_id)
+        if not ep:
+            raise HTTPException(404, "Díl v knihovně není")
+        try:
+            return {"deleted": await episodes.delete_file(db, ep, body.file_path, root)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    finally:
+        await db.close()

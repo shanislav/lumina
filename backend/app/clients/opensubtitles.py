@@ -51,13 +51,21 @@ class OpenSubtitlesClient:
         await self._http.aclose()
 
     async def search(self, *, tmdb_id: int = 0, imdb_id: str = "", query: str = "", languages: list[str],
-                     foreign_parts: str = "include", moviehash: str = "") -> list[dict]:
-        """foreign_parts: include | only (forced subtitles) | exclude."""
+                     foreign_parts: str = "include", moviehash: str = "",
+                     episode: tuple[int, int] | None = None) -> list[dict]:
+        """foreign_parts: include | only (forced subtitles) | exclude. episode: (season, episode) of the
+        show tmdb_id is."""
         params: dict = {"languages": ",".join(sorted({l.lower() for l in languages})),
-                        "order_by": "download_count", "type": "movie"}
+                        "order_by": "download_count", "type": "episode" if episode else "movie"}
         if foreign_parts != "include":            # the default — leaving it out avoids a redirect
             params["foreign_parts_only"] = foreign_parts
-        if tmdb_id:
+        if episode:
+            params["season_number"], params["episode_number"] = episode
+            if tmdb_id:
+                params["parent_tmdb_id"] = tmdb_id
+            else:
+                params["query"] = query
+        elif tmdb_id:
             params["tmdb_id"] = tmdb_id
         elif imdb_id:
             params["imdb_id"] = int(imdb_id.lstrip("t") or 0)

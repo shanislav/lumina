@@ -1409,13 +1409,17 @@ async function playerCall<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export const getPlayerInfo = (movieId: number) => playerCall<PlayerInfo>(`/${movieId}/info`);
+/** What the player plays: a movie version (library_movies id) or an episode (library_episodes id). */
+export type MediaKind = "movie" | "episode";
+const playerPath = (id: number, kind: MediaKind) => (kind === "episode" ? `/episode/${id}` : `/${id}`);
+
+export const getPlayerInfo = (movieId: number, kind: MediaKind = "movie") => playerCall<PlayerInfo>(`${playerPath(movieId, kind)}/info`);
 export type PlayerMode = "auto" | "original" | "transcode";
 
 export const startPlayer = (movieId: number, at: number, audio: number, mode: PlayerMode,
-                            caps: { hevc: boolean; dv5: boolean }) =>
+                            caps: { hevc: boolean; dv5: boolean }, kind: MediaKind = "movie") =>
   playerCall<{ session: string; start: number; audio: number; mode: "original" | "transcode"; reason: string }>(
-    `/${movieId}/start`, {
+    `${playerPath(movieId, kind)}/start`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ at, audio, mode, ...caps }),
     });
@@ -1516,8 +1520,8 @@ export interface SubtitleSync {
   synced_at?: string;
 }
 
-export async function syncSubtitle(movieId: number, file: string): Promise<void> {
-  const res = await apiFetch(`${API_BASE}/api/subtitles/movie/${movieId}/sync`, {
+export async function syncSubtitle(movieId: number, file: string, kind: MediaKind = "movie"): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/subtitles/${kind}/${movieId}/sync`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file }),
   });
   if (!res.ok) throw await errorOf(res);
@@ -1542,21 +1546,22 @@ async function errorOf(res: Response): Promise<Error> {
   return new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
 }
 
-export async function getSubtitleStatus(movieId: number): Promise<SubtitleStatus> {
-  const res = await apiFetch(`${API_BASE}/api/subtitles/movie/${movieId}`);
+export async function getSubtitleStatus(movieId: number, kind: MediaKind = "movie"): Promise<SubtitleStatus> {
+  const res = await apiFetch(`${API_BASE}/api/subtitles/${kind}/${movieId}`);
   if (!res.ok) throw await errorOf(res);
   return res.json();
 }
 
-export async function searchSubtitles(movieId: number, forced: boolean): Promise<{ results: SubtitleResult[]; video_fps: number }> {
-  const res = await apiFetch(`${API_BASE}/api/subtitles/movie/${movieId}/search?forced=${forced}`);
+export async function searchSubtitles(movieId: number, forced: boolean, kind: MediaKind = "movie"): Promise<{ results: SubtitleResult[]; video_fps: number }> {
+  const res = await apiFetch(`${API_BASE}/api/subtitles/${kind}/${movieId}/search?forced=${forced}`);
   if (!res.ok) throw await errorOf(res);
   return res.json();
 }
 
-export async function downloadSubtitle(movieId: number, body: { file_id: number; language: string; forced: boolean; fps: number; replace: boolean }):
+export async function downloadSubtitle(movieId: number, body: { file_id: number; language: string; forced: boolean; fps: number; replace: boolean },
+                                       kind: MediaKind = "movie"):
     Promise<{ file: string; note: string; remaining: number | null }> {
-  const res = await apiFetch(`${API_BASE}/api/subtitles/movie/${movieId}/download`, {
+  const res = await apiFetch(`${API_BASE}/api/subtitles/${kind}/${movieId}/download`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   if (!res.ok) throw await errorOf(res);
@@ -1582,6 +1587,7 @@ export interface SeriesSettingValues {
 }
 
 export interface SeriesEpisodeFile {
+  id?: number;               // library_episodes id (the episode's window)
   filename: string;
   file_path: string;
   size: number;
@@ -1795,4 +1801,42 @@ export async function setTvOverride(folder: string, tmdbId: number | null): Prom
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder, tmdb_id: tmdbId }),
   });
   if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
+}
+
+
+// ── One episode of the library (its window on the show page) ──
+
+export interface EpisodeVersion {
+  file_path: string;
+  filename: string;
+  size: number;
+  media: { width?: number; height?: number; video_codec?: string; hdr?: string; bitrate?: number; duration_s?: number;
+           audio?: { lang?: string; codec?: string; channels?: number }[]; subtitles?: string[] };
+  current: boolean;
+}
+
+export interface EpisodeDetail {
+  id: number;
+  show_tmdb_id: number;
+  show_title: string | null;
+  season: number;
+  episode: number;
+  episode_title: string;
+  air_date: string;
+  file_path: string;
+  versions: EpisodeVersion[];
+}
+
+export async function getEpisodeDetail(id: number): Promise<EpisodeDetail> {
+  const res = await apiFetch(`${API_BASE}/api/library/episodes/${id}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function deleteEpisodeFile(id: number, filePath: string): Promise<{ deleted: string[] }> {
+  const res = await apiFetch(`${API_BASE}/api/library/episodes/${id}/delete-file`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file_path: filePath }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
 }

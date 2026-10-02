@@ -117,13 +117,13 @@ async def owned_episodes(tmdb_id: int) -> dict[tuple[int, int], dict]:
     db = await get_db()
     try:
         rows = await (await db.execute(
-            "SELECT season, episode, filename, file_path, file_size, quality, language FROM library_episodes "
+            "SELECT id, season, episode, filename, file_path, file_size, quality, language FROM library_episodes "
             "WHERE show_tmdb_id = ? AND has_file = 1", (tmdb_id,))).fetchall()
     except Exception:
         rows = []
     finally:
         await db.close()
-    return {(r["season"], r["episode"]): {"filename": r["filename"], "file_path": r["file_path"],
+    return {(r["season"], r["episode"]): {"id": r["id"], "filename": r["filename"], "file_path": r["file_path"],
                                           "size": r["file_size"] or 0, "quality": r["quality"] or "",
                                           "languages": languages_of(r["language"])} for r in rows}
 

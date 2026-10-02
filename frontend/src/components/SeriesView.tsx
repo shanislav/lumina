@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
+import EpisodeWindow from "@/components/EpisodeWindow";
 import { useAuth } from "@/components/AuthGate";
 import {
   DownloadItem, getDownloads,
@@ -48,6 +49,7 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const [searching, setSearching] = useState<{ season: number; episode: number } | null>(null);
+  const [episodeWindow, setEpisodeWindow] = useState<number | null>(null);      // library_episodes id
   // the show's episodes being downloaded now ("<season>:<episode>"), watched while the page is open
   const [downloads, setDownloads] = useState<Record<string, EpisodeDownload>>({});
   const [dlTick, setDlTick] = useState(0);
@@ -134,7 +136,7 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
             onStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }}
             season={s} open={!!open[s.season_number]}
             toggle={() => setOpen((o) => ({ ...o, [s.season_number]: !o[s.season_number] }))}
-            canSearch={can("search")} searching={searching}
+            canSearch={can("search")} searching={searching} onOpen={setEpisodeWindow}
             onSearch={(episode) => setSearching(searching?.season === s.season_number && searching.episode === episode
               ? null : { season: s.season_number, episode })}>
             {searching?.season === s.season_number && (
@@ -145,6 +147,9 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
         ))}
       </div>
       <button onClick={() => load(true)} className="text-xs text-zinc-500 hover:text-zinc-300">Načíst znovu z TMDB</button>
+      {episodeWindow !== null && (
+        <EpisodeWindow id={episodeWindow} onClose={() => setEpisodeWindow(null)} onChanged={() => load()} />
+      )}
     </main>
   );
 }
@@ -222,10 +227,11 @@ function TriState({ value, fallback, yes, no, disabled, onChange }: {
   );
 }
 
-function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch, searching, onSearch, children }: {
+function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch, searching, onSearch, onOpen, children }: {
   tmdbId: number; onStarted: () => void; downloads: Record<string, EpisodeDownload>;
   season: SeriesSeason; open: boolean; toggle: () => void; canSearch: boolean;
-  searching: { season: number; episode: number } | null; onSearch: (episode: number) => void; children?: React.ReactNode;
+  searching: { season: number; episode: number } | null; onSearch: (episode: number) => void;
+  onOpen: (episodeId: number) => void; children?: React.ReactNode;
 }) {
   const [whole, setWhole] = useState(false);
   const c = season.counts;
@@ -270,7 +276,12 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
                 <div className={`flex items-center gap-3 px-4 py-1.5 text-xs ${active ? "bg-violet-950/30" : "hover:bg-zinc-900/60"}`}>
                   <span className={`h-2 w-2 flex-shrink-0 rounded-full ${STATE[ep.state].dot}`} />
                   <span className="w-16 font-mono text-zinc-400">{se(season.season_number, ep.episode)}</span>
-                  <span className="min-w-0 flex-1 truncate text-zinc-200" title={ep.overview}>{ep.name || "—"}</span>
+                  {ep.file?.id ? (
+                    <button onClick={() => onOpen(ep.file!.id!)} title={`${ep.overview}\n\nOtevřít díl: soubory, přehrát, titulky`.trim()}
+                      className="min-w-0 flex-1 truncate text-left text-zinc-200 hover:text-violet-300 hover:underline">{ep.name || "—"}</button>
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate text-zinc-200" title={ep.overview}>{ep.name || "—"}</span>
+                  )}
                   <span className="hidden w-20 text-zinc-500 sm:block">{czDate(ep.air_date)}</span>
                   <span className={`w-28 ${STATE[ep.state].cls}`}
                     title={ep.file ? `${ep.file.filename}\n${(ep.file.size / 1e9).toFixed(2)} GB` : ""}>

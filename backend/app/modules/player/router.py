@@ -50,6 +50,34 @@ async def start(movie_id: int, body: StartBody, user: User = Depends(require("pl
     return {"session": s.id, "start": s.start, "audio": s.audio, "mode": s.mode, "reason": reason}
 
 
+async def _episode_path(episode_id: int) -> dict:
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT e.id, e.season, e.episode, e.file_path, s.title, s.year FROM library_episodes e "
+            "LEFT JOIN library_shows s ON s.tmdb_id = e.show_tmdb_id WHERE e.id = ?", (episode_id,))).fetchone()
+    finally:
+        await db.close()
+    if not row or not row["file_path"] or not os.path.isfile(row["file_path"]):
+        raise HTTPException(404, "Soubor nenalezen")
+    return {**dict(row), "title": f"{row['title'] or ''} S{row['season']:02d}E{row['episode']:02d}".strip()}
+
+
+@router.get("/episode/{episode_id}/info", dependencies=[Depends(require("player"))])
+async def episode_info(episode_id: int) -> dict:
+    f = await _episode_path(episode_id)
+    data = await asyncio.to_thread(sessions.probe, f["file_path"])
+    return {"id": episode_id, "title": f["title"], "year": f["year"], **data}
+
+
+@router.post("/episode/{episode_id}/start")
+async def episode_start(episode_id: int, body: StartBody, user: User = Depends(require("player"))) -> dict:
+    f = await _episode_path(episode_id)
+    s, _, reason = await sessions.start(user.id, episode_id, f["file_path"], body.at, body.audio, body.mode,
+                                        {"hevc": body.hevc, "dv5": body.dv5})
+    return {"session": s.id, "start": s.start, "audio": s.audio, "mode": s.mode, "reason": reason}
+
+
 _NAME = re.compile(r"^(index\.m3u8|init\.mp4|s\d{5}\.m4s)$")
 
 

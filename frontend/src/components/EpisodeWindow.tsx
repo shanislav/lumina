@@ -1,0 +1,112 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { useAuth } from "@/components/AuthGate";
+import SubtitlesPanel from "@/components/SubtitlesPanel";
+import { EpisodeDetail, EpisodeVersion, deleteEpisodeFile, getEpisodeDetail } from "@/lib/api";
+
+/**
+ * The window of an owned episode (show page): its files with sound and subtitles, the player, subtitles from
+ * OpenSubtitles, deleting a version — like a film's window in the library (backend library/episodes.py).
+ */
+
+function videoLabel(m: EpisodeVersion["media"]): string {
+  const h = m.height || 0, w = m.width || 0;
+  const res = w >= 3200 || h >= 1600 ? "2160p" : w >= 1800 || h >= 900 ? "1080p" : w >= 1200 || h >= 650 ? "720p" : h ? `${h}p` : "";
+  return [res, m.video_codec, m.hdr && m.hdr !== "SDR" ? m.hdr : "", m.bitrate ? `${(m.bitrate / 1e6).toFixed(1)} Mb/s` : ""]
+    .filter(Boolean).join(" · ");
+}
+
+function audioLabel(a: { lang?: string; codec?: string; channels?: number }): string {
+  const ch = a.channels ? (a.channels > 2 ? `${a.channels - 1}.1` : `${a.channels}.0`) : "";
+  return [(a.lang || "?").toUpperCase(), ch, a.codec].filter(Boolean).join(" ");
+}
+
+export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; onClose: () => void; onChanged: () => void }) {
+  const { can } = useAuth();
+  const [data, setData] = useState<EpisodeDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => getEpisodeDetail(id).then(setData).catch((e) => setError(e instanceof Error ? e.message : "Chyba"));
+  useEffect(() => { setData(null); setError(null); load(); /* eslint-disable-next-line */ }, [id]);
+
+  async function remove(path: string) {
+    setBusy(true);
+    try {
+      await deleteEpisodeFile(id, path);
+      setConfirm(null);
+      onChanged();
+      if (data && data.versions.length > 1) await load(); else onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Chyba");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const code = data ? `S${String(data.season).padStart(2, "0")}E${String(data.episode).padStart(2, "0")}` : "";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className="mx-2 max-h-[92vh] w-full max-w-3xl space-y-4 overflow-y-auto rounded-xl border border-zinc-700 bg-zinc-900 p-4 sm:mx-4 sm:p-6"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-semibold text-zinc-100">
+              {data ? <>{data.show_title} · <span className="font-mono">{code}</span></> : "Díl"}
+            </h3>
+            {data?.episode_title && <p className="text-sm text-zinc-400">{data.episode_title}</p>}
+          </div>
+          <button onClick={onClose} className="text-sm text-zinc-500 hover:text-zinc-300">Zavřít</button>
+        </div>
+        {error && <p className="text-sm text-red-400">{error}</p>}
+        {!data && !error && <p className="animate-pulse text-sm text-zinc-500">Načítám…</p>}
+        {data && (
+          <>
+            <div className="space-y-2">
+              {data.versions.map((v) => (
+                <div key={v.file_path} className={`rounded-lg border p-3 text-xs ${v.current ? "border-violet-800 bg-violet-950/20" : "border-zinc-800"}`}>
+                  <p className="break-all text-zinc-200">{v.filename}</p>
+                  <p className="mt-0.5 break-all text-[11px] text-zinc-600">{v.file_path}</p>
+                  <p className="mt-1 text-zinc-400">
+                    {[videoLabel(v.media), `${(v.size / 1e9).toFixed(2)} GB`,
+                      v.media.duration_s ? `${Math.round(v.media.duration_s / 60)} min` : ""].filter(Boolean).join(" · ")}
+                    {v.current && data.versions.length > 1 && <span className="ml-2 text-violet-300">v knihovně</span>}
+                  </p>
+                  {!!v.media.audio?.length && (
+                    <p className="mt-0.5 text-zinc-400">🔊 {v.media.audio.map(audioLabel).join(" · ")}</p>
+                  )}
+                  {!!v.media.subtitles?.length && (
+                    <p className="mt-0.5 text-zinc-500">💬 v souboru: {v.media.subtitles.map((l) => l.toUpperCase()).join(", ")}</p>
+                  )}
+                  {!Object.keys(v.media).length && <p className="mt-0.5 text-zinc-600">MediaInfo zatím není (proběhne při skenu knihovny).</p>}
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    {v.current && can("player") && (
+                      <Link href={`/play?id=${data.id}&kind=episode`}
+                        className="rounded bg-violet-700 px-2.5 py-1 font-medium text-white hover:bg-violet-600">▶ Přehrát</Link>
+                    )}
+                    {can("library.delete") && (confirm === v.file_path ? (
+                      <span className="flex items-center gap-2 text-red-300">
+                        Smazat soubor z disku natrvalo (i jeho titulky)?
+                        <button disabled={busy} onClick={() => remove(v.file_path)} className="rounded bg-red-700 px-2 py-0.5 text-white hover:bg-red-600">
+                          {busy ? "Mažu…" : "Smazat"}
+                        </button>
+                        <button onClick={() => setConfirm(null)} className="text-zinc-400 hover:text-zinc-200">Ne</button>
+                      </span>
+                    ) : (
+                      <button onClick={() => setConfirm(v.file_path)} className="text-red-400/80 hover:text-red-300">Smazat tuto verzi</button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <SubtitlesPanel movieId={data.id} kind="episode" />
+            <p className="text-[11px] text-zinc-600">Editor zvuku (přenos dabingu mezi verzemi) zatím umí jen filmy.</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

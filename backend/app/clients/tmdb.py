@@ -252,6 +252,7 @@ class TMDBClient:
             "titles": sorted(t for t in titles if t),
             "alternative_titles": sorted({t for t in alternative if t} - titles),
             "titles_by_lang": titles_by_lang,
+            "spoken_languages": [l.get("iso_639_1") for l in data.get("spoken_languages") or [] if l.get("iso_639_1")],
             "last_episode": _ep(data.get("last_episode_to_air")),
             "next_episode": _ep(data.get("next_episode_to_air")),
             "seasons": [
