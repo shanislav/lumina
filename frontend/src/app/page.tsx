@@ -225,7 +225,8 @@ function HomeContent() {
         </p>
       </div>
 
-      <SearchBar onSearch={handleSearch} loading={moviesLoading} />
+      <SearchBar onSearch={handleSearch} loading={moviesLoading}
+        onPick={(m) => { setMovies([]); setLastQuery(m.title); handleSelectMovie(m); }} />
 
       {error && (
         <div className="rounded-lg bg-red-900/30 border border-red-800 px-4 py-3 text-red-300 text-sm w-full max-w-2xl">

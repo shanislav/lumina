@@ -38,6 +38,13 @@ class TMDBClient:
         resp.raise_for_status()
         return await self._parse_tv(resp.json().get("results", []), limit=12)
 
+    async def search_multi(self, query: str, language: str = "cs-CZ") -> list[dict]:
+        """Films, shows and people in one call (as you type)."""
+        resp = await self._http.get(f"{API_BASE}/search/multi", params={
+            "api_key": self._api_key, "query": query, "language": language, "include_adult": False})
+        resp.raise_for_status()
+        return resp.json().get("results", [])
+
     async def _parse_movies(self, items: list, limit: int = 20) -> list[TMDBMovie]:
         movies: list[TMDBMovie] = []
         for item in items[:limit]:

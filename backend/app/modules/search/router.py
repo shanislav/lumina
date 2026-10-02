@@ -62,6 +62,79 @@ async def search_movies(query: str, language: str | None = None) -> list[TMDBMov
         await client.close()
 
 
+_suggest_cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
+SUGGEST_TTL_S = 600
+
+
+def _suggestion(item: dict, person: str = "") -> dict | None:
+    kind = item.get("media_type")
+    if kind not in ("movie", "tv"):
+        return None
+    date = item.get("release_date") or item.get("first_air_date") or ""
+    poster = item.get("poster_path")
+    return {"tmdb_id": item["id"], "media_type": kind,
+            "title": item.get("title") or item.get("name") or "",
+            "original_title": item.get("original_title") or item.get("original_name") or "",
+            "year": date[:4], "overview": item.get("overview") or "",
+            "poster_url": f"https://image.tmdb.org/t/p/w500{poster}" if poster else None,
+            "popularity": item.get("popularity") or 0, "person": person}
+
+
+@router.get("/search/suggest", dependencies=[Depends(require("search"))])
+async def search_suggest(q: str) -> list[dict]:
+    """As-you-type suggestions: films and shows whose title fits, and the best-known films of a person
+    ("keanu" → Matrix, John Wick) — for when the exact title is not remembered."""
+    import time
+    query = q.strip()
+    if len(query) < 2:
+        return []
+    cfg = await get_effective_settings()
+    _, locale = _locale(cfg, None)
+    key = (query.lower(), locale)
+    hit = _suggest_cache.get(key)
+    if hit and time.time() - hit[0] < SUGGEST_TTL_S:
+        return hit[1]
+    client = TMDBClient(cfg["tmdb_api_key"])
+    try:
+        results = await client.search_multi(query, language=locale)
+    except Exception as e:
+        logger.info("Suggest '%s' failed: %s", query, e)
+        return []
+    finally:
+        await client.close()
+    out: list[dict] = []
+    seen: set[tuple[str, int]] = set()
+
+    def add(s: dict | None) -> None:
+        if s and (s["media_type"], s["tmdb_id"]) not in seen:
+            seen.add((s["media_type"], s["tmdb_id"]))
+            out.append(s)
+
+    for item in results[:10]:
+        if item.get("media_type") == "person":
+            for known in sorted(item.get("known_for") or [], key=lambda k: -(k.get("popularity") or 0))[:3]:
+                add(_suggestion(known, person=item.get("name") or ""))
+        else:
+            add(_suggestion(item))
+    out = out[:8]
+    from app.db import get_db
+    db = await get_db()
+    try:
+        ids = [x["tmdb_id"] for x in out if x["media_type"] == "movie"]
+        owned = {r[0] for r in await (await db.execute(
+            f"SELECT DISTINCT tmdb_id FROM library_movies WHERE tmdb_id IN ({','.join('?' * len(ids))})", ids)).fetchall()} if ids else set()
+    except Exception:            # the library module may be switched off
+        owned = set()
+    finally:
+        await db.close()
+    for x in out:
+        x["in_library"] = x["media_type"] == "movie" and x["tmdb_id"] in owned
+    if len(_suggest_cache) > 500:
+        _suggest_cache.clear()
+    _suggest_cache[key] = (time.time(), out)
+    return out
+
+
 async def _wikidata_films(query: str, lang_code: str) -> list[TMDBMovie]:
     """Films TMDB does not know (fan parodies, rare Czech titles) — from Wikidata/Wikipedia."""
     client = WikidataClient()

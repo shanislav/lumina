@@ -234,6 +234,18 @@ export async function getPopular(language?: string): Promise<TMDBMovie[]> {
 
 // --- Search & Download ---
 
+export interface Suggestion extends TMDBMovie {
+  person?: string;          // found through this person (actor / director)
+  in_library?: boolean;
+}
+
+/** As-you-type suggestions (films, shows, the best-known films of a person). */
+export async function suggest(q: string, signal?: AbortSignal): Promise<Suggestion[]> {
+  const res = await apiFetch(`${API_BASE}/api/search/suggest?q=${encodeURIComponent(q)}`, { signal });
+  if (!res.ok) return [];
+  return res.json();
+}
+
 export async function searchMovies(query: string, language?: string): Promise<TMDBMovie[]> {
   const params = new URLSearchParams({ query });
   if (language) params.set("language", language);
