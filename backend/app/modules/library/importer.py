@@ -439,6 +439,20 @@ def _title_in_name(filename: str) -> str:
     return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
 
 
+_ABSOLUTE = re.compile(r"(?<![0-9])(\d{3})(?![0-9]|p\b|i\b|\s?kbps)")
+
+
+def _absolute_in_name(filename: str) -> int | None:
+    """A three-digit absolute episode number in a name ("Naruto_CZ_027-02x01", "[CNT]_Naruto_153_[…]"),
+    not a resolution or a CRC."""
+    name = re.sub(r"\[[0-9A-Fa-f]{8}\]", "", os.path.splitext(filename)[0])
+    for m in _ABSOLUTE.finditer(name):
+        n = int(m.group(1))
+        if n not in (480, 576, 720, 264, 265) and n > 0:
+            return n
+    return None
+
+
 def _absolute_episode(sizes: dict[int, int], number: int) -> tuple[int, int] | None:
     """(season, episode) of an absolute episode number by the seasons' sizes {1: 26, 2: 26, …}."""
     left = number
@@ -694,12 +708,23 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
             sizes = {r[0]: r[1] for r in await (await db.execute(
                 "SELECT season, MAX(episode) FROM library_episodes WHERE show_tmdb_id = ? AND season > 0 GROUP BY season",
                 (tmdb_id,))).fetchall()}
-            for ep_data in episodes:
-                if ep_data.get("bare") and ep_data["episode"] > sizes.get(ep_data["season"], 0):
+            numbers = [_absolute_in_name(ep["filename"]) or (ep["episode"] if ep.get("bare") else None) for ep in episodes]
+            known = [n for n in numbers if n]
+            through = sizes and len(known) >= 0.8 * len(episodes) and len(known) >= 10 \
+                and max(known) > max(sizes.values()) and len(set(known)) >= 0.9 * len(known)
+            for ep_data, number in zip(episodes, numbers):
+                # the whole show carries absolute numbers ("Naruto_CZ_027-02x01", "Naruto 104"): they are
+                # the only consistent ones (the uploader's SxE follow another season split than TMDB's)
+                if through and number:
+                    absolute = _absolute_episode(sizes, number)
+                elif ep_data.get("bare") and ep_data["episode"] > sizes.get(ep_data["season"], 0):
                     absolute = _absolute_episode(sizes, ep_data["episode"])
-                    if absolute:
-                        ep_data["absolute"] = ep_data["episode"]
-                        ep_data["season"], ep_data["episode"] = absolute
+                    number = ep_data["episode"]
+                else:
+                    absolute = None
+                if absolute:
+                    ep_data["absolute"] = number
+                    ep_data["season"], ep_data["episode"] = absolute
 
             # Mark episodes we have on disk
             for ep_data in episodes:

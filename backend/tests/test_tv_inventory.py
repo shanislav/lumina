@@ -14,7 +14,7 @@ SHOWS = {
     18123: ("Scooby Doo - Záhady s.r.o.", "Scooby-Doo! Mystery Incorporated", "2010", {1: 26}),
     1011: ("Scooby-Doo na stopě", "Scooby-Doo, Where Are You!", "1969", {1: 17}),
     127532: ("Solo Leveling", "Solo Leveling", "2024", {1: 25}),
-    46260: ("Naruto", "NARUTO -ナルト-", "2002", {1: 26, 2: 26, 3: 26, 4: 26, 5: 31}),
+    46260: ("Naruto", "NARUTO -ナルト-", "2002", {1: 52, 2: 52, 3: 54, 4: 62}),
 }
 
 
@@ -112,7 +112,8 @@ async def test_users_fix_wins(tv):
 async def test_anime_absolute_numbers(tv):
     import pathlib
     root = pathlib.Path(tv)
-    for f in ["Naruto/Naruto CZ dabing 20-40/Naruto_CZ_040-02x14.avi", "Naruto/Naruto CZ dabing 104-120/Naruto 104.mp4",
+    names = [f"Naruto/Naruto CZ dabing 1-20/Naruto_CZ_{n:03d}-01x{n:02d}.avi" for n in range(1, 11)]
+    for f in names + ["Naruto/Naruto CZ dabing 20-40/Naruto_CZ_040-02x14.avi", "Naruto/Naruto CZ dabing 104-120/Naruto 104.mp4",
               "Naruto/6  129-153 cz tit/[CNT]_Naruto_130_[B4A3C9AA].mkv", "Naruto/Naruto CZ dabing 120-135/Naruto 135-cz-dabing.avi"]:
         (root / f).parent.mkdir(parents=True, exist_ok=True)
         (root / f).write_bytes(b"x")
@@ -121,5 +122,6 @@ async def test_anime_absolute_numbers(tv):
     from app.db import DB_PATH
     with sqlite3.connect(DB_PATH) as conn:
         got = sorted(conn.execute("SELECT season, episode FROM library_episodes WHERE show_tmdb_id = 46260 AND has_file = 1").fetchall())
-    # 040-02x14 as it says; 104 → S04E26; 130 → S05E26; 135 → S05E31
-    assert got == [(2, 14), (4, 26), (5, 26), (5, 31)]
+    # the whole show by its absolute numbers (TMDB: 52 + 52 + 54 + 62): 1–10 → S01; 040 (named 02x14) → S01E40;
+    # 104 → S02E52; 130 → S03E26; 135 → S03E31
+    assert got == [(1, n) for n in range(1, 11)] + [(1, 40), (2, 52), (3, 26), (3, 31)]
