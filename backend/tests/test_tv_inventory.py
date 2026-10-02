@@ -14,6 +14,7 @@ SHOWS = {
     18123: ("Scooby Doo - Záhady s.r.o.", "Scooby-Doo! Mystery Incorporated", "2010", {1: 26}),
     1011: ("Scooby-Doo na stopě", "Scooby-Doo, Where Are You!", "1969", {1: 17}),
     127532: ("Solo Leveling", "Solo Leveling", "2024", {1: 25}),
+    46260: ("Naruto", "NARUTO -ナルト-", "2002", {1: 26, 2: 26, 3: 26, 4: 26, 5: 31}),
 }
 
 
@@ -27,6 +28,8 @@ class FakeTMDB:
             out += [18123, 1011]
         if "solo" in t:
             out.append(127532)
+        if "naruto" in t:
+            out.append(46260)
         return [S(tmdb_id=i, title=SHOWS[i][0], original_title=SHOWS[i][1], year=SHOWS[i][2]) for i in out]
 
     async def get_tv_details(self, tmdb_id, language="cs-CZ"):
@@ -104,3 +107,19 @@ async def test_users_fix_wins(tv):
     inv = await scan(tv)
     scooby = next(f for f in inv["folders"] if f["folder"] == "Scooby Doo")
     assert scooby["tmdb_id"] == 18123 and scooby["source"] == "user" and scooby["counts"] == {"ok": 1}
+
+
+async def test_anime_absolute_numbers(tv):
+    import pathlib
+    root = pathlib.Path(tv)
+    for f in ["Naruto/Naruto CZ dabing 20-40/Naruto_CZ_040-02x14.avi", "Naruto/Naruto CZ dabing 104-120/Naruto 104.mp4",
+              "Naruto/6  129-153 cz tit/[CNT]_Naruto_130_[B4A3C9AA].mkv", "Naruto/Naruto CZ dabing 120-135/Naruto 135-cz-dabing.avi"]:
+        (root / f).parent.mkdir(parents=True, exist_ok=True)
+        (root / f).write_bytes(b"x")
+    await scan(tv)
+    import sqlite3
+    from app.db import DB_PATH
+    with sqlite3.connect(DB_PATH) as conn:
+        got = sorted(conn.execute("SELECT season, episode FROM library_episodes WHERE show_tmdb_id = 46260 AND has_file = 1").fetchall())
+    # 040-02x14 as it says; 104 → S04E26; 130 → S05E26; 135 → S05E31
+    assert got == [(2, 14), (4, 26), (5, 26), (5, 31)]

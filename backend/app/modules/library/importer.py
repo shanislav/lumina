@@ -402,6 +402,8 @@ def _episode_by_folder(f: dict, tv_dir: str) -> dict | None:
     from app.core.episode_match import parse_episode
 
     info = parse_episode(f["filename"])
+    if len(info.episodes) > 1 and info.bare:
+        info.episodes = info.episodes[:1]          # "Naruto_203-204-205": the file is listed under its first episode
     if not info.episodes and not info.is_pack:
         m = re.match(r"(\d{1,3})(?:[ ._-]|\.\w+$)", f["filename"])
         if m and not re.match(r"(19|20)\d{2}", f["filename"]):
@@ -435,6 +437,16 @@ def _title_in_name(filename: str) -> str:
         return ""
     title = _TITLE_NOISE.sub("", m.group(1).replace(".", " ").replace("_", " ")).strip(" -")
     return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
+
+
+def _absolute_episode(sizes: dict[int, int], number: int) -> tuple[int, int] | None:
+    """(season, episode) of an absolute episode number by the seasons' sizes {1: 26, 2: 26, …}."""
+    left = number
+    for season in sorted(sizes):
+        if left <= sizes[season]:
+            return season, left
+        left -= sizes[season]
+    return None
 
 
 async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int, season: int, episode: int,
@@ -587,6 +599,9 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 unknown.append(f)
                 continue
             entry["hint"] = hint
+            # only a number in the name ("Naruto 104.mp4"): may be the absolute number of an anime
+            entry["bare"] = not re.search(r"(?i)s\d{1,2}\s?e\d{1,3}|\d{1,2}x\d{2,3}", f["filename"]) \
+                and entry.get("numbers_from") != "plex" and not ep_nfo
 
             # the show is its folder under the TV folder ("StarGate Atlantis/2. HD/SGA - S02E02…"): file
             # names use nicknames ("SGA") and the folder holds one show; the file's name stays a hint
@@ -674,6 +689,18 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                     logger.warning("TMDB details failed for show '%s': %s", show_name, e)
                     continue
 
+            # Anime numbered through ("Naruto 104", "[CNT]_Naruto_153_"): a bare number its season does not
+            # have is the absolute number — season and episode from the number of episodes in TMDB's seasons
+            sizes = {r[0]: r[1] for r in await (await db.execute(
+                "SELECT season, MAX(episode) FROM library_episodes WHERE show_tmdb_id = ? AND season > 0 GROUP BY season",
+                (tmdb_id,))).fetchall()}
+            for ep_data in episodes:
+                if ep_data.get("bare") and ep_data["episode"] > sizes.get(ep_data["season"], 0):
+                    absolute = _absolute_episode(sizes, ep_data["episode"])
+                    if absolute:
+                        ep_data["absolute"] = ep_data["episode"]
+                        ep_data["season"], ep_data["episode"] = absolute
+
             # Mark episodes we have on disk
             for ep_data in episodes:
                 marked.add((tmdb_id, ep_data["season"], ep_data["episode"]))
@@ -693,7 +720,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 if lumina_id and plex_id and lumina_id != plex_id and not override:
                     status, note = "show", f"Plex: {plex_title} · Lumina: {lumina_title}"
                 elif hint and (hint.get("season"), hint.get("episode")) != (ep_data["season"], ep_data["episode"]) \
-                        and ep_data.get("numbers_from") != "plex":
+                        and ep_data.get("numbers_from") != "plex" and not ep_data.get("absolute"):
                     status, note = "numbers", f"soubor S{ep_data['season']:02d}E{ep_data['episode']:02d}, " \
                                               f"Plex S{(hint.get('season') or 0):02d}E{(hint.get('episode') or 0):02d}"
                 elif not cursor.rowcount:

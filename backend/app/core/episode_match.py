@@ -30,6 +30,7 @@ _COMPLETE = re.compile(r"(?<![a-z])(complete|kompletn\w*|komplet|all seasons|vse
 _EP_ONLY = re.compile(r"(?<![a-z0-9])(?:ep?|dil|cast|epizoda) ?(\d{1,3})(?![0-9])"
                       r"|(?:^| )- ?(\d{1,3})(?: |$)"                  # "Fotr na tripu - 03"
                       r"|(?<=[a-z])-(\d{2,3})-")                      # "chalupari-01-chudak-dedecek"
+_BARE = re.compile(r"(?<=[a-z]) (\d{2,3}(?:-\d{2,3})*)(?= |$|-[a-z])(?! ?(?:p|fps|kbps|bit)\b)")
 LENGTH_MIN_RATIO = 0.6          # a verified episode shorter than this share of its runtime is incomplete
 
 
@@ -41,6 +42,7 @@ class EpisodeInfo:
     complete: bool = False                               # "complete" / "kompletní"
     prefix: str = ""                                     # the name before the episode mark (the show)
     of_total: int = 0                                    # "S02E03-08": episode 3 of 8
+    bare: bool = False                                   # only a number after the name (anime: maybe absolute)
 
     @property
     def is_pack(self) -> bool:
@@ -98,6 +100,11 @@ def parse_episode(name: str) -> EpisodeInfo:
     e = _EP_ONLY.search(text)
     if e:
         return EpisodeInfo(None, [int(next(g for g in e.groups() if g))], prefix=text[:e.start()], complete=complete)
+    e = _BARE.search(text)
+    if e:                        # "naruto 104", "naruto 120 cz dabing", "naruto 203-204-205" (anime: absolute numbers)
+        numbers = [int(x) for x in re.findall(r"\d{2,3}", e.group(1))]
+        episodes = list(range(numbers[0], numbers[-1] + 1)) if len(numbers) > 1 and 0 < numbers[-1] - numbers[0] < 10 else numbers[:1]
+        return EpisodeInfo(None, episodes, prefix=text[:e.start()], complete=complete, bare=True)
     return EpisodeInfo(prefix=text, complete=complete)
 
 
