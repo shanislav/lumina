@@ -129,16 +129,21 @@ class Inventory:
 _COMMON = {"the", "and", "for", "with", "from", "part", "cast", "dil", "pro", "jak", "kde", "tak", "ale", "nebo", "who", "what"}
 
 
-_PART = re.compile(r"(?i)\b(?:part|pt|cast|část|díl|dil|chapter|kapitola)\.?\s*([ivx]+|\d+)\b|\b([ivx]{1,4}|\d)\s*$")
-_ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10}
+_PART = re.compile(r"(?i)\b(?:part|pt|cast|část|díl|dil|chapter|kapitola)\.?\s*([ivx]+|\d+|první|prvni|druhá|druha|třetí|treti|čtvrtá|ctvrta)\b"
+                   r"|\b(\d)\s*\.?\s*(?:část|cast|díl|dil)\b|\b([ivx]{1,4}|\d)\s*$")
+_PART_WORDS = {"part", "cast", "dil", "chapter", "kapitola", "prvni", "druha", "treti", "ctvrta"}
+_PART_WORD = re.compile(r"\d+(?:cast|dil|part)|[ivx]{1,4}")
+_ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10,
+          "první": 1, "prvni": 1, "druhá": 2, "druha": 2, "třetí": 3, "treti": 3, "čtvrtá": 4, "ctvrta": 4}
 
 
 def _part(name: str) -> int | None:
-    """The part a name says ("Heart of Archness: Part II" → 2, "Kapitola 3" → 3), None when it says none."""
+    """The part a name says ("Heart of Archness: Part II" → 2, "Kapitola 3" → 3, "Zkažený žaludek 1část" → 1,
+    "část druhá" → 2), None when it says none."""
     m = _PART.search(name or "")
     if not m:
         return None
-    token = (m.group(1) or m.group(2)).lower()
+    token = next(g for g in m.groups() if g).lower()
     return int(token) if token.isdigit() else _ROMAN.get(token)
 
 
@@ -179,6 +184,8 @@ def title_match(a: str, b: str) -> tuple[float, int]:
     pa, pb = _part(a), _part(b)
     if pa is not None and pb is not None and pa != pb:
         return 0.0, 0
+    # the part is compared above — its words ("část", "druhá", "1část") are no name
+    wa, wb = (ws - _PART_WORDS - {w for w in ws if _PART_WORD.fullmatch(w)} or ws for ws in (wa, wb))
     short, other = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
     common = sum(1 for w in short if _close_word(w, other))
     return common / len(short), common
