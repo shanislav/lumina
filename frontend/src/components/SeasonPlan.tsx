@@ -28,8 +28,8 @@ function plan(sets: SeasonSet[], primary: string, wanted: number[]) {
   });
 }
 
-export default function SeasonPlan({ tmdbId, season, ownedEpisodes, onStarted }: {
-  tmdbId: number; season: number; ownedEpisodes: number[]; onStarted: () => void;
+export default function SeasonPlan({ tmdbId, season, ownedEpisodes, busyEpisodes = [], onStarted }: {
+  tmdbId: number; season: number; ownedEpisodes: number[]; busyEpisodes?: number[]; onStarted: () => void;
 }) {
   const { can } = useAuth();
   const [offers, setOffers] = useState<SeasonOffers | null>(null);
@@ -51,7 +51,8 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, onStarted }:
   if (!offers) return <p className="px-4 py-3 text-xs text-zinc-400 animate-pulse">Hledám celou sérii na všech zdrojích…</p>;
   if (!offers.wanted.length) return <p className="px-4 py-3 text-xs text-zinc-500">V této sérii nic nechybí.</p>;
 
-  const chosen = items.filter((i) => !skip.has(i.episode));
+  const busy = new Set(busyEpisodes);
+  const chosen = items.filter((i) => !skip.has(i.episode) && !busy.has(i.episode));
   const missing = offers.wanted.filter((e) => !items.some((i) => i.episode === e));
   const setOf = (key: string) => offers.sets.find((s) => s.key === key);
 
@@ -59,7 +60,8 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, onStarted }:
     setState("busy");
     try {
       const r = await downloadSeason(tmdbId, season, list);
-      setState(r.errors.length ? `Spuštěno ${r.started}, chyby: ${r.errors.join("; ")}` : `Spuštěno ${r.started} stahování`);
+      setState(r.errors.length ? `Spuštěno ${r.started}, chyby: ${r.errors.join("; ")}` : `Spuštěno ${r.started} stahování — průběh je u dílů níže`);
+      setSkip(new Set(list.map((i) => i.episode)));      // not offered again by a second click
       onStarted();
     } catch (e) {
       setState(e instanceof Error ? e.message : "Chyba");
@@ -99,13 +101,14 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, onStarted }:
               const other = i.set !== primary;
               return (
                 <label key={i.episode} className="flex items-center gap-2 px-2">
-                  <input type="checkbox" checked={!skip.has(i.episode)}
+                  <input type="checkbox" checked={!skip.has(i.episode) && !busy.has(i.episode)} disabled={busy.has(i.episode)}
                     onChange={(e) => setSkip((prev) => { const n = new Set(prev); if (e.target.checked) n.delete(i.episode); else n.add(i.episode); return n; })} />
                   <span className="w-10 font-mono text-zinc-400">E{String(i.episode).padStart(2, "0")}</span>
                   <span className="w-14 text-zinc-500">{gb(i.row.size)}</span>
                   <span className="min-w-0 flex-1 truncate text-zinc-300" title={i.row.name}>{i.row.name}</span>
                   {other && <span className="text-amber-300" title={setOf(i.set)?.label}>z jiného vydání</span>}
-                  {ownedEpisodes.includes(i.episode) && <span className="text-zinc-500">nahradí stažený</span>}
+                  {busy.has(i.episode) ? <span className="text-violet-300">už se stahuje</span>
+                    : ownedEpisodes.includes(i.episode) && <span className="text-zinc-500">nahradí stažený</span>}
                 </label>
               );
             })}

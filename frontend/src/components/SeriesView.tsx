@@ -6,6 +6,7 @@ import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
 import { useAuth } from "@/components/AuthGate";
 import {
+  DownloadItem, getDownloads,
   MovieContext, QualityProfile, ScoredFile, SeriesDetail, SeriesEpisode, SeriesLangMode, SeriesSeason,
   getProfiles, getSeries, saveSeriesSettings, searchFiles,
 } from "@/lib/api";
@@ -30,12 +31,25 @@ const L = (code: string) => (code === "cs" ? "CZ" : code.toUpperCase());
 const se = (s: number, e: number) => `S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}`;
 const czDate = (d: string) => (d ? new Date(d).toLocaleDateString("cs-CZ") : "");
 
+/** An episode being downloaded: waiting in the queue, or how far it is. */
+type EpisodeDownload = { queued: boolean; pos?: number; pct: number };
+
+function downloadOf(d: DownloadItem): EpisodeDownload {
+  if (d.status === "queued") return { queued: true, pos: d.queue_pos, pct: 0 };
+  const pct = d.progress != null ? d.progress * 100 : d.total_length ? (d.completed_length / d.total_length) * 100 : 0;
+  return { queued: false, pct: Math.min(100, Math.round(pct)) };
+}
+
 export default function SeriesView({ tmdbId }: { tmdbId: number }) {
   const { can } = useAuth();
   const [data, setData] = useState<SeriesDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const [searching, setSearching] = useState<{ season: number; episode: number } | null>(null);
+  // the show's episodes being downloaded now ("<season>:<episode>"), watched while the page is open
+  const [downloads, setDownloads] = useState<Record<string, EpisodeDownload>>({});
+  const [dlTick, setDlTick] = useState(0);
+  const watchDownloads = () => setDlTick((t) => t + 1);
 
   const load = (fresh = false) =>
     getSeries(tmdbId, fresh).then((d) => {
@@ -46,6 +60,33 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
         d.seasons.filter((s) => s.counts.missing || s.counts.temp).slice(0, 2).map((s) => [s.season_number, true])));
     }).catch((e) => setError(e instanceof Error ? e.message : "Chyba"));
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tmdbId]);
+
+  const active = Object.keys(downloads).length > 0;
+  useEffect(() => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout>;
+    let before = 0;
+    async function poll() {
+      try {
+        const list = await getDownloads(1);
+        if (!live) return;
+        const mine: Record<string, EpisodeDownload> = {};
+        for (const d of list.downloads) {
+          if (d.tmdb_id === tmdbId && d.content_type === "tv" && d.season && d.episode) mine[`${d.season}:${d.episode}`] = downloadOf(d);
+        }
+        const now = Object.keys(mine).length;
+        if (now < before) load();          // something finished — the episode is in the library now
+        before = now;
+        setDownloads(mine);
+        timer = setTimeout(poll, now ? 4000 : 20000);
+      } catch {
+        if (live) timer = setTimeout(poll, 20000);
+      }
+    }
+    poll();
+    return () => { live = false; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tmdbId, dlTick]);
 
   if (error) return <main className="p-8 text-red-400">{error}</main>;
   if (!data) return <main className="p-8 text-zinc-500">Načítám seriál…</main>;
@@ -85,7 +126,8 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
 
       <div className="space-y-2">
         {data.seasons.map((s) => (
-          <Season key={s.season_number} tmdbId={tmdbId} onStarted={() => setTimeout(() => load(), 1500)}
+          <Season key={s.season_number} tmdbId={tmdbId} downloads={downloads}
+            onStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }}
             season={s} open={!!open[s.season_number]}
             toggle={() => setOpen((o) => ({ ...o, [s.season_number]: !o[s.season_number] }))}
             canSearch={can("search")} searching={searching}
@@ -93,7 +135,7 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
               ? null : { season: s.season_number, episode })}>
             {searching?.season === s.season_number && (
               <EpisodeSearch data={data} season={s.season_number} episode={searching.episode}
-                onDownloaded={() => setTimeout(() => load(), 1500)} />
+                onDownloaded={() => { watchDownloads(); setSearching(null); }} />
             )}
           </Season>
         ))}
@@ -176,13 +218,14 @@ function TriState({ value, fallback, yes, no, disabled, onChange }: {
   );
 }
 
-function Season({ tmdbId, onStarted, season, open, toggle, canSearch, searching, onSearch, children }: {
-  tmdbId: number; onStarted: () => void;
+function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch, searching, onSearch, children }: {
+  tmdbId: number; onStarted: () => void; downloads: Record<string, EpisodeDownload>;
   season: SeriesSeason; open: boolean; toggle: () => void; canSearch: boolean;
   searching: { season: number; episode: number } | null; onSearch: (episode: number) => void; children?: React.ReactNode;
 }) {
   const [whole, setWhole] = useState(false);
   const c = season.counts;
+  const going = season.episodes.filter((e) => downloads[`${season.season_number}:${e.episode}`]).length;
   const total = season.episodes.length || 1;
   return (
     <section className="rounded-lg border border-zinc-800">
@@ -197,6 +240,7 @@ function Season({ tmdbId, onStarted, season, open, toggle, canSearch, searching,
           {c.owned + c.temp}/{season.episodes.length - c.upcoming}
           {c.temp > 0 && <span className="text-amber-300"> · {c.temp} EN</span>}
           {c.missing > 0 && <span className="text-red-300"> · chybí {c.missing}</span>}
+          {going > 0 && <span className="text-violet-300"> · stahuje se {going}</span>}
         </span>
         <span className="text-xs text-zinc-500">{open ? "▲" : "▼"}</span>
       </button>
@@ -211,10 +255,12 @@ function Season({ tmdbId, onStarted, season, open, toggle, canSearch, searching,
           )}
           {whole && (
             <SeasonPlan tmdbId={tmdbId} season={season.season_number} onStarted={onStarted}
-              ownedEpisodes={season.episodes.filter((e) => e.file).map((e) => e.episode)} />
+              ownedEpisodes={season.episodes.filter((e) => e.file).map((e) => e.episode)}
+              busyEpisodes={season.episodes.filter((e) => downloads[`${season.season_number}:${e.episode}`]).map((e) => e.episode)} />
           )}
           {season.episodes.map((ep) => {
             const active = searching?.season === season.season_number && searching.episode === ep.episode;
+            const dl = downloads[`${season.season_number}:${ep.episode}`];
             return (
               <div key={ep.episode}>
                 <div className={`flex items-center gap-3 px-4 py-1.5 text-xs ${active ? "bg-violet-950/30" : "hover:bg-zinc-900/60"}`}>
@@ -227,11 +273,16 @@ function Season({ tmdbId, onStarted, season, open, toggle, canSearch, searching,
                     {ep.file ? [ep.file.quality, ep.file.languages.map(L).join("+")].filter(Boolean).join(" · ") || STATE[ep.state].label
                       : STATE[ep.state].label}
                   </span>
-                  {canSearch && ep.state !== "upcoming" ? (
-                    <button onClick={() => onSearch(ep.episode)} className="w-20 text-right text-violet-300 hover:text-violet-200">
+                  {dl ? (
+                    <span className={`w-24 whitespace-nowrap text-right ${dl.queued ? "text-amber-300" : "text-violet-300 animate-pulse"}`}
+                      title="Stahování běží — díl se po dokončení sám objeví v knihovně">
+                      {dl.queued ? `ve frontě${dl.pos ? ` (${dl.pos}.)` : ""}` : `stahuje se ${dl.pct} %`}
+                    </span>
+                  ) : canSearch && ep.state !== "upcoming" ? (
+                    <button onClick={() => onSearch(ep.episode)} className="w-24 text-right text-violet-300 hover:text-violet-200">
                       {active ? "Zavřít" : ep.state === "owned" ? "Jiná verze" : "Hledat"}
                     </button>
-                  ) : <span className="w-20" />}
+                  ) : <span className="w-24" />}
                 </div>
                 {active && children}
               </div>

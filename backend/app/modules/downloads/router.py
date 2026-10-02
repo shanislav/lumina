@@ -161,7 +161,8 @@ async def list_downloads(offset: int = 0, limit: int = 10) -> dict:
                 logger.debug("Live state of %s unavailable: %s", did, e)
             item.setdefault("gid" if backend == "aria2" else "hash", did)
             item.update({"source_label": info.get("source_label") or ("Torrent" if backend == "qbittorrent" else ""),
-                         **{k: info.get(k) for k in ("tmdb_id", "film", "requested_by", "created_at", "mode", "content_type")}})
+                         **{k: info.get(k) for k in ("tmdb_id", "film", "requested_by", "created_at", "mode", "content_type",
+                                                    "season", "episode")}})
             active.append(item)
     finally:
         if aria2:
@@ -181,6 +182,7 @@ async def list_downloads(offset: int = 0, limit: int = 10) -> dict:
             "total_length": 0, "completed_length": 0, "download_speed": 0,
             "tmdb_id": r.get("tmdb_id"), "film": title, "requested_by": q["requested_by"], "created_at": q["created_at"],
             "mode": (r.get("library_action") or {}).get("mode") or "", "content_type": r.get("content_type") or "movie",
+            "season": (r.get("library_action") or {}).get("season"), "episode": (r.get("library_action") or {}).get("episode"),
         })
     done, total = await history(max(0, offset), max(1, min(limit, 200)))
     return {"downloads": active + waiting, "history": done, "history_total": total, "limit": await queue.limit()}

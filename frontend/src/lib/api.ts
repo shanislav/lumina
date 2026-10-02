@@ -336,6 +336,8 @@ export interface DownloadItem {
   created_at?: string;
   mode?: string;              // "version" | "replace" | ""
   content_type?: string;
+  season?: number | null;     // a TV episode
+  episode?: number | null;
   queue_id?: number;          // waiting for a free slot (status "queued")
   queue_pos?: number;
   id?: string;                // a finished one (history)

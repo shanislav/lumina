@@ -47,7 +47,9 @@ async def tracked() -> dict[str, dict]:
             intent = json.loads(r["intent"]) if r["intent"] else {}
             out[r["id"]] = {"source_label": r["source_label"] or "", "tmdb_id": r["tmdb_id"], "film": r["title"] or "",
                             "requested_by": r["requested_by"] or "", "created_at": r["created_at"] or "",
-                            "mode": intent.get("mode") or "", "content_type": r["content_type"] or "movie"}
+                            "mode": intent.get("mode") or "", "content_type": r["content_type"] or "movie",
+                            # a TV episode: which one (the show page shows it as downloading)
+                            "season": intent.get("season"), "episode": intent.get("episode")}
         return out
     finally:
         await db.close()
