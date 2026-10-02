@@ -95,37 +95,115 @@ def _fit_at(sp: np.ndarray, iv, scale: float, shift: float) -> float:
     return float(((sp * 2 - 1) * (_mask(iv, n, scale, shift) * 2 - 1)).sum() / n)
 
 
+MIN_SILENCE_S = 0.4        # speech "starts" after at least this much quiet
+MIN_GAP_S = 1.5            # a subtitle "starts" after at least this much without subtitles
+ONSET_TOLERANCE_S = 0.2
+
+
+def speech_onsets(sp: np.ndarray) -> np.ndarray:
+    """Times where speech starts after a quiet moment."""
+    quiet = int(MIN_SILENCE_S / HOP)
+    rises = np.flatnonzero((sp[1:] > 0) & (sp[:-1] == 0)) + 1
+    out, last_on = [], -10**9
+    ends = np.flatnonzero((sp[1:] == 0) & (sp[:-1] > 0)) + 1
+    e = 0
+    for r in rises:
+        while e < len(ends) and ends[e] < r:
+            last_on = ends[e]
+            e += 1
+        if r - last_on >= quiet:
+            out.append(r * HOP)
+    return np.array(out)
+
+
+def subtitle_edges(iv) -> np.ndarray:
+    """Starts of subtitles after a pause in the subtitles — there the speech should start too."""
+    out, prev_end = [], -10**9
+    for a, b in iv:
+        if a - prev_end >= MIN_GAP_S:
+            out.append(a)
+        prev_end = max(prev_end, b)
+    return np.array(out)
+
+
+def _hits(onsets: np.ndarray, starts: np.ndarray, shift: float) -> int:
+    if not len(onsets) or not len(starts):
+        return 0
+    pos = np.searchsorted(onsets, starts + shift)
+    near = np.minimum(np.abs(onsets[np.clip(pos, 0, len(onsets) - 1)] - (starts + shift)),
+                      np.abs(onsets[np.clip(pos - 1, 0, len(onsets) - 1)] - (starts + shift)))
+    return int((near <= ONSET_TOLERANCE_S).sum())
+
+
+def _onset_shift(onsets: np.ndarray, starts: np.ndarray) -> tuple[float, int]:
+    """(shift, how many subtitle starts then meet a speech start) — the most common start-to-onset gap."""
+    if not len(onsets) or not len(starts):
+        return 0.0, 0
+    diffs = []
+    for st in starts:
+        lo, hi = np.searchsorted(onsets, [st - MAX_SHIFT_S, st + MAX_SHIFT_S])
+        diffs.append(onsets[lo:hi] - st)
+    d = np.concatenate(diffs) if diffs else np.array([])
+    if not len(d):
+        return 0.0, 0
+    bins = np.arange(-MAX_SHIFT_S, MAX_SHIFT_S + 0.05, 0.05)
+    hist, edges = np.histogram(d, bins=bins)
+    k = int(np.argmax(np.convolve(hist, np.ones(5), mode="same")))      # ±0.1 s around the peak
+    near = d[np.abs(d - (edges[k] + 0.025)) <= ONSET_TOLERANCE_S]
+    shift = float(np.median(near)) if len(near) else float(edges[k])
+    return round(shift, 2), _hits(onsets, starts, shift)
+
+
 def fit(video: str, srt: str, audio_tracks: int = 1) -> dict:
-    """The best timing of the subtitles on this video, and how sure it is."""
+    """The best timing of the subtitles on this video, and how sure it is.
+
+    Two measures: the overlap of subtitles with speech (full subtitles — lots of them) and the starts of
+    subtitles after a pause meeting starts of speech after quiet (forced subtitles — few, but their
+    starts are sharp edges). The overlap decides when it is clear; else the edges, when enough meet."""
     iv = intervals(srt)
     if len(iv) < 10:
         return {"ok": False, "reason": "málo titulků na porovnání"}
-    best = None
-    for t, sp in enumerate(speech_tracks(video, audio_tracks)):
+    best = edge = None
+    tracks = speech_tracks(video, audio_tracks)
+    if not tracks:
+        return {"ok": False, "reason": "film nemá zvuk"}
+    for t, sp in enumerate(tracks):
         as_is = _fit_at(sp, iv, 1.0, 0.0)
+        onsets = speech_onsets(sp)
         for name, scale in SCALES.items():
             shift, score = _best_shift(sp, iv, scale)
             if best is None or score > best["score"]:
                 best = {"track": t, "scale": scale, "scale_name": name, "shift": shift, "score": score, "as_is": as_is,
                         "sp": sp}
-    if best is None:
-        return {"ok": False, "reason": "film nemá zvuk"}
+            starts = subtitle_edges(iv) * scale
+            eshift, hits = _onset_shift(onsets, starts)
+            if edge is None or hits > edge["hits"]:
+                edge = {"track": t, "scale": scale, "scale_name": name, "shift": eshift, "hits": hits,
+                        "hits_as_is": _hits(onsets, subtitle_edges(iv), 0.0), "edges": len(starts), "onsets": onsets}
     sp = best.pop("sp")
+    onsets = edge.pop("onsets")
+    gain = best["score"] - best["as_is"]
+    clear_edges = edge["hits"] >= max(5, 0.35 * edge["edges"]) and edge["hits"] >= 1.5 * edge["hits_as_is"] + 2
+    result = {**best, "method": "překryv s řečí", "edge_hits": f'{edge["hits"]}/{edge["edges"]}'}
+    if gain < MIN_GAIN and clear_edges:
+        result.update({k: edge[k] for k in ("track", "scale", "scale_name", "shift")}, method="začátky vět")
     # the thirds alone, already rescaled: a different cut / drift shows as different shifts
     third = len(iv) // 3
     parts = []
     for part in (iv[:third], iv[third:2 * third], iv[2 * third:]):
-        shift, _ = _best_shift(sp, part, best["scale"])
+        if result["method"] == "začátky vět":
+            shift, _ = _onset_shift(onsets, subtitle_edges(part) * result["scale"])
+        else:
+            shift, _ = _best_shift(sp, part, result["scale"])
         parts.append(round(shift, 2))
-    best["parts"] = parts
-    best["cut_warning"] = max(parts) - min(parts) > 1.0
-    gain = best["score"] - best["as_is"]
-    changed = abs(best["shift"]) >= 0.1 or best["scale"] != 1.0
-    best["ok"] = gain >= MIN_GAIN or not changed
-    best["changed"] = changed and best["ok"]
-    if not best["ok"]:
-        best["reason"] = "zvuk nedává jednoznačný výsledek — titulky nechány, jak jsou"
-    return best
+    result["parts"] = parts
+    result["cut_warning"] = max(parts) - min(parts) > 1.0
+    changed = abs(result["shift"]) >= 0.1 or result["scale"] != 1.0
+    result["ok"] = gain >= MIN_GAIN or clear_edges or not changed
+    result["changed"] = changed and result["ok"]
+    if not result["ok"]:
+        result["reason"] = "zvuk nedává jednoznačný výsledek — titulky nechány, jak jsou"
+    return result
 
 
 def apply(srt: str, scale: float, shift: float) -> str:

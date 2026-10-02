@@ -65,3 +65,28 @@ def test_sync_finds_the_shift_and_the_frame_rate(monkeypatch):
 def _ts(t: float) -> str:
     ms = int(round(t * 1000))
     return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
+
+
+def test_sync_of_forced_subtitles_by_their_starts(monkeypatch):
+    import numpy as np
+    from app.modules.subtitles import sync
+
+    rng = np.random.default_rng(7)
+    sp = np.zeros(int(3600 / sync.HOP), np.float32)
+    # a film full of (unsubtitled) speech …
+    t = 2.0
+    while t < 3590:
+        d = rng.uniform(0.8, 4.0)
+        sp[int(t / sync.HOP):int((t + d) / sync.HOP)] = 1
+        t += d + rng.uniform(0.3, 3.0)
+    # … and 40 foreign lines after a quiet moment; the forced subtitles come 0.8 s too early
+    cues = []
+    for start in np.sort(rng.uniform(60, 3500, 40)):
+        sp[int((start - 1.0) / sync.HOP):int(start / sync.HOP)] = 0
+        sp[int(start / sync.HOP):int((start + 2.0) / sync.HOP)] = 1
+        cues.append((start - 0.8, start + 1.2))
+    srt = "\n\n".join(f"{i}\n{_ts(a)} --> {_ts(b)}\nx" for i, (a, b) in enumerate(cues, 1))
+    monkeypatch.setattr(sync, "speech_tracks", lambda video, n: [sp])
+    r = sync.fit("v.mkv", srt)
+    assert r["ok"] and r["changed"] and r["scale"] == 1.0
+    assert abs(r["shift"] - 0.8) < 0.06, r
