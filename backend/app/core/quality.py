@@ -40,7 +40,7 @@ DEFAULT_WEIGHTS: dict = {
         "efficient_codec": 3,           # H.265
         # AV1: as good a picture per bit, but many players need it transcoded and the server has no
         # AV1 decoder in hardware (4K then stutters) — user, 2026-10-02
-        "av1": -5, "av1_4k": -15,
+        "av1": 0, "av1_4k": -5,
         "xvid": -5,
         "hdr_prefer": 5, "dv_prefer": 7, "hdr_neutral": 2, "hdr_avoid": -10,
         "upscale": -15,

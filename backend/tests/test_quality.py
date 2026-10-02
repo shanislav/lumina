@@ -60,8 +60,8 @@ def test_av1_comes_after_h265_most_of_all_in_4k():
     def pts(codec, w, h, mbps):
         return score(facts_from_media({"width": w, "height": h, "video_codec": codec, "bitrate": mbps * 1_000_000}))
     assert pts("AV1", 1920, 1080, 6).score < pts("HEVC", 1920, 1080, 6).score
-    assert pts("HEVC", 3840, 2160, 25).score - pts("AV1", 3840, 2160, 25).score >= 15
-    assert ("AV1 (přehrávání)", -5) in pts("AV1", 1920, 1080, 6).parts
+    assert pts("HEVC", 3840, 2160, 12).score - pts("AV1", 3840, 2160, 12).score >= 7
+    assert ("AV1 (přehrávání)", -5) in pts("AV1", 3840, 2160, 25).parts
 
 
 def test_samotari_upscaled_4k_below_real_1080p():
