@@ -120,8 +120,15 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
             episodes = list(file_eps)                               # a file of more episodes ("S07E21E22")
     else:
         season, episodes = file_season, list(file_eps)
-    if row["status"] == "tmdb_other" and file_title:
-        title = file_title          # the name in the file is TMDB's other episode — Plex's name is not this one's
+    # Plex's name is another episode's: the file is named as TMDB's other one, names another part
+    # ("Part I" / Plex "Part II"), or TMDB does not know the episode and the two names have nothing in common
+    parts = (tv_inventory._part(file_title), tv_inventory._part(plex_title))
+    other = file_title and plex_title and (
+        row["status"] == "tmdb_other"
+        or (None not in parts and parts[0] != parts[1])
+        or (row["status"] == "not_in_tmdb" and not tv_inventory.same_episode(file_title, plex_title, strict=True)))
+    if row["status"] == "tmdb_other" and file_title or other:
+        title = file_title
     elif plex_title or file_title:
         title = plex_title or file_title
     elif (season, episodes[0]) == (scan[0], scan[1][0] if scan[1] else None) and row["status"] == "ok":
