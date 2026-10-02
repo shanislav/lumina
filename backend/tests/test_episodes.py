@@ -10,6 +10,8 @@ from app.core.episode_match import judge_episode, parse_episode
     ("Shōgun S01E05 (EN)[WEB-DL][1080p]", 1, [5], [], False),
     ("Show S01E01-E03 720p.mkv", 1, [1, 2, 3], [], False),
     ("Show S01E01 - E03.mkv", 1, [1, 2, 3], [], False),
+    ("Sexuální výchova S02E03-08 2020 CZ dab 1080p - Epizoda 3.mkv", 2, [3], [], False),   # 3 of 8
+    ("Sex Education - S01/S02/S03 (CZ,EN)[WebRip][1080p]", None, [], [1, 2, 3], False),
     ("Show.S02E01E02.mkv", 2, [1, 2], [], False),
     ("Show S01E03 720p x264.mkv", 1, [3], [], False),             # 720 is not an episode
     ("Black Books S1E03 - Grapes Of Wrath.avi", 1, [3], [], False),

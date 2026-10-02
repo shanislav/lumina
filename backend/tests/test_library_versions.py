@@ -134,6 +134,49 @@ async def test_episode_goes_to_show_and_season(setup, tmp_path):
     assert target.exists() and not ep.exists()
 
 
+async def test_episodes_go_where_the_show_already_is(setup, tmp_path, monkeypatch):
+    """The user's own folders ("Black Books/Black Books EN/Black Books Season 1") are kept; a season pack
+    brings every episode; a file without SxxEyy takes the picked episode; replace deletes the old file."""
+    async def no_tmdb(db, tmdb_id, title, year):
+        await db.execute("INSERT OR IGNORE INTO library_shows (tmdb_id, title) VALUES (?, ?)", (tmdb_id, title))
+    monkeypatch.setattr(imports, "_ensure_show", no_tmdb)
+    shows = tmp_path / "Serials"
+    s1 = shows / "Black Books" / "Black Books EN" / "Black Books Season 1"
+    s1.mkdir(parents=True)
+    old = s1 / "Black Books S1E01 - Cooking The Books.avi"
+    old.write_bytes(b"old")
+    (s1 / "Black Books S1E01 - Cooking The Books.cs.srt").write_text("sub")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('tv_library_dir', ?)", (str(shows),))
+        conn.execute("INSERT INTO library_episodes (show_tmdb_id, season, episode, file_path, has_file) VALUES (2061, 1, 1, ?, 1)",
+                     (str(old),))
+    dl = tmp_path / "Downloads"
+    pack = [dl / "Black.Books.S01E01.CZ.mkv", dl / "Black.Books.S01E02.CZ.mkv", dl / "Black.Books.S02E01.CZ.mkv"]
+    for f in pack:
+        f.write_bytes(b"e")
+    payload = await events.emit("download.completed", {
+        "download_id": "t", "tmdb_id": 2061, "title": "Black Books", "year": "2000", "content_type": "tv",
+        "path": str(pack[0]), "extra_paths": [str(p) for p in pack[1:]],
+        "library_action": {"mode": "episode", "season": 1, "episode": 1, "replace": True}})
+    assert payload["imported"] and payload["path"] == str(s1 / "Black.Books.S01E01.CZ.mkv")
+    assert (s1 / "Black.Books.S01E02.CZ.mkv").exists()
+    assert (shows / "Black Books" / "Season 02" / "Black.Books.S02E01.CZ.mkv").exists()     # a new season
+    assert not old.exists() and not (s1 / "Black Books S1E01 - Cooking The Books.cs.srt").exists()
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("SELECT season, episode, filename FROM library_episodes WHERE show_tmdb_id = 2061 "
+                            "ORDER BY season, episode").fetchall()
+    assert rows == [(1, 1, "Black.Books.S01E01.CZ.mkv"), (1, 2, "Black.Books.S01E02.CZ.mkv"), (2, 1, "Black.Books.S02E01.CZ.mkv")]
+    # no SxxEyy in the name: the episode the user picked
+    odd = dl / "Fotr na tripu - 03.mkv"
+    odd.write_bytes(b"e")
+    await events.emit("download.completed", {
+        "download_id": "u", "tmdb_id": 99, "title": "Fotr na tripu", "year": "2019", "content_type": "tv",
+        "path": str(odd), "library_action": {"mode": "episode", "season": 1, "episode": 3}})
+    assert (shows / "Fotr na tripu (2019)" / "Season 01" / "Fotr na tripu - 03.mkv").exists()
+    with sqlite3.connect(DB_PATH) as conn:
+        assert conn.execute("SELECT season, episode FROM library_episodes WHERE show_tmdb_id = 99").fetchall() == [(1, 3)]
+
+
 async def test_episode_without_tv_library_stays(setup, tmp_path):
     ep = tmp_path / "Downloads" / "Dark.S02E03.1080p.mkv"
     ep.write_bytes(b"e")

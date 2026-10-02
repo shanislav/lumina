@@ -15,8 +15,9 @@ A film TMDB does not know (searched straight in the files, e.g. the fan parody "
 the same naming rules with the title/year the user searched for (year from the file name
 when missing); status "manual" without a tmdb_id — organize, NFO and upgrades skip it.
 
-TV episodes (needs ``tv_library_dir``): ``{show} ({year})/Season NN/`` with the original file
-name (Plex reads SxxEyy from it); without SxxEyy straight into the show folder.
+TV episodes (needs ``tv_library_dir``): into the show's existing folder (else ``{show} ({year})``),
+each season into its existing folder (else ``Season NN``), with the original file name (Plex reads
+SxxEyy from it); a season pack from a torrent brings all its episodes. See ``import_episode``.
 
 Without the library folder set, the download stays where it is.
 """
@@ -243,7 +244,52 @@ async def _wikidata_extras(title: str, year: int | None) -> tuple[str | None, st
     return (match["poster_url"], match["overview"]) if match else (None, "")
 
 
+def _show_folders(root: str, rows: list) -> tuple[str | None, dict[int, str]]:
+    """The show's folder in the library and the folder of each season, from the episodes it has —
+    new episodes go where the user keeps the others ("Black Books/Black Books EN/Black Books Season 1")."""
+    show_root, seasons = None, {}
+    for row in rows:
+        path = row["file_path"] or ""
+        try:
+            rel = os.path.relpath(path, root) if path else ""
+        except ValueError:                  # another drive (Windows)
+            continue
+        if not rel or rel.startswith("..") or os.sep not in rel:
+            continue
+        show_root = show_root or os.path.join(root, rel.split(os.sep)[0])
+        seasons.setdefault(row["season"], os.path.dirname(path))
+    return show_root, seasons
+
+
+async def _ensure_show(db, tmdb_id: int, title: str, year: str) -> None:
+    """The show's row in the library (the library page lists shows from it)."""
+    if await (await db.execute("SELECT 1 FROM library_shows WHERE tmdb_id = ?", (tmdb_id,))).fetchone():
+        return
+    values = {"tmdb_id": tmdb_id, "title": title, "original_title": title, "year": year, "poster_url": None,
+              "overview": "", "total_seasons": 0, "total_episodes": 0}
+    cfg = await get_effective_settings()
+    client = TMDBClient(cfg["tmdb_api_key"])
+    try:
+        d = await client.get_tv_details(tmdb_id)
+        values.update(title=d["title"] or title, original_title=d["original_title"] or title,
+                      year=(d.get("first_air_date") or "")[:4] or year, poster_url=d["poster_url"],
+                      overview=d["overview"], total_seasons=d["total_seasons"], total_episodes=d["total_episodes"])
+    except Exception as e:
+        logger.info("TMDB details of show %s failed: %s", tmdb_id, e)
+    finally:
+        await client.close()
+    await db.execute(f"INSERT OR IGNORE INTO library_shows ({', '.join(values)}) VALUES ({', '.join('?' * len(values))})",
+                     tuple(values.values()))
+
+
 async def import_episode(payload: dict) -> None:
+    """Episodes into the show's folder (the one it has in the library, else "{show} ({year})"), each
+    season into its folder (the existing one, else "Season NN"), names kept (Plex reads SxxEyy).
+    A season pack brings all its episodes (``extra_paths``). The library learns about them at once.
+    ``library_action`` {"mode": "episode", "season", "episode", "replace"}: the episode the user picked
+    (for files without SxxEyy in the name); replace = the owned file of that episode goes."""
+    from app.core.episode_match import parse_episode
+
     cfg = await get_effective_settings()
     root = cfg.get("tv_library_dir") or ""
     src = payload["path"]
@@ -254,18 +300,66 @@ async def import_episode(payload: dict) -> None:
     if not title:
         logger.warning("Import of %s skipped: no show title", src)
         return
+    action = payload.get("library_action") or {}
+    tmdb_id = payload.get("tmdb_id")
     year = str(payload.get("year") or "")[:4]
-    show = naming.sanitize(f"{title} ({year})" if year else title)
-    folder = os.path.join(root, show)
-    m = _SEASON.search(os.path.basename(src))
-    if m:
-        folder = os.path.join(folder, f"Season {int(m.group(1) or m.group(2)):02d}")
-    _ensure_dir(folder)
-    target = _unique_path(os.path.join(folder, os.path.basename(src)))
-    _move_with_subtitles(src, target)
-    payload["path"] = target
-    payload["imported"] = True
-    logger.info("Imported episode %s", target)
+    db = await get_db()
+    try:
+        rows = []
+        if tmdb_id:
+            rows = await (await db.execute(
+                "SELECT season, episode, file_path FROM library_episodes WHERE show_tmdb_id = ? AND has_file = 1 "
+                "ORDER BY season, episode", (tmdb_id,))).fetchall()
+        show_root, season_dirs = _show_folders(root, rows)
+        show_root = show_root or os.path.join(root, naming.sanitize(f"{title} ({year})" if year else title))
+        owned = {(r["season"], r["episode"]): r["file_path"] for r in rows}
+        targets = []
+        for path in [src, *(payload.get("extra_paths") or [])]:
+            info = parse_episode(os.path.basename(path))
+            season = info.season
+            episodes = list(info.episodes)
+            if path == src and action.get("season"):
+                season = season or int(action["season"])
+                episodes = episodes or ([int(action["episode"])] if action.get("episode") else [])
+            if season is None:
+                m = _SEASON.search(os.path.basename(path))
+                season = int(m.group(1) or m.group(2)) if m else None
+            folder = season_dirs.get(season) or (os.path.join(show_root, f"Season {season:02d}") if season else show_root)
+            _ensure_dir(folder)
+            target = _unique_path(os.path.join(folder, os.path.basename(path)))
+            _move_with_subtitles(path, target)
+            targets.append(target)
+            if not (tmdb_id and season and episodes):
+                logger.info("Imported %s (episode unknown — not in the library list)", target)
+                continue
+            if action.get("replace"):
+                for ep in episodes:
+                    old = owned.get((season, ep))
+                    if old and old != target and os.path.exists(old):
+                        deleted = _delete_version(old, target)
+                        logger.info("Replaced S%02dE%02d: deleted %s", season, ep, deleted)
+            media = await probe_async(target)
+            stat = os.stat(target)
+            values = (os.path.basename(target), target, stat.st_size, naming.resolution_label(media) or "",
+                      ",".join(sorted({a["lang"].upper() for a in media.get("audio", []) if a.get("lang")})))
+            for ep in episodes:
+                await db.execute(
+                    "INSERT INTO library_episodes (show_tmdb_id, season, episode, filename, file_path, file_size, quality, "
+                    "language, has_file) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) "
+                    "ON CONFLICT(show_tmdb_id, season, episode) DO UPDATE SET filename = excluded.filename, "
+                    "file_path = excluded.file_path, file_size = excluded.file_size, quality = excluded.quality, "
+                    "language = excluded.language, has_file = 1",
+                    (tmdb_id, season, ep, *values))
+            logger.info("Imported episode S%02d%s → %s", season, "".join(f"E{e:02d}" for e in episodes), target)
+        if tmdb_id and targets:
+            await _ensure_show(db, tmdb_id, title, year)
+        await db.commit()
+    finally:
+        await db.close()
+    if targets:
+        payload["path"] = targets[0]
+        payload["imported"] = True
+        await events.emit("library.files_added", {"folders": sorted({os.path.dirname(t) for t in targets})})
 
 
 async def import_movie(payload: dict) -> None:

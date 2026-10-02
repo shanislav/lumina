@@ -18,6 +18,7 @@ from app.core.film_match import STOPWORDS, Verdict, tokens
 _SE = re.compile(r"(?<![a-z0-9])s(\d{1,2}) ?e(\d{1,3})((?: ?- ?e?\d{1,3}|e\d{1,3})*)(?![0-9])")
 _SE_MORE = re.compile(r"\d{1,3}")
 _X = re.compile(r"(?<![a-z0-9])(\d{1,2})x(\d{2,3})(?:-(\d{2,3}))?(?![0-9])")
+_SEASON_LIST = re.compile(r"(?<![a-z0-9])s\d{1,2}(?:(?: ?[/,+&] ?| )s\d{1,2}(?![0-9e]))+")
 _SEASON_RANGE = re.compile(r"(?<![a-z0-9])s(\d{1,2}) ?- ?s?(\d{1,2})(?![0-9e])")
 _SEASON = re.compile(
     r"(?<![a-z0-9])(?:s(\d{1,2})(?![0-9e])"                         # S01 (not S01E…)
@@ -39,6 +40,7 @@ class EpisodeInfo:
     seasons: list[int] = field(default_factory=list)    # a pack of several seasons
     complete: bool = False                               # "complete" / "kompletní"
     prefix: str = ""                                     # the name before the episode mark (the show)
+    of_total: int = 0                                    # "S02E03-08": episode 3 of 8
 
     @property
     def is_pack(self) -> bool:
@@ -57,8 +59,13 @@ def parse_episode(name: str) -> EpisodeInfo:
     m = _SE.search(text)
     if m:
         first = int(m.group(2))
-        more = [int(x) for x in _SE_MORE.findall(m.group(3) or "")]
+        tail = m.group(3) or ""
+        more = [int(x) for x in _SE_MORE.findall(tail)]
         episodes = [first]
+        if re.fullmatch(r" ?- ?\d{1,3}", tail) and more[0] >= first:
+            # "S02E03-08 … Epizoda 3": Czech uploaders' "episode 3 of 8", not a range (a range has E: E03-E05)
+            return EpisodeInfo(int(m.group(1)), [first], prefix=text[:m.start()], complete=complete,
+                               of_total=more[0])
         if more:
             last = more[-1]
             # S01E02-E04 / S01E02-04 is a range; S01E02E03 lists them
@@ -70,6 +77,10 @@ def parse_episode(name: str) -> EpisodeInfo:
         last = int(m.group(3)) if m.group(3) else first
         episodes = list(range(first, last + 1)) if first <= last < first + 30 else [first]
         return EpisodeInfo(int(m.group(1)), episodes, prefix=text[:m.start()], complete=complete)
+    m = _SEASON_LIST.search(text)
+    if m:                                               # "S01/S02/S03", "S01 S02"
+        seasons = sorted({int(x) for x in re.findall(r"s(\d{1,2})", m.group(0))})
+        return EpisodeInfo(seasons=seasons, prefix=text[:m.start()], complete=complete)
     m = _SEASON_RANGE.search(text)
     if m and int(m.group(1)) < int(m.group(2)):
         return EpisodeInfo(seasons=list(range(int(m.group(1)), int(m.group(2)) + 1)), prefix=text[:m.start()],

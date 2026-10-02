@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 async def on_download_completed(payload: dict) -> None:
+    if (payload.get("content_type") or "movie") != "movie":
+        return              # episodes keep their names (S01E03); the film template would drop it
     automation = await get_automation("renamer")
     if not automation or not automation["enabled"]:
         return

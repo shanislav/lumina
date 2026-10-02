@@ -70,6 +70,7 @@ async def _monitor_loop():
 
                     try:
                         completed_path = None
+                        extra_paths: list[str] = []      # a torrent of several episodes: the others
                         if backend == "aria2":
                             aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
                             try:
@@ -120,12 +121,20 @@ async def _monitor_loop():
                                         if os.path.exists(candidate):
                                             if os.path.isdir(candidate):
                                                 # Find largest video file in folder
+                                                videos = []
                                                 for root_d, _, fnames in os.walk(candidate):
+                                                    if SEEDING_DIR in root_d:
+                                                        continue
                                                     for fn in fnames:
                                                         if os.path.splitext(fn)[1].lower() in ('.mkv', '.mp4', '.avi', '.ts', '.m4v'):
                                                             fp = os.path.join(root_d, fn)
+                                                            if "sample" not in fn.lower():
+                                                                videos.append(fp)
                                                             if not completed_path or os.path.getsize(fp) > os.path.getsize(completed_path):
                                                                 completed_path = fp
+                                                if content_type == "tv":
+                                                    # a season pack: every episode goes to the library
+                                                    extra_paths = [_seeding_copy(fp, did) for fp in videos if fp != completed_path]
                                             else:
                                                 completed_path = candidate
                                     if completed_path:
@@ -148,6 +157,7 @@ async def _monitor_loop():
                                 "year": year,
                                 "content_type": content_type,
                                 "path": completed_path,
+                                "extra_paths": extra_paths,
                                 "library_action": intent,
                             })
                             cur.execute("UPDATE download_tracker SET processed = 1, status = 'complete', finished_at = ?, file_name = ?, size = ? "
