@@ -35,3 +35,33 @@ def test_movie_hash(tmp_path):
     small = tmp_path / "s.bin"
     small.write_bytes(b"1")
     assert movie_hash(str(small)) == ""
+
+
+def test_sync_finds_the_shift_and_the_frame_rate(monkeypatch):
+    import numpy as np
+    from app.modules.subtitles import sync
+
+    rng = np.random.default_rng(1)
+    # 40 min of "speech": random phrases; the subtitles were timed for 23.976 fps, the video runs at 24 fps
+    # and starts 1.9 s earlier
+    cues, t = [], 5.0
+    while t < 2400:
+        d = rng.uniform(1.0, 4.0)
+        cues.append((t, t + d))
+        t += d + rng.uniform(0.5, 6.0)
+    scale, shift = 23.976 / 24, -1.9
+    sp = np.zeros(int(2410 / sync.HOP), np.float32)
+    for a, b in cues:
+        sp[int((a * scale + shift) / sync.HOP):int((b * scale + shift) / sync.HOP)] = 1
+    srt = "\n\n".join(f"{i}\n{_ts(a)} --> {_ts(b)}\nx" for i, (a, b) in enumerate(cues, 1))
+    monkeypatch.setattr(sync, "speech_tracks", lambda video, n: [sp])
+    r = sync.fit("v.mkv", srt)
+    assert r["ok"] and r["changed"] and r["scale_name"] == "23,976 → 24 fps"
+    assert abs(r["shift"] - shift) < 0.05 and not r["cut_warning"]
+    fixed = sync.intervals(sync.apply(srt, r["scale"], r["shift"]))
+    assert abs(fixed[100][0] - (cues[100][0] * scale + shift)) < 0.06
+
+
+def _ts(t: float) -> str:
+    ms = int(round(t * 1000))
+    return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"

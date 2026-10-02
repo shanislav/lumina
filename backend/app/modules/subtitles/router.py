@@ -12,7 +12,7 @@ from app.core import events
 from app.core.auth import require
 from app.core.quality import prefs_from_settings
 from app.db import get_all_settings, get_db
-from app.modules.subtitles import files
+from app.modules.subtitles import files, jobs
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,13 @@ async def subtitle_status(movie_id: int) -> dict:
     spoken = await _spoken_languages(m["tmdb_id"])
     local = list(prefs_from_settings(await get_effective_settings()).local_langs)
     has_forced = any(t["forced"] for t in embedded) or any(f["forced"] for f in external)
+    folder = os.path.dirname(m["file_path"])
+    synced = await jobs.results([os.path.join(folder, f["file"]) for f in external])
+    running = jobs.status()
+    for f in external:
+        path = os.path.join(folder, f["file"])
+        f["sync"] = synced.get(path)
+        f["syncing"] = path == running["current"] or path in running["queued"]
     return {"embedded": embedded, "external": external, "spoken_languages": spoken,
             "needs_forced": len(spoken) > 1, "has_forced": has_forced, "local_langs": local,
             "configured": bool((await get_all_settings()).get("opensubtitles_api_key"))}
@@ -136,9 +143,25 @@ async def subtitle_download(movie_id: int, body: SubtitleDownload) -> dict:
     with open(target, "w", encoding="utf-8", newline="\r\n") as f:
         f.write(text.replace("\r\n", "\n"))
     logger.info("Subtitles %s saved (%s)", target, note or "as they were")
+    jobs.enqueue(m["file_path"], target, m["title"])        # then fitted to the film's sound
     await events.emit("library.files_added", {"folders": [os.path.dirname(target)]})
     return {"file": os.path.basename(target), "note": note, "remaining": limit.get("remaining"),
             "reset_time": limit.get("reset_time")}
+
+
+class SyncBody(BaseModel):
+    file: str                 # a subtitle file next to the video (name only)
+
+
+@router.post("/movie/{movie_id}/sync", dependencies=[Depends(require("subtitles"))])
+async def subtitle_sync(movie_id: int, body: SyncBody) -> dict:
+    """Fit a subtitle file next to the video to the film's sound (shift, frame rate) — in the background."""
+    m = await _movie(movie_id)
+    name = os.path.basename(body.file)
+    if name not in {f["file"] for f in files.external(m["file_path"])} or not name.lower().endswith(".srt"):
+        raise HTTPException(400, "Jen titulky .srt vedle filmu")
+    jobs.enqueue(m["file_path"], os.path.join(os.path.dirname(m["file_path"]), name), m["title"])
+    return {"queued": True}
 
 
 @router.post("/test", dependencies=[Depends(require("settings"))])

@@ -4,7 +4,8 @@ next to the video ("<video>.cs.forced.srt") — Plex reads them from there.
 Settings: opensubtitles_api_key (search), opensubtitles_username / _password (downloads).
 """
 
-from app.core.module import Module, Permission
+from app.core.module import Module, Permission, TaskSource
+from app.modules.subtitles import jobs
 from app.modules.subtitles.router import router
 
 module = Module(
@@ -12,5 +13,7 @@ module = Module(
     title="Titulky",
     order=42,
     routers=[router],
+    migrations=[jobs.SUBTITLE_SYNC],
+    tasks=[TaskSource(jobs.read_tasks, "library.view")],
     permissions=[Permission("subtitles", "Hledat a stahovat titulky (zapisuje do knihovny)")],
 )
