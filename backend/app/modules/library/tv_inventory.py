@@ -48,6 +48,33 @@ CREATE TABLE IF NOT EXISTS tv_folder_overrides (
 );
 """
 
+# The user's (or an AI's, reviewed) word on which episode a file is — when the name can not tell it (another
+# language than TMDB's names, an order of its own). Goes with the file when it is renamed.
+TV_MANUAL = """
+CREATE TABLE IF NOT EXISTS tv_episode_overrides (
+    file_path TEXT PRIMARY KEY,
+    season INTEGER NOT NULL,
+    episode INTEGER NOT NULL,
+    note TEXT DEFAULT '',
+    updated_at TEXT
+);
+"""
+
+
+async def episode_overrides(db) -> dict[str, tuple[int, int, str]]:
+    rows = await (await db.execute("SELECT file_path, season, episode, note FROM tv_episode_overrides")).fetchall()
+    return {r[0]: (r[1], r[2], r[3] or "") for r in rows}
+
+
+async def set_episode_override(db, path: str, season: int | None, episode: int | None, note: str = "") -> None:
+    if season is None or episode is None:
+        await db.execute("DELETE FROM tv_episode_overrides WHERE file_path = ?", (path,))
+    else:
+        await db.execute("INSERT OR REPLACE INTO tv_episode_overrides (file_path, season, episode, note, updated_at) "
+                         "VALUES (?, ?, ?, ?, ?)", (path, season, episode, note, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    await db.commit()
+
+
 # For the TV renamer: technical facts of every episode file (MediaInfo is slow — kept until the file
 # changes), how a show is to be numbered, TMDB's details of the shows
 TV_RENAME = """

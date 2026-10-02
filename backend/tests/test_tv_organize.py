@@ -322,3 +322,35 @@ def test_a_staying_episode_with_another_translation_fills_the_free_number(tmp_pa
     assert moves == {"S01E52": "S01E54", "S01E53": "S01E55", "S01E54": "S01E56", "S01E55": "S01E57",
                      "S01E56": "S01E52", "S01E57": "S01E53"}
     assert not plan["unsure"]
+
+
+def test_numbering_by_names_into_the_specials(tmp_path):
+    """Bluey S03E49 is "Cedule" — TMDB's special S00E27; the real "Překvápko" (S03E50) takes E49."""
+    root = str(tmp_path)
+    a = touch(root, "Blue/Season 03/Blue - S03E49 - Překvápko.mkv")
+    b = touch(root, "Blue/Season 03/Blue - S03E50 - Překvápko.mkv")
+    rows = [row(a, "Blue", 3, [49], status="tmdb_other", file=[3, [49]], plex=[3, 49, "Překvápko"], title="Cedule",
+                tmdb_episode=27, tmdb_season=0, tmdb_sure=True),
+            row(b, "Blue", 3, [50], status="not_in_tmdb", file=[3, [50]], plex=[3, 50, "Episode 50"], title="Překvápko",
+                tmdb_episode=49, tmdb_season=3, tmdb_sure=True)]
+    titles = {(0, 27): "Cedule", (3, 49): "Překvápko"}
+    plan = organize_tv.plan_folder(rows, {"tmdb_id": 82728, "title": "Blue", "year": 2018}, {}, titles, root, SETTINGS, mode="tmdb")
+    got = rel(plan, root)
+    assert got["Blue/Season 03/Blue - S03E49 - Překvápko.mkv"].endswith("Specials/Blue - S00E27 - Cedule.mkv")
+    assert got["Blue/Season 03/Blue - S03E50 - Překvápko.mkv"].endswith("Season 03/Blue - S03E49 - Překvápko.mkv")
+
+
+def test_the_users_word_on_an_episode_wins(tmp_path):
+    """Znalec psí duše S02: Czech names of another order than TMDB's English ones — the user (or a reviewed AI
+    mapping) says which episode a file is; the one there gives way."""
+    root = str(tmp_path)
+    a = touch(root, "Znalec/s02/S02E11 Boj o Eppie, svérázná Lady.avi")
+    b = touch(root, "Znalec/s02/S02E13 Pes týmu Lakers.avi")
+    rows = [row(a, "Znalec", 2, [11], file=[2, [11]], plex=[2, 11, "Princess, Prada and Bearz"], title="Boj o Eppie, svérázná Lady",
+                manual=[2, 13, "Eppie, Lady and Snoopy"]),
+            row(b, "Znalec", 2, [13], file=[2, [13]], plex=[2, 13, "Eppie, Lady and Snoopy"], title="Pes týmu Lakers",
+                manual=[2, 11, ""])]
+    plan = organize_tv.plan_folder(rows, {"tmdb_id": 6326, "title": "Znalec psí duše", "year": 2004}, {}, {}, root, SETTINGS)
+    got = {os.path.basename(op["src"]): os.path.basename(op["dst"]) for op in plan["ops"]}
+    assert got["S02E11 Boj o Eppie, svérázná Lady.avi"].startswith("Znalec psí duše - S02E13 - Boj o Eppie")
+    assert got["S02E13 Pes týmu Lakers.avi"].startswith("Znalec psí duše - S02E11 - Pes týmu Lakers")

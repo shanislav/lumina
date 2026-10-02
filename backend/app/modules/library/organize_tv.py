@@ -118,10 +118,14 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
     tmdb_title = lambda s, e: _named(tmdb_titles.get((s, e), ""))  # noqa: E731
     order = (file_season or 0, file_eps[0] if file_eps else 0, _pt(row["file_path"]))
 
+    if facts.get("manual"):                                        # the user's word: any numbering
+        season, episode = facts["manual"][0], facts["manual"][1]
+        return season, [episode], tmdb_title(season, episode) or file_title or plex_title, order
+
     if mode == "tmdb":
         if facts.get("tmdb_episode") and facts.get("tmdb_sure"):
             # the file's own name is surely TMDB's episode there — TMDB's name is the file's
-            season = facts.get("tmdb_season") or row["season"]           # may be the season next to it
+            season = facts["tmdb_season"] if facts.get("tmdb_season") is not None else row["season"]  # next one, specials
             return season, [facts["tmdb_episode"]], tmdb_title(season, facts["tmdb_episode"]) or file_title, order
         # an episode keeping its number keeps its name too (never TMDB's name of that number: South Park
         # "S02E04 Ikova obřízka" is not TMDB's E04 "Milovník slepic")
@@ -231,11 +235,14 @@ def _settle(wanted: list[tuple], mode: str, tmdb_titles: dict) -> tuple[list[tup
                 and all(tv_inventory.title_score(x, y) < tv_inventory.STRONG for j, x in enumerate(names) for y in names[j + 1:])
             if two_part:
                 continue                                   # TMDB's two-part episode: both its names, each another
-            stay = [i for i in idx if (wanted[i][1], wanted[i][2]) == _own_numbers(wanted[i][0])]
+            stay = [i for i in idx if (wanted[i][1], wanted[i][2]) == _own_numbers(wanted[i][0])
+                    and not wanted[i][0]["facts"].get("manual")]
             if len(stay) == 1 and len(idx) == 2 and _gap(wanted, stay[0], s, claims, tmdb_titles):
                 moved = True
                 break
-            back |= {i for i in idx if (wanted[i][1], wanted[i][2]) != _own_numbers(wanted[i][0])}
+            # the user's word stays; the others give way
+            back |= {i for i in idx if (wanted[i][1], wanted[i][2]) != _own_numbers(wanted[i][0])
+                     and not wanted[i][0]["facts"].get("manual")}
         if moved:
             continue
         if not back:
@@ -272,7 +279,7 @@ def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_title
         wanted.append((row, season, episodes, title, order))
 
     unsure: list[dict] = []
-    if mode == "tmdb":
+    if mode == "tmdb" or any(row["facts"].get("manual") for row in rows):
         wanted, unsure = _settle(wanted, mode, tmdb_titles)
 
     # TMDB's numbering may give one episode two files: TMDB's two-part episode = the user's two episodes

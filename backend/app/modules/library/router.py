@@ -626,6 +626,30 @@ class TvOrganizeRequest(BaseModel):
     stage: Literal["all", "names"] = "all"
 
 
+class TvEpisodeOverride(BaseModel):
+    file: str                         # the file, relative to the TV library
+    season: int | None = None         # None = no fix, the scan decides again
+    episode: int | None = None
+    note: str = ""
+
+
+@router.put("/tv/episode-override", dependencies=[Depends(require("library.edit"))])
+async def tv_episode_override(body: TvEpisodeOverride) -> dict:
+    """The user says which episode a file is (its name can not tell it); the next scan and the renamer use it."""
+    from app.config import tv_library_dir
+    from app.modules.library import tv_inventory
+    root = tv_library_dir(await get_effective_settings())
+    path = os.path.normpath(os.path.join(root, body.file))
+    if not root or not path.startswith(os.path.normpath(root) + os.sep) or not os.path.isfile(path):
+        raise HTTPException(400, "Soubor v knihovně seriálů není")
+    db = await get_db()
+    try:
+        await tv_inventory.set_episode_override(db, path, body.season, body.episode, body.note)
+    finally:
+        await db.close()
+    return {"ok": True}
+
+
 class TvNaming(BaseModel):
     tmdb_id: int
     numbering: Literal["files", "tmdb"]

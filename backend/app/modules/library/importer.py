@@ -564,6 +564,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
         hints = (await events.emit("library.collect_tv_hints",
                                    {"paths": [f["file_path"] for f in tv_files], "hints": {}}))["hints"]
         overrides = await tv_inventory.overrides(db)
+        manual = await tv_inventory.episode_overrides(db)
         unknown: list[dict] = []
 
         # Group by show name — try episode NFO first for season/episode info
@@ -753,6 +754,13 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                     ep_data["absolute"] = number
                     ep_data["season"], ep_data["episode"] = absolute
 
+            # the user's word on which episode a file is goes before everything else
+            for ep_data in episodes:
+                if ep_data["file_path"] in manual:
+                    ms, me, mnote = manual[ep_data["file_path"]]
+                    ep_data["season"], ep_data["episode"], ep_data["manual"] = ms, me, mnote
+                    ep_data.pop("absolute", None)
+
             # Mark episodes we have on disk
             for ep_data in episodes:
                 marked.add((tmdb_id, ep_data["season"], ep_data["episode"]))
@@ -782,7 +790,10 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 if ep_data.get("absolute"):
                     facts["absolute"] = ep_data["absolute"]
                 status, note = "ok", ""
-                if lumina_id and plex_id and lumina_id != plex_id and not override:
+                if "manual" in ep_data:
+                    facts["manual"] = [ep_data["season"], ep_data["episode"], ep_data["manual"]]
+                    status, note = "ok", "určeno ručně" + (f": {ep_data['manual']}" if ep_data["manual"] else "")
+                elif lumina_id and plex_id and lumina_id != plex_id and not override:
                     status, note = "show", f"Plex: {plex_title} · Lumina: {lumina_title}"
                 elif hint and (hint.get("season"), hint.get("episode")) != (ep_data["season"], ep_data["episode"]) \
                         and not (hint.get("season") == ep_data["season"]

@@ -374,6 +374,7 @@ async def path_moved(db, src: str, dst: str) -> None:
     await db.execute("UPDATE library_episodes SET file_path = ?, filename = ? WHERE file_path = ?", (dst, name, src))
     await db.execute("UPDATE OR REPLACE tv_files SET file_path = ? WHERE file_path = ?", (dst, src))
     await db.execute("UPDATE OR REPLACE tv_media SET file_path = ? WHERE file_path = ?", (dst, src))
+    await db.execute("UPDATE OR REPLACE tv_episode_overrides SET file_path = ? WHERE file_path = ?", (dst, src))
 
 
 async def apply_plan(db, plan: dict, root: str, batch_id: str | None = None) -> str:
