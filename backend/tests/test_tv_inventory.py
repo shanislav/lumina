@@ -135,3 +135,9 @@ async def test_anime_absolute_numbers(tv, through):
         assert got == [(1, n) for n in range(1, 11)] + [(1, 40), (2, 104), (3, 130), (3, 135)]
     else:
         assert got == [(1, n) for n in range(1, 11)] + [(1, 40), (2, 52), (3, 26), (3, 31)]
+
+
+def test_names_of_other_parts_are_other_episodes():
+    assert not tv_inventory.same_episode("Heart of Archness Part I", "Heart of Archness - Part II", strict=True)
+    assert tv_inventory.same_episode("Heart of Archness: Part II", "Heart of Archness - Part II", strict=True)
+    assert tv_inventory.same_episode("Stockholmský syndrom", "Proměnlivá konstanta / Stockholmský syndrom", strict=True)
