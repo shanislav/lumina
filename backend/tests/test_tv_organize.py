@@ -281,3 +281,19 @@ def test_parts_named_so_stay_parts(tmp_path):
     show = {"tmdb_id": 1418, "title": "Teorie velkého třesku", "year": 2007}
     for mode in ("files", "tmdb"):
         assert not organize_tv.plan_folder(rows, show, {}, {(12, 23): "Proměnlivá konstanta / Stockholmský syndrom"}, root, SETTINGS, mode)["ops"]
+
+
+def test_numbering_by_names_never_gives_a_kept_number_another_name(tmp_path):
+    """South Park S02E04 "Ikova obřízka" (TMDB E03) stays E04 when E03 is taken — still "Ikova obřízka",
+    not TMDB's E04 "Milovník slepic"."""
+    root = str(tmp_path)
+    a = touch(root, "SP/s02/S02E03 Milovnik slepic.mkv")
+    b = touch(root, "SP/s02/S02E04 Ikova obrizka.mkv")
+    rows = [row(a, "SP", 2, [3], file=[2, [3]], plex=[2, 3, "Ikova obřízka"], title="Milovnik slepic"),
+            row(b, "SP", 2, [4], status="tmdb_other", file=[2, [4]], plex=[2, 4, "Milovník slepic"], title="Ikova obrizka",
+                tmdb_episode=3, tmdb_sure=True)]
+    titles = {(2, 3): "Ikova obřízka", (2, 4): "Milovník slepic"}
+    plan = organize_tv.plan_folder(rows, {"tmdb_id": 2190, "title": "SP", "year": 1997}, {}, titles, root, SETTINGS, mode="tmdb")
+    got = {os.path.basename(op["src"]): os.path.basename(op["dst"]) for op in plan["ops"]}
+    assert "Milovník" not in got.get("S02E04 Ikova obrizka.mkv", "Ikova")
+    assert plan["unsure"]

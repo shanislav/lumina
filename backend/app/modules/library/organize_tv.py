@@ -119,13 +119,11 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
 
     if mode == "tmdb":
         if facts.get("tmdb_episode") and facts.get("tmdb_sure"):
-            season, episodes = row["season"], [facts["tmdb_episode"]]
-        else:
-            season, episodes = scan[0], list(scan[1])
-            if len(file_eps) > 1 and file_season == season and file_eps[0] == episodes[0]:
-                episodes = list(file_eps)
-        title = tmdb_title(season, episodes[0]) or (file_title if row["status"] == "tmdb_other" else plex_title) or file_title
-        return season, episodes, title, order
+            # the file's own name is surely TMDB's episode there — TMDB's name is the file's
+            return row["season"], [facts["tmdb_episode"]], tmdb_title(row["season"], facts["tmdb_episode"]) or file_title, order
+        # an episode keeping its number keeps its name too (never TMDB's name of that number: South Park
+        # "S02E04 Ikova obřízka" is not TMDB's E04 "Milovník slepic")
+        return episode_target(row, "files", tmdb_titles)
 
     if facts.get("absolute"):
         season, episodes = scan[0], list(scan[1])                   # numbered through: TMDB's season split
