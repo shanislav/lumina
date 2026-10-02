@@ -184,10 +184,19 @@ def title_match(a: str, b: str) -> tuple[float, int]:
     pa, pb = _part(a), _part(b)
     if pa is not None and pb is not None and pa != pb:
         return 0.0, 0
+    if (pa is None) != (pb is None) and (pa or pb) != 1:
+        return 0.0, 0                     # "Velký Al 2" is no "Velký Al" (a first part may go unnamed)
     # the part is compared above — its words ("část", "druhá", "1část") are no name
     wa, wb = (ws - _PART_WORDS - {w for w in ws if _PART_WORD.fullmatch(w)} or ws for ws in (wa, wb))
     short, other = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
     common = sum(1 for w in short if _close_word(w, other))
+    # the whole name spelled a little differently ("Výjimečná Joe" / "Výjimečná Joy") — the same numbers in it
+    from difflib import SequenceMatcher
+    na, nb = normalized(a), normalized(b)
+    if re.findall(r"\d+", na) == re.findall(r"\d+", nb):
+        ratio = SequenceMatcher(None, na, nb).ratio()
+        if ratio >= 0.85 and ratio > common / len(short):
+            return ratio, len(short)
     return common / len(short), common
 
 
