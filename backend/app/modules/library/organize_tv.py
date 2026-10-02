@@ -120,6 +120,8 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
 
     if facts.get("manual"):                                        # the user's word: any numbering
         season, episode = facts["manual"][0], facts["manual"][1]
+        if not order[2] and (m := re.search(r"(?<![\d.])(\d)\s*$", os.path.splitext(os.path.basename(row["file_path"]))[0])):
+            order = (order[0], order[1], int(m.group(1)))      # "Nejhorší auto všech dob 2": its 2nd part
         # the file's own name (the user's language — TMDB may have only English ones), else TMDB's
         return season, [episode], file_title or tmdb_title(season, episode) or plex_title, order
 

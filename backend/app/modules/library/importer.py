@@ -602,6 +602,10 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 # the name says nothing, Plex knows the episode
                 entry = {**f, "show_name": hint.get("title") or "", "season": hint["season"],
                          "episode": hint["episode"], "year": None, "numbers_from": "plex"}
+            elif f["file_path"] in manual:
+                # the name says nothing, the user said which episode it is
+                ms, me, _note = manual[f["file_path"]]
+                entry = {**f, "show_name": "", "season": ms, "episode": me, "year": None, "numbers_from": "manual"}
             else:
                 unknown.append(f)
                 continue
