@@ -1470,3 +1470,62 @@ export async function checkPlexMigrationAndWait(): Promise<PlexMigration | null>
 export const checkPlexMigration = (): Promise<{ started: boolean }> => plexMigrationPost("check");
 export const finishPlexMigration = (emptyTrash: boolean, repair: boolean): Promise<{ repaired: number; emptied: boolean }> =>
   plexMigrationPost("finish", { empty_trash: emptyTrash, repair });
+
+
+// --- Subtitles (module subtitles, OpenSubtitles.com) ---
+
+export interface SubtitleStatus {
+  embedded: { lang: string; forced: boolean; title: string; codec: string }[];
+  external: { file: string; lang: string; forced: boolean }[];
+  spoken_languages: string[];
+  needs_forced: boolean;
+  has_forced: boolean;
+  local_langs: string[];
+  configured: boolean;
+}
+
+export interface SubtitleResult {
+  file_id: number;
+  file_name: string;
+  language: string;
+  release: string;
+  downloads: number;
+  forced: boolean;
+  hearing_impaired: boolean;
+  fps: number;
+  hash_match: boolean;
+  machine: boolean;
+  uploader: string;
+  uploaded: string;
+}
+
+async function errorOf(res: Response): Promise<Error> {
+  return new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+}
+
+export async function getSubtitleStatus(movieId: number): Promise<SubtitleStatus> {
+  const res = await apiFetch(`${API_BASE}/api/subtitles/movie/${movieId}`);
+  if (!res.ok) throw await errorOf(res);
+  return res.json();
+}
+
+export async function searchSubtitles(movieId: number, forced: boolean): Promise<{ results: SubtitleResult[]; video_fps: number }> {
+  const res = await apiFetch(`${API_BASE}/api/subtitles/movie/${movieId}/search?forced=${forced}`);
+  if (!res.ok) throw await errorOf(res);
+  return res.json();
+}
+
+export async function downloadSubtitle(movieId: number, body: { file_id: number; language: string; forced: boolean; fps: number; replace: boolean }):
+    Promise<{ file: string; note: string; remaining: number | null }> {
+  const res = await apiFetch(`${API_BASE}/api/subtitles/movie/${movieId}/download`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await errorOf(res);
+  return res.json();
+}
+
+export async function testOpenSubtitles(): Promise<{ api_key: boolean; account: boolean | null }> {
+  const res = await apiFetch(`${API_BASE}/api/subtitles/test`, { method: "POST" });
+  if (!res.ok) throw await errorOf(res);
+  return res.json();
+}

@@ -28,6 +28,7 @@ module = Module(
                 add_column("plex_friend_servers", "token", "TEXT"), add_column("plex_friend_movies", "audio", "TEXT")],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=90),
                    Subscription("library.files_removed", on_files_removed),
+                   Subscription("library.files_added", on_files_removed),     # the same: rescan the folder
                    Subscription("library.collect_hints", hints.on_collect_hints)],
     tasks=[TaskSource(tasks.read, "library.edit")],
     on_startup=[friends.start],

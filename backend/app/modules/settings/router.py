@@ -11,7 +11,8 @@ from app.core.auth import require
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-SENSITIVE_KEYS = {"tmdb_api_key", "groq_api_key", "aria2_rpc_secret", "qbittorrent_password"}
+SENSITIVE_KEYS = {"tmdb_api_key", "groq_api_key", "aria2_rpc_secret", "qbittorrent_password",
+                  "opensubtitles_api_key", "opensubtitles_password"}
 DEFAULTS = {
     "tmdb_api_key": "",
     "groq_api_key": "",
@@ -26,7 +27,10 @@ DEFAULTS = {
     "qbittorrent_username": "admin",
     "qbittorrent_password": "",
     "qbittorrent_path_map": "",
-    "max_concurrent_downloads": "3",  # Lumina's downloads at once (DDL + torrents), the rest queue; 0 = no limit
+    "max_concurrent_downloads": "3",
+    "opensubtitles_api_key": "",      # subtitles module: search
+    "opensubtitles_username": "",     # … and downloads (the account's daily limit)
+    "opensubtitles_password": "",  # Lumina's downloads at once (DDL + torrents), the rest queue; 0 = no limit
     "min_relevance_score": "70",
     # quality of found files (app/core/quality.py)
     "quality_prefer_local": "true",   # CZ/SK audio first in "Doporučené"

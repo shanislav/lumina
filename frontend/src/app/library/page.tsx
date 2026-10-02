@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import BulkFilmSettings from "@/components/BulkFilmSettings";
+import SubtitlesPanel from "@/components/SubtitlesPanel";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -977,6 +978,9 @@ export default function LibraryPage() {
                   </div>
                 );
               })() : null}
+              {(fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
+                <SubtitlesPanel movieId={fixingMovie.id} />
+              )}
               {canEdit && (fixingMovie.status === "matched" || fixingMovie.status === "manual") && (
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <input

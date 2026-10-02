@@ -157,6 +157,15 @@ const GENERAL_SECTIONS = [
     ],
   },
   {
+    title: "Titulky (OpenSubtitles.com)",
+    icon: "💬",
+    fields: [
+      { key: "opensubtitles_api_key", label: "API klíč", type: "password", hint: "opensubtitles.com → profil → API consumers → nová aplikace. Stačí na hledání" },
+      { key: "opensubtitles_username", label: "Uživatel", type: "text", hint: "Účet OpenSubtitles — potřeba ke stažení (denní limit účtu)" },
+      { key: "opensubtitles_password", label: "Heslo", type: "password" },
+    ],
+  },
+  {
     title: "Aria2 (přímé stahování)",
     icon: "⬇️",
     fields: [

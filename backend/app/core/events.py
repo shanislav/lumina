@@ -14,6 +14,8 @@ Known events:
                            emitted per movie file during a library scan; handlers append hints
     library.movie_updated  {movie_id, status, tmdb_id, file_path, folder, media, tmdb, versions, ...}
                            a library file changed (import, scan, rename, undo) — NFO, Plex, wanted react
+    library.files_added    {folders: [path, ...]}
+                           files came into film folders besides an import (subtitles) — Plex rescans
     library.files_removed  {folders: [path, ...]}
                            files of the library were deleted (a version, a whole movie folder) — Plex rescans
     offers.found           {kind: "wanted", wanted_id, tmdb_id, title, year, profile, matches, best}

@@ -294,6 +294,8 @@ class TMDBClient:
             "year": int(release[:4]) if len(release) >= 4 else None,
             "runtime": data.get("runtime") or 0,
             "original_language": data.get("original_language", ""),
+            # languages spoken in the film — more than one: parts may need forced subtitles
+            "spoken_languages": [l.get("iso_639_1") for l in data.get("spoken_languages") or [] if l.get("iso_639_1")],
             "imdb_id": data.get("imdb_id") or "",
             "overview": data.get("overview", ""),
             "poster_url": f"{IMG_BASE}{data['poster_path']}" if data.get("poster_path") else None,
