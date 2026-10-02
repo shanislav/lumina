@@ -122,8 +122,9 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
         season, episode = facts["manual"][0], facts["manual"][1]
         if not order[2] and (m := re.search(r"(?<![\d.])(\d)\s*$", os.path.splitext(os.path.basename(row["file_path"]))[0])):
             order = (order[0], order[1], int(m.group(1)))      # "Nejhorší auto všech dob 2": its 2nd part
-        # the file's own name (the user's language — TMDB may have only English ones), else TMDB's
-        return season, [episode], file_title or tmdb_title(season, episode) or plex_title, order
+        # TMDB's Czech name, else the file's own (the user's language — TMDB may have only English ones)
+        tmdb = tmdb_title(season, episode)
+        return season, [episode], (tmdb if tmdb and (czech(tmdb) or not file_title) else file_title) or plex_title, order
 
     if mode == "tmdb":
         if facts.get("tmdb_episode") and facts.get("tmdb_sure"):
@@ -318,10 +319,12 @@ def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_title
     candidates.sort(key=lambda c: os.path.normcase(c[0]["file_path"]) != os.path.normcase(c[1]))
     renames: dict[str, str] = {}
     used: set[str] = set()
+    ours = {os.path.normcase(r["file_path"]) for r in rows}
     for row, dst in candidates:
         base, ext = os.path.splitext(dst)
         n = 2
-        while os.path.normcase(dst) in used:
+        # taken by another file of this plan, or one already lying there (another version of the episode)
+        while os.path.normcase(dst) in used or (os.path.exists(dst) and os.path.normcase(dst) not in ours):
             dst, n = f"{base} ({n}){ext}", n + 1
         used.add(os.path.normcase(dst))
         renames[row["file_path"]] = dst
