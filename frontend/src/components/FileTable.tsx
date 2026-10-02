@@ -645,7 +645,8 @@ function AudioLangPicker({ choices, active, langs, only, onChange, onClear }: {
   const label = active && langs.length ? langs.map(langLabel).join("+") + (only ? " (jen)" : "") : "Vlastní…";
   return (
     <div ref={box} className="relative">
-      <Chip active={active && langs.length > 0} onClick={() => setOpen(!open)}>{label} ▾</Chip>
+      {/* reopening a remembered choice applies it again (after "Vše" it was kept but off) */}
+      <Chip active={active && langs.length > 0} onClick={() => { if (!open && langs.length) onChange({}); setOpen(!open); }}>{label} ▾</Chip>
       {open && (
         <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-zinc-700 bg-zinc-900 p-3 shadow-xl space-y-2">
           <p className="text-zinc-400">Zvuk musí obsahovat:</p>
@@ -665,7 +666,7 @@ function AudioLangPicker({ choices, active, langs, only, onChange, onClear }: {
           <p className="text-[10px] text-zinc-600">neověřené soubory podle názvu</p>
           <div className="flex justify-between pt-1">
             <button onClick={() => { onClear(); setOpen(false); }} className="text-zinc-500 hover:text-zinc-300">Zrušit filtr</button>
-            <button onClick={() => setOpen(false)} className="rounded bg-violet-600 px-2.5 py-0.5 text-white hover:bg-violet-500">Hotovo</button>
+            <button onClick={() => { if (langs.length) onChange({}); else onClear(); setOpen(false); }} className="rounded bg-violet-600 px-2.5 py-0.5 text-white hover:bg-violet-500">Hotovo</button>
           </div>
         </div>
       )}
