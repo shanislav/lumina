@@ -642,10 +642,30 @@ export interface QualityProfile {
   codecs: string[];
   hdr: "any" | "require" | "forbid";
   max_size_gb: number;
-  min_video_mbps: number;
-  max_video_mbps: number;
+  min_mbps: number;          // overall bitrate (picture + sound)
+  max_mbps: number;
   min_score: number;
   cutoff: number;
+}
+
+export interface ScoreRange {
+  possible: boolean;
+  reason?: string;
+  min?: number;
+  max?: number;
+  min_example?: string;
+  max_example?: string;
+  size_2h_gb: [number, number | null];
+}
+
+/** What score a file the (edited) profile lets through can get, and how big a 2-hour film is. */
+export async function getScoreRange(p: QualityProfile): Promise<ScoreRange> {
+  const { id, name, is_default, ...config } = p;
+  const res = await apiFetch(`${API_BASE}/api/settings/profiles/score-range`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, is_default, config }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
 export async function getProfiles(): Promise<QualityProfile[]> {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { QualityProfile, getProfiles, saveProfile, deleteProfile } from "@/lib/api";
+import { QualityProfile, ScoreRange, getProfiles, getScoreRange, saveProfile, deleteProfile } from "@/lib/api";
 
 /**
  * Quality profiles (backend core/profiles.py): conditions are a hard filter, the score orders
@@ -14,8 +14,8 @@ const LANGS: [string, string][] = [["cs", "CZ"], ["sk", "SK"], ["en", "EN"], ["d
 const langLabel = (code: string) => LANGS.find(([c]) => c === code)?.[1] ?? code.toUpperCase();
 const EMPTY: QualityProfile = {
   id: 0, name: "Nový profil", is_default: false, min_resolution: "", max_resolution: "",
-  audio_langs: ["cs", "sk"], audio_mode: "any", codecs: [], hdr: "any", max_size_gb: 0, min_video_mbps: 0,
-  max_video_mbps: 0, min_score: 0, cutoff: 0,
+  audio_langs: ["cs", "sk"], audio_mode: "any", codecs: [], hdr: "any", max_size_gb: 0, min_mbps: 0,
+  max_mbps: 0, min_score: 0, cutoff: 0,
 };
 
 export default function ProfilesEditor() {
@@ -27,6 +27,17 @@ export default function ProfilesEditor() {
 
   const load = () => getProfiles().then(setProfiles).catch(() => {});
   useEffect(() => { load(); }, []);
+
+  // hints while editing: the score a file can get with these conditions, the size of a 2-hour film
+  const [range, setRange] = useState<ScoreRange | null>(null);
+  const rangeKey = editing ? JSON.stringify({ ...editing, name: "", cutoff: 0, is_default: false }) : "";
+  useEffect(() => {
+    if (!editing) { setRange(null); return; }
+    let live = true;
+    const t = setTimeout(() => getScoreRange(editing).then((r) => live && setRange(r)).catch(() => {}), 300);
+    return () => { live = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeKey]);
 
   async function save() {
     if (!editing) return;
@@ -61,7 +72,7 @@ export default function ProfilesEditor() {
     p.codecs.length ? p.codecs.join("/") : "",
     p.hdr === "require" ? "jen HDR" : p.hdr === "forbid" ? "bez HDR" : "",
     p.max_size_gb ? `max ${p.max_size_gb} GB` : "",
-    p.min_video_mbps || p.max_video_mbps ? `video ${p.min_video_mbps || 0}–${p.max_video_mbps || "∞"} Mb/s` : "",
+    p.min_mbps || p.max_mbps ? `${p.min_mbps || 0}–${p.max_mbps || "∞"} Mb/s` : "",
     p.cutoff ? `cíl ${p.cutoff}` : "bez cíle",
   ].filter(Boolean).join(" · ");
 
@@ -171,14 +182,37 @@ export default function ProfilesEditor() {
               <label className="text-zinc-400">Max. velikost (GB)</label>
               <div className="flex items-center gap-2">{num("max_size_gb", 0.5)} <span className="text-xs text-zinc-600">0 = bez limitu</span></div>
 
-              <label className="text-zinc-400">Bitrate videa (Mb/s)</label>
-              <div className="flex items-center gap-2">od {num("min_video_mbps", 0.5)} do {num("max_video_mbps", 0.5)}</div>
+              <label className="text-zinc-400 self-start pt-1">Bitrate (Mb/s)</label>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">od {num("min_mbps", 0.5)} do {num("max_mbps", 0.5)}</div>
+                <p className="text-[11px] text-zinc-500">
+                  celkový (obraz + zvuk), 0 = bez limitu · 1 Mb/s ≈ 0,9 GB na 2 h
+                  {range && (range.size_2h_gb[0] > 0 || range.size_2h_gb[1] != null) && (
+                    <> · <span className="text-zinc-300">film 2 h: {range.size_2h_gb[0] > 0 ? `${range.size_2h_gb[0]} GB` : "0"}
+                      {" – "}{range.size_2h_gb[1] != null ? `${range.size_2h_gb[1]} GB` : "bez limitu"}</span></>
+                  )}
+                </p>
+              </div>
 
               <label className="text-zinc-400">Min. skóre</label>
               {num("min_score")}
 
-              <label className="text-zinc-400">Cíl (skóre)</label>
-              <div className="flex items-center gap-2">{num("cutoff")} <span className="text-xs text-zinc-600">0 = hledat pořád</span></div>
+              <label className="text-zinc-400 self-start pt-1">Cíl (skóre)</label>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">{num("cutoff")} <span className="text-xs text-zinc-600">0 = hledat pořád</span></div>
+                {range && (range.possible ? (
+                  <div className="text-[11px] text-zinc-500 space-y-0.5">
+                    <p>S těmito podmínkami má soubor skóre <span className="text-zinc-200">{range.min}–{range.max}</span> (film 2 h, současné váhy skóre).</p>
+                    <p title={range.max_example}>nejlepší: {range.max_example}</p>
+                    <p title={range.min_example}>nejhorší, co projde: {range.min_example}</p>
+                    {editing.cutoff > (range.max ?? 0) && (
+                      <p className="text-orange-300">Cíl {editing.cutoff} je nad maximem {range.max} — žádný soubor ho nesplní, hledalo by se pořád.</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-orange-300">{range.reason}</p>
+                ))}
+              </div>
 
               <label className="text-zinc-400">Výchozí</label>
               <label className="flex items-center gap-2 text-zinc-300">

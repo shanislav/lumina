@@ -161,6 +161,20 @@ def _profile_out(p) -> dict:
     return p.as_dict()
 
 
+@router.post("/profiles/score-range", dependencies=[Depends(require("profiles"))])
+async def profile_score_range(body: ProfileBody) -> dict:
+    """The score range a file this (edited, unsaved) profile lets through can get, and the size of a
+    2-hour film within its limits — for the editor's hints."""
+    from app.config import get_effective_settings
+    from app.core.profiles import CONFIG_FIELDS, Profile, score_range
+    from app.core.quality import prefs_from_settings
+    p = Profile(name=body.name)
+    for key in CONFIG_FIELDS:
+        if key in body.config:
+            setattr(p, key, body.config[key])
+    return score_range(p, prefs_from_settings(await get_effective_settings()))
+
+
 @router.get("/profiles")
 async def list_profiles() -> list[dict]:
     from app.core.profiles import load_profiles

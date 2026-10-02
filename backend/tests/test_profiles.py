@@ -10,7 +10,7 @@ from app.core.profiles import Profile, block, get_profile, load_profiles, reache
 from app.db import init_db
 
 FULLHD_H265_CZ = {"resolution": "1080p", "codec": "H.265", "hdr": "", "size": 3_000_000_000,
-                  "video_bitrate": 3_500_000, "lang_tier": 3, "audio_langs": ["cs"], "quality_score": 76}
+                  "bitrate": 3_900_000, "video_bitrate": 3_500_000, "lang_tier": 3, "audio_langs": ["cs"], "quality_score": 76}
 
 
 def test_hard_filter():
@@ -23,7 +23,7 @@ def test_hard_filter():
     assert block(FULLHD_H265_CZ, Profile(codecs=["H.265", "AV1"])) is None
     assert block({**FULLHD_H265_CZ, "codec": "H.264"}, Profile(codecs=["H.265"])) == "kodek H.264"
     assert block(FULLHD_H265_CZ, Profile(max_size_gb=2.5)) == "větší než 2.5 GB"
-    assert block(FULLHD_H265_CZ, Profile(min_video_mbps=4)) == "video 3.5 Mb/s < 4"
+    assert block(FULLHD_H265_CZ, Profile(min_mbps=4)) == "bitrate 3.9 Mb/s < 4"
     assert block(FULLHD_H265_CZ, Profile(hdr="require")) == "bez HDR"
     assert block({**FULLHD_H265_CZ, "hdr": "DV"}, Profile(hdr="forbid")) == "DV nechceš"
 

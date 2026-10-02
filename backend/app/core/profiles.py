@@ -11,7 +11,7 @@ Used for offers (evaluated rows from core/offers) and for library files (the sam
 import json
 from dataclasses import asdict, dataclass, field
 
-from app.core.quality import Prefs, facts_from_media, language_tier, score, video_bitrate
+from app.core.quality import Facts, Prefs, facts_from_media, language_tier, score, summary, video_bitrate
 
 RESOLUTIONS = ["SD", "720p", "1080p", "2160p"]
 HDR_MODES = ("any", "require", "forbid")
@@ -38,8 +38,8 @@ class Profile:
     codecs: list[str] = field(default_factory=list)   # allowed ("H.265", "AV1", "H.264" …); empty = any
     hdr: str = "any"                  # any | require | forbid
     max_size_gb: float = 0
-    min_video_mbps: float = 0         # video bitrate (audio left out), 0 = no limit
-    max_video_mbps: float = 0
+    min_mbps: float = 0               # overall bitrate (picture + sound, = size / length), 0 = no limit
+    max_mbps: float = 0
     min_score: int = 0
     cutoff: int = 0                   # owned version at/above this score (and passing) = done; 0 = never done
 
@@ -55,6 +55,9 @@ def profile_from_row(row) -> Profile:
     if config.get("require_local_audio") and not config.get("audio_langs"):
         config["audio_langs"] = ["cs", "sk"]          # profiles saved before 2026-09-30: "must have CZ/SK"
     p = Profile(id=row["id"], name=row["name"], is_default=bool(row["is_default"]))
+    for old, new in (("min_video_mbps", "min_mbps"), ("max_video_mbps", "max_mbps")):
+        if config.get(old) and not config.get(new):
+            config[new] = config[old]                 # profiles saved before 2026-10-02: video bitrate
     for key in CONFIG_FIELDS:
         if key in config:
             setattr(p, key, config[key])
@@ -115,11 +118,11 @@ def block(row: dict, p: Profile) -> str | None:
         return f"{row['hdr']} nechceš"
     if p.max_size_gb and (row.get("size") or 0) > p.max_size_gb * 1e9:
         return f"větší než {p.max_size_gb:g} GB"
-    vb = (row.get("video_bitrate") or 0) / 1e6
-    if p.min_video_mbps and vb < p.min_video_mbps:
-        return f"video {vb:.1f} Mb/s < {p.min_video_mbps:g}"
-    if p.max_video_mbps and vb > p.max_video_mbps:
-        return f"video {vb:.1f} Mb/s > {p.max_video_mbps:g}"
+    mb = (row.get("bitrate") or 0) / 1e6
+    if p.min_mbps and mb < p.min_mbps:
+        return f"bitrate {mb:.1f} Mb/s < {p.min_mbps:g}"
+    if p.max_mbps and mb > p.max_mbps:
+        return f"bitrate {mb:.1f} Mb/s > {p.max_mbps:g}"
     if p.min_score and (row.get("quality_score") or 0) < p.min_score:
         return f"skóre {row.get('quality_score') or 0} < {p.min_score}"
     return None
@@ -142,10 +145,61 @@ def row_from_media(media: dict, filename: str, size: int, prefs: Prefs) -> dict:
     facts = facts_from_media(media, filename, size)
     return {
         "resolution": facts.resolution, "codec": facts.codec, "hdr": facts.hdr, "size": size,
-        "video_bitrate": video_bitrate(facts), "lang_tier": language_tier(facts, prefs),
+        "bitrate": facts.bitrate, "video_bitrate": video_bitrate(facts), "lang_tier": language_tier(facts, prefs),
         "audio_langs": facts.audio_langs,
         "quality_score": score(facts, prefs).score,
     }
+
+
+TWO_HOURS_S = 7200
+_CODECS = ("H.265", "AV1", "H.264", "VC-1", "MPEG-2", "XviD")
+
+
+def score_range(p: Profile, prefs: Prefs) -> dict:
+    """What score a file this profile lets through can get, with the current score weights:
+    the best and the worst possible file (a 2-hour film, sound as the profile wants it).
+    Plus how big a 2-hour film is within the profile's bitrate / size limits."""
+    lo_res, hi_res = _rank(p.min_resolution) if p.min_resolution else 0, \
+        _rank(p.max_resolution) if p.max_resolution else len(RESOLUTIONS) - 1
+    resolutions = RESOLUTIONS[lo_res:hi_res + 1]
+    codecs = [c for c in _CODECS if not p.codecs or c in p.codecs]
+    hdrs = {"require": ["HDR10", "DV"], "forbid": [""]}.get(p.hdr, ["", "HDR10", "DV"])
+    langs = list(p.audio_langs) if p.audio_mode == "all" and p.audio_langs else (p.audio_langs[:1] or ["en"])
+    max_bps = min(x for x in (p.max_mbps * 1e6 if p.max_mbps else 0,
+                              p.max_size_gb * 8e9 / TWO_HOURS_S if p.max_size_gb else 0, 120e6) if x)
+    min_bps = max(p.min_mbps * 1e6, 0.5e6)
+    if min_bps > max_bps:
+        return {"possible": False, "reason": "minimální bitrate je nad limitem bitrate / velikosti"}
+    # bitrates: the limits and steps between them (the score is not linear in the bitrate)
+    steps = sorted({min_bps, max_bps, *(min_bps + (max_bps - min_bps) * i / 24 for i in range(25))})
+    sounds = [("aac", 2, ""), ("ac3", 6, ""), ("dts", 6, ""), ("truehd", 8, "lossless")]
+    best = worst = None
+    for res in resolutions:
+        for codec in codecs:
+            for hdr in hdrs:
+                for codec_a, ch, _ in sounds:
+                    for bps in steps:
+                        f = Facts(resolution=res, codec=codec, hdr=hdr, bitrate=int(bps), duration_s=TWO_HOURS_S,
+                                  size=int(bps * TWO_HOURS_S / 8), audio_langs=langs, verified=True,
+                                  audio=[{"lang": l, "codec": codec_a, "channels": ch} for l in langs])
+                        row = {"resolution": res, "codec": codec, "hdr": hdr, "size": f.size, "bitrate": f.bitrate,
+                               "audio_langs": langs}
+                        s = score(f, prefs).score
+                        row["quality_score"] = s
+                        if block(row, p):
+                            continue
+                        # the same score with less data is the more telling example
+                        if best is None or s > best[0] or (s == best[0] and f.size < best[2]):
+                            best = (s, summary(f), f.size)
+                        if worst is None or s < worst[0]:
+                            worst = (s, summary(f), f.size)
+    gb = lambda bps: round(bps * TWO_HOURS_S / 8e9, 1)
+    out = {"size_2h_gb": [gb(min_bps if p.min_mbps else 0), gb(max_bps) if max_bps < 120e6 else None]}
+    if best is None:
+        return {**out, "possible": False, "reason": "podmínky nesplní žádný soubor (min. skóre?)"}
+    return {**out, "possible": True,
+            "max": best[0], "max_example": f"{best[1]} · {best[2] / 1e9:.1f} GB",
+            "min": worst[0], "min_example": f"{worst[1]} · {worst[2] / 1e9:.1f} GB"}
 
 
 async def load_profiles() -> list[Profile]:

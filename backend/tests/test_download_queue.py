@@ -145,3 +145,22 @@ async def test_stop_all_empties_the_queue_and_stops_the_upgrade_job(monkeypatch)
     assert await queue.pending() == 0
     assert upgrades._queue == [] and upgrades._auto_download == {}
     assert (await upgrades.results())["7"]["status"] == "better"
+
+
+def test_profile_score_range_and_overall_bitrate():
+    from app.core.profiles import Profile, block, profile_from_row, score_range
+    from app.core.quality import Prefs
+
+    fhd = Profile(min_resolution="1080p", max_resolution="1080p", max_size_gb=7)
+    r = score_range(fhd, Prefs())
+    assert r["possible"] and r["size_2h_gb"] == [0.0, 7.0]
+    assert 0 < r["min"] < r["max"] <= 100 and "1080p" in r["max_example"]
+    # an impossible profile says so
+    assert not score_range(Profile(min_mbps=20, max_size_gb=5), Prefs())["possible"]
+    # the bitrate limit is the overall one (size / length), not the estimated picture part
+    p = Profile(min_mbps=5)
+    assert block({"bitrate": 5.2e6, "video_bitrate": 4.5e6}, p) is None
+    assert block({"bitrate": 4.8e6}, p) == "bitrate 4.8 Mb/s < 5"
+    # profiles saved with the old video bitrate keep their limit
+    old = profile_from_row({"id": 1, "name": "x", "is_default": 0, "config": '{"min_video_mbps": 3}'})
+    assert old.min_mbps == 3
