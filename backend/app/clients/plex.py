@@ -49,6 +49,12 @@ class PlexClient:
         resp.raise_for_status()
         return resp.json().get("MediaContainer", {}).get("Metadata", [])
 
+    async def episodes(self, section_key: str) -> list[dict]:
+        """Every episode of a TV section (show, season and episode numbers, files)."""
+        resp = await self._http.get(f"/library/sections/{section_key}/all", params={"type": 4}, timeout=300)
+        resp.raise_for_status()
+        return resp.json().get("MediaContainer", {}).get("Metadata", [])
+
     async def empty_trash(self, section_key: str) -> None:
         resp = await self._http.put(f"/library/sections/{section_key}/emptyTrash")
         resp.raise_for_status()

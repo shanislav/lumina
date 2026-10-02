@@ -13,7 +13,7 @@ movie a file is, and runs a big rename so that Plex keeps its movies (``migratio
 from app.core.migrations import add_column
 from app.core.module import Module, Subscription, TaskSource
 from app.core.schema import seed_automation
-from app.modules.plex import friends, hints, migration, tasks
+from app.modules.plex import friends, hints, migration, tasks, tv_hints
 from app.modules.plex.handler import on_files_removed, on_movie_updated
 from app.modules.plex.router import router
 
@@ -29,7 +29,8 @@ module = Module(
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=90),
                    Subscription("library.files_removed", on_files_removed),
                    Subscription("library.files_added", on_files_removed),     # the same: rescan the folder
-                   Subscription("library.collect_hints", hints.on_collect_hints)],
+                   Subscription("library.collect_hints", hints.on_collect_hints),
+                   Subscription("library.collect_tv_hints", tv_hints.on_collect_tv_hints)],
     tasks=[TaskSource(tasks.read, "library.edit")],
     on_startup=[friends.start],
     on_shutdown=[friends.stop],

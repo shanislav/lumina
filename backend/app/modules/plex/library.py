@@ -38,6 +38,51 @@ async def connect() -> tuple[PlexClient, dict, dict, str]:
     return client, cfg, section, root
 
 
+async def connect_tv() -> tuple[PlexClient, dict, dict, str]:
+    """(client, config, the TV section holding Lumina's TV library, its root) — like connect()."""
+    from app.config import tv_library_dir
+    automation = await get_automation("plex")
+    cfg = (automation or {}).get("config") or {}
+    if not (cfg.get("url") and cfg.get("token")):
+        raise PlexError("Plex není nastavený (Nastavení → Integrace → Plex)")
+    root = tv_library_dir(await get_effective_settings())
+    if not root:
+        raise PlexError("Knihovna seriálů není nastavená")
+    client = PlexClient(cfg["url"], cfg["token"])
+    try:
+        sections = [s for s in await client.sections() if s["type"] == "show"]
+        path = to_plex(root, root, [loc for s in sections for loc in s["locations"]], cfg.get("path_map", ""))
+        section = section_for(path, sections) if path else None
+        if not section:
+            raise PlexError(f"Knihovnu seriálů {root} jsem v Plexu nenašel")
+    except PlexError:
+        await client.close()
+        raise
+    except Exception as e:
+        await client.close()
+        raise PlexError(f"Plex neodpovídá: {e or type(e).__name__}") from e
+    return client, cfg, section, root
+
+
+async def tv_files(client: PlexClient, section_key: str) -> dict[str, dict]:
+    """Plex path of every episode file → which show (TMDB / TVDB ids, title) and which episode Plex
+    thinks it is (its numbering — TVDB order, as the user's files mostly are)."""
+    shows = {}
+    for meta in await client.items(section_key):
+        tmdb, _ = _ids(meta)
+        tvdb = next((int(m[1]) for g in meta.get("Guid", []) if (m := re.match(r"tvdb://(\d+)", g.get("id", "")))), None)
+        shows[str(meta["ratingKey"])] = {"tmdb_id": tmdb, "tvdb_id": tvdb, "title": meta.get("title", ""),
+                                         "year": meta.get("year")}
+    out = {}
+    for ep in await client.episodes(section_key):
+        show = shows.get(str(ep.get("grandparentRatingKey")), {})
+        for part in (p for m in ep.get("Media", []) for p in m.get("Part", []) if p.get("file")):
+            out[part["file"]] = {**show, "show_key": str(ep.get("grandparentRatingKey")),
+                                 "season": ep.get("parentIndex"), "episode": ep.get("index"),
+                                 "episode_title": ep.get("title", "")}
+    return out
+
+
 def _ids(meta: dict) -> tuple[int | None, str | None]:
     """(tmdb id, imdb id) from the new agent's Guid list or a legacy agent's guid."""
     tmdb = imdb = None

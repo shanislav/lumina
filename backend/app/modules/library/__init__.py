@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS tmdb_movies (
 );
 """
 
+from app.modules.library.tv_inventory import TV_INVENTORY  # noqa: E402
+
 module = Module(
     name="library",
     title="Knihovna",
@@ -103,6 +105,8 @@ module = Module(
         add_column("library_films", "on_better", "TEXT DEFAULT ''"),
         # stop watching once a better version came into the library (a one-off quality update)
         add_column("library_films", "upgrade_once", "INTEGER DEFAULT 0"),
+        # what the TV library holds — show folders and files as the last scan saw them, the user's fixes
+        TV_INVENTORY,
     ],
     tasks=[TaskSource(tasks.read, "library.view")],
 )

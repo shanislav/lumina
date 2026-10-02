@@ -32,6 +32,7 @@ from app.modules.library.matcher import TRUSTED_HINTS, FileEvidence, decide, sco
 from app.core.release_name import VIDEO_EXTS, NameFacts, parse_name
 from app.modules.library.nfo import find_nfo, read_nfo
 from app.modules.library.notify import emit_movie_updated
+from app.modules.library import tv_inventory
 from app.utils.tv_parser import normalize_for_search, parse_tv_filename
 
 logger = logging.getLogger(__name__)
@@ -421,14 +422,87 @@ def _episode_by_folder(f: dict, tv_dir: str) -> dict | None:
             "episode": info.episodes[0], "year": year.group(0)[1:-1] if year else None}
 
 
+async def _lumina_show(client: TMDBClient, db, episodes: list[dict], show_name: str, year) -> tuple[int | None, str]:
+    """(TMDB id, title) of the show by Lumina's own means: the library, NFO files, TMDB search by the
+    folder's and the files' names (a title that really is the name first)."""
+    counts: dict[str, int] = {}
+    for ep in episodes:
+        n = ep.get("file_show_name") or ""
+        if n and normalize_for_search(n) != normalize_for_search(show_name):
+            counts[n] = counts.get(n, 0) + 1
+    names = [show_name, *sorted(counts, key=lambda n: -counts[n])[:2]]
+    for n in names:
+        row = await (await db.execute(
+            "SELECT tmdb_id, title FROM library_shows WHERE lower(title) = lower(?) OR lower(original_title) = lower(?)",
+            (n, n))).fetchone()
+        if row:
+            return row[0], row[1]
+    for ep in episodes:
+        if ep.get("nfo_show_tmdb_id"):
+            return ep["nfo_show_tmdb_id"], ""
+    for ep in episodes:
+        d = os.path.dirname(ep.get("file_path", ""))
+        for _ in range(3):  # max 3 levels up
+            nfo_path = os.path.join(d, "tvshow.nfo")
+            if os.path.isfile(nfo_path):
+                nfo = _parse_nfo_file(nfo_path)
+                if nfo and nfo.get("tmdb_id"):
+                    return nfo["tmdb_id"], ""
+            parent = os.path.dirname(d)
+            if parent == d:
+                break
+            d = parent
+    first_hit = None
+    found: list[tuple[str, list]] = []
+    for n in names:
+        try:
+            results = await client.search_tv(f"{n} {year}" if year and n == show_name else n)
+            if not results and year and n == show_name:
+                results = await client.search_tv(n)
+            if not results:
+                stripped = normalize_for_search(n)
+                if stripped != n.lower():
+                    results = await client.search_tv(stripped)
+        except Exception as e:
+            logger.warning("TMDB search failed for show '%s': %s", n, e)
+            continue
+        first_hit = first_hit or (results[0] if results else None)
+        best = _best_show(results, n, year, exact_only=True)
+        if not best:
+            # a show without a Czech name comes in its original script ("俺だけレベルアップな件")
+            try:
+                english = await client.search_tv(n, language="en-US")
+            except Exception:
+                english = []
+            best = _best_show(english, n, year, exact_only=True)
+            found.append((n, results + english))
+        if best:
+            return best.tmdb_id, best.title
+    for n, results in found:
+        best = _best_show(results, n, year)       # the name is the start of a title
+        if best:
+            return best.tmdb_id, best.title
+    if first_hit and set(normalize_for_search(show_name).split()) & set(
+            normalize_for_search(f"{first_hit.title} {first_hit.original_title}").split()):
+        logger.info("Show '%s' matched loosely: %s", show_name, first_hit.title)
+        return first_hit.tmdb_id, first_hit.title          # a word in common at least
+    return None, ""
+
+
 async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
     # --- Scan TV shows ---
     if tv_dir:
         tv_files = _scan_video_files(tv_dir)
+        # what Plex knows of each file (which show, which episode) — the plex module answers, if on
+        hints = (await events.emit("library.collect_tv_hints",
+                                   {"paths": [f["file_path"] for f in tv_files], "hints": {}}))["hints"]
+        overrides = await tv_inventory.overrides(db)
+        unknown: list[dict] = []
 
         # Group by show name — try episode NFO first for season/episode info
         show_groups: dict[str, list[dict]] = {}
         for f in tv_files:
+            hint = hints.get(f["file_path"])
             # Try episode .nfo for accurate S/E numbers
             ep_nfo = _parse_episode_nfo(f["file_path"])
             parsed = parse_tv_filename(f["filename"], f["file_path"]) or _episode_by_folder(f, tv_dir)
@@ -448,13 +522,20 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 }
             elif parsed:
                 entry = {**f, **parsed}
+            elif hint and hint.get("season") is not None and hint.get("episode"):
+                # the name says nothing, Plex knows the episode
+                entry = {**f, "show_name": hint.get("title") or "", "season": hint["season"],
+                         "episode": hint["episode"], "year": None, "numbers_from": "plex"}
             else:
+                unknown.append(f)
                 continue
+            entry["hint"] = hint
 
             # the show is its folder under the TV folder ("StarGate Atlantis/2. HD/SGA - S02E02…"): file
             # names use nicknames ("SGA") and the folder holds one show; the file's name stays a hint
             entry["file_show_name"] = entry["show_name"]
             folder_show = _show_folder(f["file_path"], tv_dir)
+            entry["folder"] = os.path.relpath(f["file_path"], tv_dir).split(os.sep)[0] if folder_show else ""
             if folder_show:
                 entry["show_name"], folder_year = folder_show
                 entry["year"] = folder_year or entry.get("year")
@@ -466,103 +547,39 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
         stats["shows_found"] = len(show_groups)
         marked: set[tuple[int, int, int]] = set()       # (show, season, episode) this scan found
         matched_paths: set[str] = set()                 # files this scan put under a show
+        inventory = tv_inventory.Inventory()
+        for f in unknown:
+            folder_show = _show_folder(f["file_path"], tv_dir)
+            inventory.file(f["file_path"], os.path.relpath(f["file_path"], tv_dir).split(os.sep)[0] if folder_show else "",
+                           None, None, [], "unknown", "z názvu nepoznám díl a Plex ho nezná")
 
         for show_key, episodes in show_groups.items():
             show_name = episodes[0]["show_name"]
             year = episodes[0].get("year")
+            folder = episodes[0].get("folder") or ""
 
-            # names to try: the folder, then what the files call the show (most common first)
-            counts: dict[str, int] = {}
+            # who says which show it is: the user (a fix in the inventory), Plex (its matches were often
+            # fixed by hand), Lumina (folder and file names → TMDB)
+            lumina_id, lumina_title = await _lumina_show(client, db, episodes, show_name, year)
+            plex_votes: dict[int, int] = {}
             for ep in episodes:
-                n = ep.get("file_show_name") or ""
-                if n and normalize_for_search(n) != normalize_for_search(show_name):
-                    counts[n] = counts.get(n, 0) + 1
-            names = [show_name, *sorted(counts, key=lambda n: -counts[n])[:2]]
-
-            # Already in the library under one of the names
-            existing = None
-            for n in names:
-                cursor = await db.execute(
-                    "SELECT tmdb_id FROM library_shows WHERE lower(title) = lower(?) OR lower(original_title) = lower(?)",
-                    (n, n),
-                )
-                existing = await cursor.fetchone()
-                if existing:
-                    break
-
-            if existing:
-                tmdb_id = existing[0]
-            else:
-                tmdb_id = None
-
-                # 1. Try nfo_show_tmdb_id from episode NFO
+                if (ep.get("hint") or {}).get("tmdb_id"):
+                    plex_votes[ep["hint"]["tmdb_id"]] = plex_votes.get(ep["hint"]["tmdb_id"], 0) + 1
+            plex_id = max(plex_votes, key=plex_votes.get) if plex_votes else None
+            plex_title = next((ep["hint"].get("title") for ep in episodes
+                               if (ep.get("hint") or {}).get("tmdb_id") == plex_id), "") if plex_id else ""
+            override = overrides.get(folder) if folder else None
+            tmdb_id = override or plex_id or lumina_id
+            source = "user" if override else "plex" if plex_id else "lumina" if lumina_id else ""
+            inventory.show(folder or show_name, tmdb_id, source, lumina_id, lumina_title, plex_id, plex_title, len(episodes))
+            if not tmdb_id:
+                logger.warning("No TMDB match for show '%s'", show_name)
                 for ep in episodes:
-                    if ep.get("nfo_show_tmdb_id"):
-                        tmdb_id = ep["nfo_show_tmdb_id"]
-                        logger.info("Show '%s' matched via episode NFO: tmdb=%d", show_name, tmdb_id)
-                        break
+                    inventory.file(ep["file_path"], folder or show_name, None, ep["season"], [ep["episode"]], "unmatched",
+                                   "seriál nenalezen v TMDB ani v Plexu")
+                continue
 
-                # 2. Try tvshow.nfo from show folder
-                if not tmdb_id:
-                    for ep in episodes:
-                        d = os.path.dirname(ep.get("file_path", ""))
-                        for _ in range(3):  # max 3 levels up
-                            nfo_path = os.path.join(d, "tvshow.nfo")
-                            if os.path.isfile(nfo_path):
-                                nfo = _parse_nfo_file(nfo_path)
-                                if nfo and nfo.get("tmdb_id"):
-                                    tmdb_id = nfo["tmdb_id"]
-                                    logger.info("Show '%s' matched via NFO: tmdb=%d", show_name, tmdb_id)
-                                    break
-                            parent = os.path.dirname(d)
-                            if parent == d:
-                                break
-                            d = parent
-                        if tmdb_id:
-                            break
-
-                # 3. TMDB search — a show whose title really is one of the names
-                if not tmdb_id:
-                    first_hit = None
-                    found: list[tuple[str, list]] = []
-                    for n in names:
-                        try:
-                            results = await client.search_tv(f"{n} {year}" if year and n == show_name else n)
-                            if not results and year and n == show_name:
-                                results = await client.search_tv(n)
-                            if not results:
-                                stripped = normalize_for_search(n)
-                                if stripped != n.lower():
-                                    results = await client.search_tv(stripped)
-                        except Exception as e:
-                            logger.warning("TMDB search failed for show '%s': %s", n, e)
-                            continue
-                        first_hit = first_hit or (results[0] if results else None)
-                        best = _best_show(results, n, year, exact_only=True)
-                        if not best:
-                            # a show without a Czech name comes in its original script ("俺だけレベルアップな件")
-                            try:
-                                english = await client.search_tv(n, language="en-US")
-                            except Exception:
-                                english = []
-                            best = _best_show(english, n, year, exact_only=True)
-                            found.append((n, results + english))
-                        if best:
-                            tmdb_id = best.tmdb_id
-                            break
-                    for n, results in found if not tmdb_id else []:
-                        best = _best_show(results, n, year)       # the name is the start of a title
-                        if best:
-                            tmdb_id = best.tmdb_id
-                            break
-                    if not tmdb_id and first_hit and set(normalize_for_search(show_name).split()) & set(
-                            normalize_for_search(f"{first_hit.title} {first_hit.original_title}").split()):
-                        tmdb_id = first_hit.tmdb_id          # a word in common at least
-                        logger.info("Show '%s' matched loosely: %s", show_name, first_hit.title)
-                    if not tmdb_id:
-                        logger.warning("No TMDB match for show '%s' (tried %s)", show_name, names)
-                        continue
-
+            if not await (await db.execute("SELECT 1 FROM library_shows WHERE tmdb_id = ?", (tmdb_id,))).fetchone():
                 # Fetch full details and populate episodes
                 try:
                     details = await client.get_tv_details(tmdb_id)
@@ -576,7 +593,6 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                          details["poster_url"], details["overview"],
                          details["total_seasons"], details["total_episodes"]),
                     )
-
                     for season_info in details["seasons"]:
                         sn = season_info["season_number"]
                         try:
@@ -599,7 +615,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
             for ep_data in episodes:
                 marked.add((tmdb_id, ep_data["season"], ep_data["episode"]))
                 matched_paths.add(ep_data["file_path"])
-                await db.execute(
+                cursor = await db.execute(
                     """UPDATE library_episodes
                     SET has_file = 1, filename = ?, file_path = ?,
                         file_size = ?, quality = ?, language = ?
@@ -609,6 +625,20 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                      tmdb_id, ep_data["season"], ep_data["episode"]),
                 )
                 stats["episodes_matched"] += 1
+                hint = ep_data.get("hint") or {}
+                status, note = "ok", ""
+                if lumina_id and plex_id and lumina_id != plex_id and not override:
+                    status, note = "show", f"Plex: {plex_title} · Lumina: {lumina_title}"
+                elif hint and (hint.get("season"), hint.get("episode")) != (ep_data["season"], ep_data["episode"]) \
+                        and ep_data.get("numbers_from") != "plex":
+                    status, note = "numbers", f"soubor S{ep_data['season']:02d}E{ep_data['episode']:02d}, " \
+                                              f"Plex S{(hint.get('season') or 0):02d}E{(hint.get('episode') or 0):02d}"
+                elif not cursor.rowcount:
+                    status, note = "not_in_tmdb", "TMDB tento díl nezná (jiné číslování?)"
+                elif not hint and plex_votes:
+                    status, note = "not_in_plex", "Plex soubor nezná"
+                inventory.file(ep_data["file_path"], folder or show_name, tmdb_id, ep_data["season"],
+                               [ep_data["episode"]], status, note)
 
         # a file this scan put under a show belongs to no other one (an earlier scan's wrong match:
         # "SGA" episodes under "Sgauth") — a show TMDB could not be asked about now keeps its files
@@ -619,5 +649,6 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
         # shows left without a file
         await db.execute("DELETE FROM library_shows WHERE tmdb_id NOT IN "
                          "(SELECT DISTINCT show_tmdb_id FROM library_episodes WHERE has_file = 1)")
+        await inventory.save(db)
         await db.commit()
 

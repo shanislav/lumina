@@ -581,3 +581,37 @@ async def upgrades_status():
 async def upgrade_results():
     """Last check per movie: {tmdb_id: {status better|none|error, upgrades, best, checked_at, ...}}."""
     return await upgrades.results()
+
+
+# ─── TV library inventory (docs SERIALY) ───
+
+@router.get("/tv/inventory", dependencies=[Depends(require("library.view"))])
+async def tv_inventory_summary() -> dict:
+    """What the TV library holds as the last scan saw it: each show folder (which show, who says so,
+    where Lumina and Plex disagree) with its problem files."""
+    from app.modules.library import tv_inventory
+    db = await get_db()
+    try:
+        return await tv_inventory.summary(db)
+    finally:
+        await db.close()
+
+
+class TvOverride(BaseModel):
+    folder: str
+    tmdb_id: int | None = None        # None = no fix, the scan decides again
+
+
+@router.put("/tv/override", dependencies=[Depends(require("library.edit"))])
+async def tv_override(body: TvOverride) -> dict:
+    """The user says which show a folder is; the next scan uses it (and the renamer after it)."""
+    from app.modules.library import tv_inventory
+    db = await get_db()
+    try:
+        await tv_inventory.set_override(db, body.folder, body.tmdb_id)
+        if body.tmdb_id:
+            await db.execute("UPDATE tv_folders SET tmdb_id = ?, source = 'user' WHERE folder = ?", (body.tmdb_id, body.folder))
+            await db.commit()
+    finally:
+        await db.close()
+    return {"ok": True}
