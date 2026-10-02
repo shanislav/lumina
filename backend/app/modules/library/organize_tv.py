@@ -120,7 +120,8 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
 
     if facts.get("manual"):                                        # the user's word: any numbering
         season, episode = facts["manual"][0], facts["manual"][1]
-        return season, [episode], tmdb_title(season, episode) or file_title or plex_title, order
+        # the file's own name (the user's language — TMDB may have only English ones), else TMDB's
+        return season, [episode], file_title or tmdb_title(season, episode) or plex_title, order
 
     if mode == "tmdb":
         if facts.get("tmdb_episode") and facts.get("tmdb_sure"):
@@ -296,6 +297,10 @@ def plan_folder(rows: list[dict], show: dict, media: dict[str, dict], tmdb_title
         # with the user's numbers two files of one number are versions of it, not parts — unless they are
         # named as parts already ("… - pt1", "… - pt2": what an earlier rename by TMDB's numbering made)
         parts = mode == "tmdb" or (len(items) > 1 and all(it[4][2] for it in items))
+        # two copies of one episode (the same name) are versions of it, not its parts
+        names = [it[0]["facts"].get("title") or "" for it in items]
+        if not all(it[4][2] for it in items) and                 any(tv_inventory.title_score(x, y) >= tv_inventory.STRONG for j, x in enumerate(names) for y in names[j + 1:]):
+            parts = False
         orders = sorted({it[4] for it in items}) if parts else []
         for row, _s, _e, title, order in items:
             ext = os.path.splitext(row["file_path"])[1]

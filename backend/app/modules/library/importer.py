@@ -781,7 +781,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 file_title = own.get(ep_data["file_path"], "")
                 plex_name = hint.get("episode_title") or ""
                 here = (ep_data["season"], ep_data["episode"])
-                fits = lambda nm: any(tv_inventory.title_score(nm, t) >= tv_inventory.STRONG  # noqa: E731
+                fits = lambda nm: any(tv_inventory.fits(nm, t)  # noqa: E731
                                       for t in (cat.get(here, {}).get("cs"), cat.get(here, {}).get("en")) if t)
                 facts: dict = {"file": [ep_data.get("file_season", ep_data["season"]),
                                         ep_data.get("file_episodes") or [ep_data["episode"]]],

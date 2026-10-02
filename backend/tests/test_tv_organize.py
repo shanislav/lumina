@@ -354,3 +354,15 @@ def test_the_users_word_on_an_episode_wins(tmp_path):
     got = {os.path.basename(op["src"]): os.path.basename(op["dst"]) for op in plan["ops"]}
     assert got["S02E11 Boj o Eppie, svérázná Lady.avi"].startswith("Znalec psí duše - S02E13 - Boj o Eppie")
     assert got["S02E13 Pes týmu Lakers.avi"].startswith("Znalec psí duše - S02E11 - Pes týmu Lakers")
+
+
+def test_copies_of_one_episode_are_versions_not_parts(tmp_path):
+    root = str(tmp_path)
+    a = touch(root, "Z/s04/S04E26 Schiavona.mkv")
+    b = touch(root, "Z/s05/S05E03 Schiavona.mkv")
+    rows = [row(a, "Z", 4, [26], file=[4, [26]], title="Schiavona", manual=[5, 2, "kopie"]),
+            row(b, "Z", 5, [3], file=[5, [3]], title="Schiavona", manual=[5, 2, ""])]
+    plan = organize_tv.plan_folder(rows, {"tmdb_id": 62884, "title": "Z ohnivé výhně", "year": 2015}, {}, {(5, 2): "The Schiavona"},
+                                   root, SETTINGS, mode="tmdb")
+    names = sorted(os.path.basename(op["dst"]) for op in plan["ops"])
+    assert names == ["Z ohnivé výhně - S05E02 - Schiavona (2).mkv", "Z ohnivé výhně - S05E02 - Schiavona.mkv"]

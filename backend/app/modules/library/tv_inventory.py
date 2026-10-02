@@ -238,6 +238,17 @@ def _close_word(word: str, words: set[str]) -> bool:
     return word in words or (len(word) >= 5 and any(len(w) >= 5 and SequenceMatcher(None, word, w).ratio() >= 0.8 for w in words))
 
 
+def fits(name: str, title: str) -> bool:
+    """The name is this episode's: a real match — or the name says no part and the episode is a part of it
+    (a pilot "Děti bohů" is TMDB's "Děti bohů (1)"; the file of a two-part episode often carries the bare name)."""
+    if title_score(name, title) >= STRONG:
+        return True
+    if _part(name) is None and _part(title) is not None:
+        bare = _PART.sub("", title).strip(" :-–,.")
+        return bool(bare) and title_score(name, bare) >= STRONG
+    return False
+
+
 def normalized(text: str) -> str:
     from app.utils.tv_parser import normalize_for_search
     return normalize_for_search(text or "")

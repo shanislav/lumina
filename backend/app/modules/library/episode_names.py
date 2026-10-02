@@ -96,6 +96,8 @@ def best(name: str, cat: dict[tuple[int, int], dict], season: int | None, durati
         tier = 0 if key[0] == season else 1 if season is not None and abs(key[0] - season) == 1 and key[0] > 0 else 2
         scored.append(((score, common, exact), tier, key, entry))
     if not scored:
+        # no part in the name, the episodes are parts of it ("Space Race" → "Space Race: Part I / II"): which one is
+        # not known — the file keeps its number (``tv_inventory.fits``)
         return None, False
     for tier in (0, 1, 2):
         here = sorted((s for s in scored if s[1] <= tier), key=lambda s: (s[0], -s[1]), reverse=True)
@@ -138,7 +140,3 @@ def own_titles(files: list[tuple[str, str]], title_of) -> dict[str, str]:
 
 def czech(text: str) -> bool:
     return bool(re.search(r"[ěščřžýáíéůúťďňĚŠČŘŽÝÁÍÉŮÚŤĎŇ]", text or ""))
-
-
-def dump(cat: dict) -> str:
-    return json.dumps({f"{s}:{e}": v for (s, e), v in cat.items()}, ensure_ascii=False)
