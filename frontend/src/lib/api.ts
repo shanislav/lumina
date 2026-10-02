@@ -1762,6 +1762,7 @@ export interface TvOrganizePlan {
   skipped: { file: string; why: string }[];
   tips: string[];
   media_missing: number;
+  renumbered: number;       // episodes Plex will show under another number (new items, state given back)
 }
 
 export interface TvOrganizeResult {

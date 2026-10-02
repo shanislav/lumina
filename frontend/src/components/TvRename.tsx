@@ -215,6 +215,12 @@ function ShowPlan({ plan, checked, expanded, onToggle, onCheck, onNumbering, dis
       )}
       {plan.conflicts.map((c) => <p key={c} className="mt-1 text-xs text-red-400">{c}</p>)}
       {plan.tips.map((t) => <p key={t} className="mt-1 text-xs text-amber-300">💡 {t}</p>)}
+      {plan.renumbered > 0 && (
+        <p className="mt-1 text-xs text-amber-300">
+          {plan.renumbered} dílů dostane jiné číslo, než ukazuje Plex — Plex je přidá jako nové; přejmenování s Plexem jim
+          při dokončení vrátí zhlédnuto a datum přidání.
+        </p>
+      )}
       {plan.media_missing > 0 && (
         <p className="mt-1 text-xs text-amber-300">{plan.media_missing} souborů ještě bez MediaInfo (rozlišení, jazyky) — dokonči sken knihovny.</p>
       )}
