@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import FileTable from "@/components/FileTable";
+import SeasonPlan from "@/components/SeasonPlan";
 import { useAuth } from "@/components/AuthGate";
 import {
   MovieContext, QualityProfile, ScoredFile, SeriesDetail, SeriesEpisode, SeriesLangMode, SeriesSeason,
@@ -84,7 +85,8 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
 
       <div className="space-y-2">
         {data.seasons.map((s) => (
-          <Season key={s.season_number} season={s} open={!!open[s.season_number]}
+          <Season key={s.season_number} tmdbId={tmdbId} onStarted={() => setTimeout(() => load(), 1500)}
+            season={s} open={!!open[s.season_number]}
             toggle={() => setOpen((o) => ({ ...o, [s.season_number]: !o[s.season_number] }))}
             canSearch={can("search")} searching={searching}
             onSearch={(episode) => setSearching(searching?.season === s.season_number && searching.episode === episode
@@ -174,10 +176,12 @@ function TriState({ value, fallback, yes, no, disabled, onChange }: {
   );
 }
 
-function Season({ season, open, toggle, canSearch, searching, onSearch, children }: {
+function Season({ tmdbId, onStarted, season, open, toggle, canSearch, searching, onSearch, children }: {
+  tmdbId: number; onStarted: () => void;
   season: SeriesSeason; open: boolean; toggle: () => void; canSearch: boolean;
   searching: { season: number; episode: number } | null; onSearch: (episode: number) => void; children?: React.ReactNode;
 }) {
+  const [whole, setWhole] = useState(false);
   const c = season.counts;
   const total = season.episodes.length || 1;
   return (
@@ -198,6 +202,17 @@ function Season({ season, open, toggle, canSearch, searching, onSearch, children
       </button>
       {open && (
         <div className="border-t border-zinc-800">
+          {canSearch && c.missing + c.temp > 0 && (
+            <div className="flex items-center gap-3 px-4 py-1.5 text-xs">
+              <button onClick={() => setWhole(!whole)} className="text-violet-300 hover:text-violet-200">
+                {whole ? "Zavřít celou sérii" : `Celá série — chybějící díly najednou (${c.missing + c.temp})`}
+              </button>
+            </div>
+          )}
+          {whole && (
+            <SeasonPlan tmdbId={tmdbId} season={season.season_number} onStarted={onStarted}
+              ownedEpisodes={season.episodes.filter((e) => e.file).map((e) => e.episode)} />
+          )}
           {season.episodes.map((ep) => {
             const active = searching?.season === season.season_number && searching.episode === ep.episode;
             return (

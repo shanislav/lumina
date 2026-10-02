@@ -1648,3 +1648,46 @@ export async function saveSeriesDefaults(values: Partial<SeriesSettingValues>): 
   if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
   return res.json();
 }
+
+export interface SeasonSet {
+  key: string;
+  label: string;
+  episodes: Record<string, ScoredFile>;   // episode number → file of this release
+  covered: number[];                      // wanted episodes it has
+  coverage: number;
+  score: number;
+  resolution: string;
+  langs: string[];
+  local: boolean;                         // CZ/SK sound
+  size: number;
+  sources: string[];
+}
+
+export interface SeasonOffers {
+  season: number;
+  wanted: number[];
+  sets: SeasonSet[];
+  packs: ScoredFile[];
+  plan: { episode: number; set: string; row: ScoredFile }[];
+  movie: MovieContext | null;
+}
+
+export async function getSeasonOffers(tmdbId: number, season: number, episodes?: number[]): Promise<SeasonOffers> {
+  const q = episodes?.length ? `?episodes=${episodes.join(",")}` : "";
+  const res = await apiFetch(`${API_BASE}/api/series/${tmdbId}/season/${season}/offers${q}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Hledání selhalo: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function downloadSeason(tmdbId: number, season: number, items: { episode: number; row: ScoredFile }[],
+                                     replaceOwned = true): Promise<{ started: number; errors: string[] }> {
+  const res = await apiFetch(`${API_BASE}/api/series/${tmdbId}/season/${season}/download`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items, replace_owned: replaceOwned }),
+  });
+  if (!res.ok) throw new Error(`Stažení selhalo: ${res.status}`);
+  return res.json();
+}
