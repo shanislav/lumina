@@ -21,6 +21,7 @@ _EP_ONLY_PATTERNS = [
 
 # Season from folder path
 _SEASON_FOLDER = re.compile(r"[Ss]eason\s*(\d{1,2})", re.IGNORECASE)
+_SEASON_DIR = re.compile(r"(?i)^s(\d{1,2})$|(?:s[eé]rie|serie|sez[oó]na|řada|rada)\s*(\d{1,2})|(?:^|\s)(\d{1,2})\s*\.?\s*(?:s[eé]rie|serie|sez[oó]na|řada|rada)")
 
 # Quality tags to strip from show name
 _QUALITY_TAGS = re.compile(
@@ -93,6 +94,12 @@ def parse_tv_filename(filename: str, file_path: str = "") -> dict | None:
         folder_match = _SEASON_FOLDER.search(file_path)
         if folder_match:
             season = int(folder_match.group(1))
+        else:
+            # the episode's own folder: "S10", "10. série", "1.série 2011", "Sezóna 01", "Kutil Tim 2.série CZ"
+            parent = Path(file_path).parent.name
+            m = _SEASON_DIR.search(parent)
+            if m:
+                season = int(next(g for g in m.groups() if g))
 
     # Extract show name: everything before the episode pattern
     show_part = name[:se_match_pos].strip()
