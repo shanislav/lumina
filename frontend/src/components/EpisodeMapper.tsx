@@ -69,6 +69,8 @@ export default function EpisodeMapper({ folder, title, onClose, onSaved }: {
     return out;
   }, [data]);
 
+  const known = useMemo(() => new Set((data?.episodes ?? []).map((ep) => key(ep.season, ep.episode))), [data]);
+
   const files = (data?.files ?? []).filter((f) => (season === "all" || f.season === season)
     && (!onlyProblems || f.status !== "ok" || f.manual || choice[f.file] !== undefined || ai[f.file]));
 
@@ -188,6 +190,20 @@ export default function EpisodeMapper({ folder, title, onClose, onSaved }: {
               </button>
             )}
             {!data.groq && <span className="text-zinc-500">AI návrh potřebuje Groq klíč v Nastavení.</span>}
+            {Object.keys(ai).length > 0 && (() => {
+              const all = Object.values(ai);
+              const same = all.filter((x) => x.same && !x.warning).length;
+              const other = all.filter((x) => !x.same && !x.warning).length;
+              const doubt = all.filter((x) => x.warning).length;
+              return (
+                <span className="text-zinc-400">
+                  AI: <span className="text-emerald-300">{same} souhlasí</span>
+                  {other > 0 && <> · <span className="text-violet-300">{other} jiný díl</span></>}
+                  {doubt > 0 && <> · <span className="text-amber-300">{doubt} nejisté</span></>}
+                  {files.length - all.length > 0 && <> · {files.length - all.length} bez odpovědi</>}
+                </span>
+              );
+            })()}
             {error && <span className="text-red-400">{error}</span>}
           </div>
         )}
@@ -210,19 +226,22 @@ export default function EpisodeMapper({ folder, title, onClose, onSaved }: {
             const s = ai[f.file];
             const st = f.manual ? { label: "určeno ručně", cls: "text-violet-300" } : STATUS[f.status] ?? { label: f.status, cls: "text-zinc-400" };
             return (
-              <div key={f.file} className={`grid gap-2 border-b border-zinc-800/70 px-3 py-2 text-xs md:grid-cols-[minmax(0,1.3fr)_7rem_minmax(0,1.4fr)_minmax(0,1fr)] md:items-center ${changed ? "bg-violet-950/30" : ""}`}>
+              <div key={f.file} className={`grid grid-cols-[minmax(0,1fr)] gap-2 border-b border-zinc-800/70 px-3 py-2 text-xs md:grid-cols-[minmax(0,1.3fr)_7rem_minmax(0,1.4fr)_minmax(0,1fr)] md:items-center ${changed ? "bg-violet-950/30" : ""}`}>
                 <div className="min-w-0">
                   <p className="truncate text-zinc-200" title={f.file}>{f.own || f.name}</p>
-                  <p className="truncate text-[11px] text-zinc-500" title={f.note || f.name}>{f.name}{f.duration ? ` · ${minutes(f.duration)}` : ""}</p>
+                  <p className="truncate text-[11px] text-zinc-500" title={f.note || f.name}>
+                    {[f.own ? f.name : "", minutes(f.duration), f.plex && f.plex[2] ? `Plex: ${f.plex[2]}` : ""].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
                 <div>
                   <span className="font-mono text-zinc-300">{se(f.season, f.episode)}</span>
                   <span className={`ml-2 md:ml-0 md:block ${st.cls}`}>{st.label}</span>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex min-w-0 items-center gap-1">
                   <select value={v} onChange={(e) => setChoice({ ...choice, [f.file]: e.target.value })}
-                    className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-zinc-200 outline-none focus:border-violet-500">
+                    className="w-full min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-zinc-200 outline-none focus:border-violet-500">
                     {!v && <option value="">— vyber díl —</option>}
+                    {v && !known.has(v) && <option value={v}>{se(...(v.split(":").map(Number) as [number, number]))} · tohle číslo TMDB nezná</option>}
                     {Object.entries(bySeason).map(([sn, eps]) => (
                       <optgroup key={sn} label={Number(sn) === 0 ? "Speciály" : `Série ${sn}`}>
                         {eps.map((ep) => <option key={key(ep.season, ep.episode)} value={key(ep.season, ep.episode)}>{epLabel(ep)}</option>)}
@@ -235,7 +254,9 @@ export default function EpisodeMapper({ folder, title, onClose, onSaved }: {
                   )}
                 </div>
                 <div className="min-w-0">
-                  {s ? (
+                  {s && s.same && !s.warning ? (
+                    <p className="text-[11px] text-emerald-400/80">✓ AI souhlasí ({s.confidence} %)</p>
+                  ) : s ? (
                     <div className="flex items-center gap-1.5">
                       <button onClick={() => acceptAi(f.file)} disabled={s.same}
                         title={s.same ? "AI souhlasí s tím, co soubor má" : "Převzít tento návrh"}
