@@ -99,14 +99,19 @@ class Inventory:
                              "note, scanned_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [(*f, now) for f in self.files])
 
 
-def same_episode(a: str, b: str) -> bool:
+_COMMON = {"the", "and", "for", "with", "from", "part", "cast", "dil", "pro", "jak", "kde", "tak", "ale", "nebo", "who", "what"}
+
+
+def same_episode(a: str, b: str, strict: bool = False) -> bool:
     """Two names of one episode (Plex's and TMDB's) — a word in common is enough; an empty or generic
-    name ("Epizoda 3") says nothing, so it agrees."""
+    name ("Epizoda 3") says nothing, so it agrees (strict: it does not)."""
     from app.core.naming import episode_title
     from app.utils.tv_parser import normalize_for_search
-    wa = {w for w in normalize_for_search(episode_title(a or "")).split() if len(w) > 2}
-    wb = {w for w in normalize_for_search(episode_title(b or "")).split() if len(w) > 2}
-    return not wa or not wb or bool(wa & wb)
+    wa = {w for w in normalize_for_search(episode_title(a or "")).split() if len(w) > 2} - _COMMON
+    wb = {w for w in normalize_for_search(episode_title(b or "")).split() if len(w) > 2} - _COMMON
+    if not wa or not wb:
+        return not strict
+    return bool(wa & wb)
 
 
 async def overrides(db) -> dict[str, int]:

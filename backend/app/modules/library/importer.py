@@ -422,10 +422,33 @@ def _episode_by_folder(f: dict, tv_dir: str) -> dict | None:
             "episode": info.episodes[0], "year": year.group(0)[1:-1] if year else None}
 
 
-async def _tmdb_episode_title(db, tmdb_id: int, season: int, episode: int) -> str:
-    row = await (await db.execute("SELECT episode_title FROM library_episodes WHERE show_tmdb_id = ? AND season = ? AND episode = ?",
-                                  (tmdb_id, season, episode))).fetchone()
-    return (row[0] if row else "") or ""
+async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int, season: int, episode: int,
+                              plex_title: str) -> str:
+    """Why the file is another TMDB episode than its number says — Plex's name for it is TMDB's name of
+    another episode of the season (Czech or English); "" when it fits or just reads differently (Plex in
+    English, TMDB in Czech is no problem)."""
+    key = (tmdb_id, season)
+    if key not in cache:
+        titles: dict[int, list[str]] = {}
+        for n, t in await (await db.execute("SELECT episode, episode_title FROM library_episodes WHERE show_tmdb_id = ? AND season = ?",
+                                            (tmdb_id, season))).fetchall():
+            titles.setdefault(n, []).append(t or "")
+        cache[key] = titles
+    titles = cache[key]
+    if any(tv_inventory.same_episode(plex_title, t, strict=True) for t in titles.get(episode, [])):
+        return ""
+    if len(titles.get(episode, [])) < 2:                          # English names only when needed (one call)
+        try:
+            for ep in await client.get_season(tmdb_id, season, language="en-US"):
+                titles.setdefault(ep["episode_number"], []).append(ep.get("name") or "")
+        except Exception:
+            pass
+        if any(tv_inventory.same_episode(plex_title, t, strict=True) for t in titles.get(episode, [])):
+            return ""
+    for n, names in sorted(titles.items()):
+        if n != episode and any(tv_inventory.same_episode(plex_title, t, strict=True) for t in names):
+            return f"Plex: „{plex_title}“ = v TMDB E{n:02d} „{names[0]}“"
+    return ""
 
 
 async def _lumina_show(client: TMDBClient, db, episodes: list[dict], show_name: str, year) -> tuple[int | None, str]:
@@ -561,6 +584,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
         marked: set[tuple[int, int, int]] = set()       # (show, season, episode) this scan found
         matched_paths: set[str] = set()                 # files this scan put under a show
         inventory = tv_inventory.Inventory()
+        season_titles: dict[tuple[int, int], dict[int, list[str]]] = {}
         for f, extra in extras:
             plex_named = extra.lower() in tv_inventory.EXTRA_DIRS or not extra
             inventory.file(f["file_path"], os.path.relpath(f["file_path"], tv_dir).split(os.sep)[0], None, None, [], "extra",
@@ -653,10 +677,10 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                                               f"Plex S{(hint.get('season') or 0):02d}E{(hint.get('episode') or 0):02d}"
                 elif not cursor.rowcount:
                     status, note = "not_in_tmdb", "TMDB tento díl nezná (jiné číslování?)"
-                elif hint.get("episode_title") and not tv_inventory.same_episode(hint["episode_title"], await _tmdb_episode_title(
-                        db, tmdb_id, ep_data["season"], ep_data["episode"])):
+                elif hint.get("episode_title") and (other := await _tmdb_other_episode(
+                        client, db, season_titles, tmdb_id, ep_data["season"], ep_data["episode"], hint["episode_title"])):
                     # Big Bang S12: TMDB has the two-part finale as E23 and the farewell special as E24
-                    status, note = "tmdb_other", f"Plex: „{hint['episode_title']}“ · TMDB: „{await _tmdb_episode_title(db, tmdb_id, ep_data['season'], ep_data['episode'])}“"
+                    status, note = "tmdb_other", other
                 elif not hint and plex_votes:
                     status, note = "not_in_plex", "Plex soubor nezná"
                 inventory.file(ep_data["file_path"], folder or show_name, tmdb_id, ep_data["season"],
