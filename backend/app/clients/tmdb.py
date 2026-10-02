@@ -1,3 +1,4 @@
+import re
 from datetime import date, timedelta
 
 import httpx
@@ -6,6 +7,14 @@ from app.models.schemas import TMDBMovie
 
 API_BASE = "https://api.themoviedb.org/3"
 IMG_BASE = "https://image.tmdb.org/t/p/w500"
+
+
+def readable_title(title: str, english: str) -> str:
+    """A show / film without a Czech name comes in its original script ("俺だけレベルアップな件") — then the
+    English name ("Solo Leveling") reads better."""
+    if title and not re.search(r"[A-Za-zÀ-ž]", title) and english:
+        return english
+    return title
 
 
 class TMDBClient:
@@ -161,13 +170,15 @@ class TMDBClient:
         """Fetch TV show details including season count."""
         resp = await self._http.get(
             f"{API_BASE}/tv/{tmdb_id}",
-            params={"api_key": self._api_key, "language": language},
+            params={"api_key": self._api_key, "language": language, "append_to_response": "translations"},
         )
         resp.raise_for_status()
         data = resp.json()
+        english = next(((t.get("data") or {}).get("name") or "" for t in (data.get("translations") or {}).get("translations", [])
+                        if t.get("iso_639_1") == "en" and (t.get("data") or {}).get("name")), "")
         return {
             "tmdb_id": tmdb_id,
-            "title": data.get("name", ""),
+            "title": readable_title(data.get("name", ""), english),
             "original_title": data.get("original_name", ""),
             "overview": data.get("overview", ""),
             "poster_url": f"{IMG_BASE}{data['poster_path']}" if data.get("poster_path") else None,
@@ -223,7 +234,7 @@ class TMDBClient:
 
         return {
             "tmdb_id": tmdb_id,
-            "title": data.get("name", ""),
+            "title": readable_title(data.get("name", ""), titles_by_lang.get("en", "")),
             "original_title": data.get("original_name", ""),
             "year": int(first[:4]) if len(first) >= 4 else None,
             "first_air_date": first,
