@@ -159,6 +159,38 @@ class Offers:
     rows: list[dict] = field(default_factory=list)   # ScoredFile-shaped dicts, recommended order
 
 
+async def search_sources(sources, ddl: list[str], torrent_queries: list[str]) -> list[SearchResult]:
+    """Every query on every source at once; videos only (DDL), seeded torrents only, each file once."""
+    async def _safe_search(source, q: str) -> list[SearchResult]:
+        try:
+            results = await source.search(q)
+            logger.info("Source %s '%s' → %d results", source.source_type.value, q[:40], len(results))
+            return results
+        except Exception as e:
+            logger.warning("Source %s (id=%d) search '%s' failed: %s",
+                           source.source_type.value, source.source_id, q, e)
+            return []
+
+    tasks = [
+        _safe_search(source, q)
+        for source in sources
+        for q in (torrent_queries if source.source_type.value in TORRENT_SOURCES else ddl)
+    ]
+    seen_idents: set[str] = set()
+    all_results: list[SearchResult] = []
+    for batch in await asyncio.gather(*tasks):
+        for r in batch:
+            r.name = clean_text(r.name)   # any source: one broken name must not break the search
+            if r.source_type.value not in TORRENT_SOURCES and not is_video_name(r.name):
+                continue
+            if r.source_type.value in TORRENT_SOURCES and (r.seeders or 0) < MIN_SEEDERS:
+                continue   # torrents nobody seeds are useless
+            if r.ident not in seen_idents:
+                seen_idents.add(r.ident)
+                all_results.append(r)
+    return all_results
+
+
 async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_id: int | None = None,
                       media_type: str = "movie", use_ai: bool = True, wikidata_id: str | None = None,
                       season: int | None = None, episode: int | None = None, torrent: bool = True) -> Offers:
@@ -237,16 +269,6 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
         use_ai = False            # the episode rules know packs and other episodes; the AI knows films
 
 
-    async def _safe_search(source, q: str) -> list[SearchResult]:
-        try:
-            results = await source.search(q)
-            logger.info("Source %s '%s' → %d results", source.source_type.value, q[:40], len(results))
-            return results
-        except Exception as e:
-            logger.warning("Source %s (id=%d) search '%s' failed: %s",
-                           source.source_type.value, source.source_id, q, e)
-            return []
-
     # DDL sources get a few cleaned variants (short local title, full local title, English title);
     # torrent indexers at most two: Prowlarr asks its trackers one query after another (~1.5 s each),
     # a year in the query only narrows what the plain title finds, the film check sorts the rest out
@@ -255,25 +277,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     else:
         ddl = ddl_queries(query, original_title, en_title, local_titles, ctx.year)
         torrent_queries = torrent_query_list(query, en_title, original_title)
-    tasks = [
-        _safe_search(source, q)
-        for source in sources
-        for q in (torrent_queries if source.source_type.value in TORRENT_SOURCES else ddl)
-    ]
-    results_per_task = await asyncio.gather(*tasks)
-
-    seen_idents: set[str] = set()
-    all_results: list[SearchResult] = []
-    for batch in results_per_task:
-        for r in batch:
-            r.name = clean_text(r.name)   # any source: one broken name must not break the search
-            if r.source_type.value not in TORRENT_SOURCES and not is_video_name(r.name):
-                continue
-            if r.source_type.value in TORRENT_SOURCES and (r.seeders or 0) < MIN_SEEDERS:
-                continue   # torrents nobody seeds are useless
-            if r.ident not in seen_idents:
-                seen_idents.add(r.ident)
-                all_results.append(r)
+    all_results = await search_sources(sources, ddl, torrent_queries)
     logger.info("Search '%s': %d unique results (DDL queries %s)", query, len(all_results), ddl)
     if not all_results:
         return Offers(ctx, prefs)

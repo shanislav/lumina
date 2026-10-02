@@ -324,6 +324,9 @@ async def import_episode(payload: dict) -> None:
             if season is None:
                 m = _SEASON.search(os.path.basename(path))
                 season = int(m.group(1) or m.group(2)) if m else None
+            if path != src and season and episodes and not action.get("replace_owned", True)                     and all((season, ep) in owned for ep in episodes):
+                logger.info("%s: S%02dE%02d is owned already — left in downloads", path, season, episodes[0])
+                continue
             folder = season_dirs.get(season) or (os.path.join(show_root, f"Season {season:02d}") if season else show_root)
             _ensure_dir(folder)
             target = _unique_path(os.path.join(folder, os.path.basename(path)))
@@ -332,7 +335,7 @@ async def import_episode(payload: dict) -> None:
             if not (tmdb_id and season and episodes):
                 logger.info("Imported %s (episode unknown — not in the library list)", target)
                 continue
-            if action.get("replace"):
+            if action.get("replace") or (path != src and action.get("replace_owned")):
                 for ep in episodes:
                     old = owned.get((season, ep))
                     if old and old != target and os.path.exists(old):
