@@ -37,7 +37,10 @@ DEFAULT_WEIGHTS: dict = {
         "bitrate_bonus_max": 10,        # from "good" to "excellent" bitrate
         "low_bitrate_max_pct": 60,      # a bitrate near zero loses this % of the resolution points
         "unknown_bitrate_pct": 10,
-        "efficient_codec": 3,           # H.265 / AV1
+        "efficient_codec": 3,           # H.265
+        # AV1: as good a picture per bit, but many players need it transcoded and the server has no
+        # AV1 decoder in hardware (4K then stutters) — user, 2026-10-02
+        "av1": -5, "av1_4k": -15,
         "xvid": -5,
         "hdr_prefer": 5, "dv_prefer": 7, "hdr_neutral": 2, "hdr_avoid": -10,
         "upscale": -15,
@@ -265,8 +268,12 @@ def score(f: Facts, prefs: Prefs | None = None) -> Score:
     else:
         parts.append(("bitrate neznámý", -round(base * pt["unknown_bitrate_pct"] / 100)))
 
-    if f.codec in ("H.265", "AV1"):
+    if f.codec == "H.265":
         parts.append((f.codec, round(pt["efficient_codec"])))    # same picture in about half the space
+    elif f.codec == "AV1":
+        points = pt["av1_4k"] if f.resolution == "2160p" else pt["av1"]
+        if points:
+            parts.append(("AV1 (přehrávání)", round(points)))
     elif f.codec == "XviD":
         parts.append(("XviD", round(pt["xvid"])))                # old codec, weak player support
 

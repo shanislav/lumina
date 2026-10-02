@@ -56,6 +56,14 @@ def test_h265_needs_half_the_bitrate():
     assert h265.summary.startswith("1080p · H.265 · 4.0 Mb/s")
 
 
+def test_av1_comes_after_h265_most_of_all_in_4k():
+    def pts(codec, w, h, mbps):
+        return score(facts_from_media({"width": w, "height": h, "video_codec": codec, "bitrate": mbps * 1_000_000}))
+    assert pts("AV1", 1920, 1080, 6).score < pts("HEVC", 1920, 1080, 6).score
+    assert pts("HEVC", 3840, 2160, 25).score - pts("AV1", 3840, 2160, 25).score >= 15
+    assert ("AV1 (přehrávání)", -5) in pts("AV1", 1920, 1080, 6).parts
+
+
 def test_samotari_upscaled_4k_below_real_1080p():
     rows = ranked("samotari")
     first_upscale = next(i for i, r in enumerate(rows) if "UP" in r["name"] and r["resolution"] == "2160p")
