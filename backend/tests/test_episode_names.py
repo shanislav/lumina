@@ -39,3 +39,9 @@ def test_own_names_from_the_first_name_and_junk_is_none():
     from app.modules.library.importer import _bare_title, _title_in_name
     own = en.own_titles(files, lambda n: _title_in_name(n) or _bare_title(n))
     assert own["/s/1.mkv"] == "" and own["/s/x.mkv"] == "" and own["/s/y.mkv"] == "Posilovač 4000"
+
+
+def test_part_in_brackets():
+    from app.modules.library.tv_inventory import title_score
+    assert title_score("Heart of Archness Part I", "Heart of Archness (2)") == 0
+    assert title_score("Heart of Archness Part I", "Heart of Archness (1)") == 1

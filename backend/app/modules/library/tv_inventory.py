@@ -130,7 +130,7 @@ _COMMON = {"the", "and", "for", "with", "from", "part", "cast", "dil", "pro", "j
 
 
 _PART = re.compile(r"(?i)\b(?:part|pt|cast|část|díl|dil|chapter|kapitola)\.?\s*([ivx]+|\d+|první|prvni|druhá|druha|třetí|treti|čtvrtá|ctvrta)\b"
-                   r"|\b(\d)\s*\.?\s*(?:část|cast|díl|dil)\b|\b([ivx]{1,4}|\d)\s*$")
+                   r"|\b(\d)\s*\.?\s*(?:část|cast|díl|dil)\b|\b([ivx]{1,4}|\d)\s*$|\((\d)\)\s*$")
 _PART_WORDS = {"part", "cast", "dil", "chapter", "kapitola", "prvni", "druha", "treti", "ctvrta"}
 _PART_WORD = re.compile(r"\d+(?:cast|dil|part)|[ivx]{1,4}")
 _ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10,
