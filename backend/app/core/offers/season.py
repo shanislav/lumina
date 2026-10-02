@@ -125,7 +125,7 @@ def _label(name: str) -> str:
     """The release's name with the episode number left out: "Sexuální výchova S03E·· CZ dab 1080p"."""
     label = re.sub(r"(?i)(s\d{1,2} ?e)\d{1,3}(?:-\d{1,3})?", r"\1··", name)
     label = re.sub(r"(?i)(\d{1,2}x)\d{2,3}", r"\1··", label)
-    label = re.sub(r"(?i)(epizoda|episode|díl|dil) \d{1,3}", r"\1 ··", label)
+    label = re.sub(r"(?i)(epizoda|episode|díl|dil)([ ._])\d{1,3}", r"\1\2··", label)
     return label
 
 
@@ -207,7 +207,8 @@ async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[
     numbers = [e["episode_number"] for e in episodes]
     wanted = [e for e in (wanted or numbers) if e in numbers] or numbers
     by_lang = show.get("titles_by_lang") or {}
-    titles = _unique_names([*(by_lang.get(l, "") for l in prefs.local_langs), show.get("title", ""),
+    # the name in the metadata language first (the one the user sees, cs) — uploaders name files by it
+    titles = _unique_names([show.get("title", ""), *(by_lang.get(l, "") for l in prefs.local_langs),
                             by_lang.get("en", ""), show.get("original_title", ""), *show.get("alternative_titles", [])])
     runtimes = [e.get("runtime") for e in episodes if e.get("runtime")]
     runtime = round(statistics.median(runtimes)) if runtimes else (show.get("episode_runtime") or 0)
