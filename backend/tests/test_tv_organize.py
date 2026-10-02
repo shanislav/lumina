@@ -296,4 +296,29 @@ def test_numbering_by_names_never_gives_a_kept_number_another_name(tmp_path):
     plan = organize_tv.plan_folder(rows, {"tmdb_id": 2190, "title": "SP", "year": 1997}, {}, titles, root, SETTINGS, mode="tmdb")
     got = {os.path.basename(op["src"]): os.path.basename(op["dst"]) for op in plan["ops"]}
     assert "Milovník" not in got.get("S02E04 Ikova obrizka.mkv", "Ikova")
-    assert plan["unsure"]
+    # the one staying finds the number left free by its name: the two trade places
+    assert got["S02E04 Ikova obrizka.mkv"].startswith("SP - S02E03 - Ikeova") or got["S02E04 Ikova obrizka.mkv"].startswith("SP - S02E03 - Ikova")
+    assert got["S02E03 Milovnik slepic.mkv"].startswith("SP - S02E04 - Milovník slepic")
+
+
+def test_a_staying_episode_with_another_translation_fills_the_free_number(tmp_path):
+    """Pokémon S01E52–57: four names are sure, "Obtížný test" (TMDB E56 "Obtížná zkouška") and "Perfektní hrdina"
+    (TMDB E53 "Odvážný hrdina") are other translations — they take the numbers left free."""
+    root = str(tmp_path)
+    own = {52: ("Případ jednotky K-9", 54), 53: ("Pokemonoví Paparazzi", 55), 54: ("Obtížný test", None),
+           55: ("Tajemství chovatelského střediska", 57), 56: ("Princezna proti Princezně", 52), 57: ("Perfektní hrdina", None)}
+    rows = []
+    for n, (title, to) in own.items():
+        path = touch(root, f"Pokemon/1/S01E{n} {title}.avi")
+        if to:
+            rows.append(row(path, "Pokemon", 1, [n], status="tmdb_other", file=[1, [n]], plex=[1, n, ""], title=title,
+                            tmdb_episode=to, tmdb_sure=True))
+        else:
+            rows.append(row(path, "Pokemon", 1, [n], file=[1, [n]], plex=[1, n, ""], title=title))
+    titles = {(1, 52): "Princezna proti princezně", (1, 53): "Odvážný hrdina", (1, 54): "Případ jednotky K-9",
+              (1, 55): "Pokémonový paparazzi", (1, 56): "Obtížná zkouška", (1, 57): "Tajemství chovatelského střediska"}
+    plan = organize_tv.plan_folder(rows, {"tmdb_id": 60572, "title": "Pokémon", "year": 1997}, {}, titles, root, SETTINGS, mode="tmdb")
+    moves = {r["from"]: r["to"] for r in plan["renumber"]}
+    assert moves == {"S01E52": "S01E54", "S01E53": "S01E55", "S01E54": "S01E56", "S01E55": "S01E57",
+                     "S01E56": "S01E52", "S01E57": "S01E53"}
+    assert not plan["unsure"]

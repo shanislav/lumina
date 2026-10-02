@@ -187,9 +187,12 @@ def title_match(a: str, b: str) -> tuple[float, int]:
     if (pa is None) != (pb is None) and (pa or pb) != 1:
         return 0.0, 0                     # "Velký Al 2" is no "Velký Al" (a first part may go unnamed)
     # the part is compared above — its words ("část", "druhá", "1část") are no name
-    wa, wb = (ws - _PART_WORDS - {w for w in ws if _PART_WORD.fullmatch(w)} or ws for ws in (wa, wb))
+    if pa is not None or pb is not None:
+        wa, wb = (ws - _PART_WORDS - {w for w in ws if _PART_WORD.fullmatch(w)} or ws for ws in (wa, wb))
     short, other = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
     common = sum(1 for w in short if _close_word(w, other))
+    if len(short) == 1 and len(other) >= 3 and normalized(a) != normalized(b):
+        common = 0          # one word of a longer name ("První zápas" / "Napínavý čtvrtý zápas") is no match
     # the whole name spelled a little differently ("Výjimečná Joe" / "Výjimečná Joy") — the same numbers in it
     from difflib import SequenceMatcher
     na, nb = normalized(a), normalized(b)

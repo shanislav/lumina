@@ -194,10 +194,26 @@ def _own_numbers(row: dict) -> tuple[int, list[int]]:
     return file_season, list(file_eps)
 
 
+def _gap(wanted: list, i: int, season: int, claims: dict, tmdb_titles: dict) -> bool:
+    """Move the i-th episode to the free number of the season its own name fits best (a word in common:
+    another translation) — only when that number is the clear best. Returns whether it moved."""
+    row = wanted[i][0]
+    name = row["facts"].get("title") or ""
+    free = [k for k, t in tmdb_titles.items() if k[0] == season and k not in claims and t]
+    scored = sorted(((tv_inventory.title_match(name, tmdb_titles[k]), k) for k in free), reverse=True)
+    if not name or not scored or scored[0][0][0] <= 0 or (len(scored) > 1 and scored[1][0] == scored[0][0]):
+        return False
+    key = scored[0][1]
+    wanted[i] = (row, key[0], [key[1]], tmdb_titles[key], wanted[i][4])
+    return True
+
+
 def _settle(wanted: list[tuple], mode: str, tmdb_titles: dict) -> tuple[list[tuple], list[dict]]:
     """Numbering by names, checked for the whole show: no two episodes may end on one number — unless
-    TMDB's episode there names them both (its two parts). Episodes trading numbers are fine. A renumbered
-    episode landing where another one stays goes back to its own number (both are listed as unsure)."""
+    TMDB's episode there names them both (its two parts). Episodes trading numbers are fine. An episode
+    surely belonging to a number another one keeps: the one staying goes to a free number its name fits
+    (another translation of it — Pokémon S01E54 "Obtížný test" = TMDB E56 "Obtížná zkouška"); else the
+    renumbered one goes back to its own number (listed as unsure)."""
     unsure: list[dict] = []
     wanted = list(wanted)
     while True:
@@ -205,15 +221,23 @@ def _settle(wanted: list[tuple], mode: str, tmdb_titles: dict) -> tuple[list[tup
         for i, (_row, s, e, _t, _o) in enumerate(wanted):
             claims.setdefault((s, e[0]), []).append(i)
         back: set[int] = set()
+        moved = False
         for (s, n), idx in claims.items():
             if len({wanted[i][4] for i in idx}) < 2:
                 continue                                   # one episode (or versions of it)
             title = tmdb_titles.get((s, n), "")
             names = [wanted[i][0]["facts"].get("title") or "" for i in idx]
-            if title and all(tv_inventory.title_score(nm, title) >= tv_inventory.STRONG for nm in names)                     and all(tv_inventory.title_score(x, y) < tv_inventory.STRONG
-                            for j, x in enumerate(names) for y in names[j + 1:]):
+            two_part = title and all(tv_inventory.title_score(nm, title) >= tv_inventory.STRONG for nm in names) \
+                and all(tv_inventory.title_score(x, y) < tv_inventory.STRONG for j, x in enumerate(names) for y in names[j + 1:])
+            if two_part:
                 continue                                   # TMDB's two-part episode: both its names, each another
+            stay = [i for i in idx if (wanted[i][1], wanted[i][2]) == _own_numbers(wanted[i][0])]
+            if len(stay) == 1 and len(idx) == 2 and _gap(wanted, stay[0], s, claims, tmdb_titles):
+                moved = True
+                break
             back |= {i for i in idx if (wanted[i][1], wanted[i][2]) != _own_numbers(wanted[i][0])}
+        if moved:
+            continue
         if not back:
             return wanted, unsure
         for i in back:
