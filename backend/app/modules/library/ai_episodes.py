@@ -62,16 +62,8 @@ def _parse(content: str) -> list[list]:
     return [row for row in data if isinstance(row, list) and len(row) >= 4]
 
 
-async def suggest(cfg: dict, files: list[dict], cat: dict, season: int | None) -> list[dict]:
-    """files: [{path, name, own, season, episode, duration}]. Returns per file {path, season, episode, confidence,
-    title, agrees, warning} for every file the model placed."""
-    if not cfg.get("groq_api_key"):
-        raise ValueError("Groq není nastavený (Nastavení → AI)")
-    if season is None:
-        seasons = {f["season"] for f in files if f.get("season") is not None}
-    else:
-        seasons = {season}
-    seasons |= {s + d for s in list(seasons) for d in (-1, 1) if s + d > 0} | {0}
+async def _ask(cfg: dict, files: list[dict], cat: dict, seasons: set[int]) -> dict[int, tuple[tuple[int, int], int]]:
+    """One question to Groq: file index → (episode, confidence) for the episodes TMDB has."""
     user, _eps = _lines(files, cat, seasons)
     model = cfg.get("groq_model") or ""
     body = {"model": model, "temperature": 0.1, "max_tokens": 3000,
@@ -91,30 +83,62 @@ async def suggest(cfg: dict, files: list[dict], cat: dict, season: int | None) -
         rows = _parse(payload["choices"][0]["message"]["content"])
     except (json.JSONDecodeError, ValueError, KeyError, IndexError) as e:
         raise ValueError(f"AI odpověděla nesrozumitelně: {e}") from e
-
-    out: list[dict] = []
-    taken: dict[tuple[int, int], int] = {}
+    out = {}
     for row in rows:
         try:
             i, s, e, conf = _num(row[0]), _num(row[1]), _num(row[2]), _num(row[3]) or 0
         except (TypeError, ValueError):
             continue
-        if i is None or not 0 <= i < min(len(files), MAX_FILES) or s is None or e is None:
+        if i is None or not 0 <= i < min(len(files), MAX_FILES) or s is None or e is None or (s, e) not in cat:
+            continue                                         # no answer, or an episode TMDB does not have: made up
+        out[i] = ((s, e), max(0, min(100, conf)))
+    return out
+
+
+async def suggest(cfg: dict, files: list[dict], cat: dict, season: int | None) -> list[dict]:
+    """files: [{path, name, own, season, episode, duration}]. Returns per file {path, season, episode, confidence,
+    title, agrees, rules, same, warning} for every file the model placed.
+
+    The model is asked twice, the files in the user's order and reversed: its confidence alone says little (a blind
+    test: 7 of 31 wrong at 95 %) — an answer both times the same is a suggestion, two different ones are a doubt."""
+    if not cfg.get("groq_api_key"):
+        raise ValueError("Groq není nastavený (Nastavení → AI)")
+    files = files[:MAX_FILES]
+    seasons = {season} if season is not None else {f["season"] for f in files if f.get("season") is not None}
+    seasons |= {s + d for s in list(seasons) for d in (-1, 1) if s + d > 0} | {0}
+    first = await _ask(cfg, files, cat, seasons)
+    n = len(files)
+    second = {n - 1 - i: v for i, v in (await _ask(cfg, list(reversed(files)), cat, seasons)).items()}
+
+    out: list[dict] = []
+    taken: dict[tuple[int, int], int] = {}
+    for i, f in enumerate(files):
+        a, b = first.get(i), second.get(i)
+        if not a and not b:
             continue
-        key = (s, e)
-        if key not in cat:
-            continue                                         # an episode TMDB does not have: made up
-        f = files[i]
+        key, conf = a or b
+        warning = ""
+        if a and b and a[0] != b[0]:
+            conf = min(a[1], b[1], 40)
+            warning = f"AI si není jistá (jednou {_label(a[0])}, podruhé {_label(b[0])})"
+        elif not (a and b):
+            conf = min(conf, 50)
+            warning = "AI odpověděla jen jednou z dvou"
+        else:
+            conf = min(a[1], b[1])
         rule, sure = episode_names.best(f.get("own") or "", cat, f.get("season"), f.get("duration") or 0)
         cs = cat[key].get("cs") or ""
         title = cs if naming.episode_title(cs) else cat[key].get("en") or cs
-        out.append({"path": f["path"], "season": key[0], "episode": key[1], "confidence": max(0, min(100, conf)),
-                    "title": title or "", "agrees": bool(rule) and rule == key,
-                    "rules": f"S{rule[0]:02d}E{rule[1]:02d}" if rule and sure and rule != key else "",
-                    "same": key == (f.get("season"), f.get("episode"))})
-        taken.setdefault(key, 0)
-        taken[key] += 1
+        out.append({"path": f["path"], "season": key[0], "episode": key[1], "confidence": conf, "title": title or "",
+                    "agrees": bool(rule) and rule == key,
+                    "rules": _label(rule) if rule and sure and rule != key else "",
+                    "same": key == (f.get("season"), f.get("episode")), "warning": warning})
+        taken[key] = taken.get(key, 0) + 1
     for s in out:
-        if taken[(s["season"], s["episode"])] > 1:
+        if taken[(s["season"], s["episode"])] > 1 and not s["warning"]:
             s["warning"] = "na stejný díl míří víc souborů (kopie, nebo omyl)"
     return out
+
+
+def _label(key: tuple[int, int]) -> str:
+    return f"S{key[0]:02d}E{key[1]:02d}"
