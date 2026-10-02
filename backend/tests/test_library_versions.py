@@ -258,3 +258,26 @@ async def test_delete_the_last_version_removes_its_folder(setup):
     assert folder.parent.parent.exists()                           # the library root stays
     assert _rows() == []
 
+
+
+async def test_episode_named_by_tv_templates_when_renamer_is_on(setup, tmp_path, monkeypatch):
+    shows = tmp_path / "Serials"
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('tv_library_dir', ?)", (str(shows),))
+        conn.execute("UPDATE automations SET enabled = 1 WHERE type = 'renamer'")
+        conn.execute("INSERT INTO tmdb_shows (tmdb_id, data, fetched_at) VALUES (70523, ?, 9e12)", (json.dumps(
+            {"title": "Dark", "original_title": "Dark", "original_language": "de", "year": 2017,
+             "titles_by_lang": {"de": "Dark", "en": "Dark"}}),))
+        conn.execute("INSERT INTO library_episodes (show_tmdb_id, season, episode, episode_title) VALUES (70523, 2, 3, 'Ghosts')")
+
+    async def no_tmdb(db, tmdb_id, title, year):
+        return None
+    monkeypatch.setattr(imports, "_ensure_show", no_tmdb)
+    ep = tmp_path / "Downloads" / "Dark.S02E03.1080p.mkv"
+    ep.write_bytes(b"e")
+    payload = await events.emit("download.completed", {
+        "download_id": "t", "tmdb_id": 70523, "title": "Dark", "year": "2017", "content_type": "tv", "path": str(ep)})
+    target = shows / "Dark (2017) {tmdb-70523}" / "Season 02" / "Dark - S02E03 - Ghosts [2160p x265 HDR10] [CS+EN].mkv"
+    assert payload["path"] == str(target) and target.exists()
+    with sqlite3.connect(DB_PATH) as conn:
+        assert conn.execute("SELECT file_path FROM tv_media").fetchone()[0] == str(target)

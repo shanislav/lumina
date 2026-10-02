@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from app.clients.tmdb import TMDBClient
 from app.config import get_effective_settings, movies_library_dir, tv_library_dir
 from app.core import events
+from app.core.episode_match import parse_episode
 from app.core.mediainfo import probe_async
 from app.db import get_db
 from app.modules.library.files import (
@@ -461,12 +462,12 @@ def _absolute_episode(order: list[tuple[int, int]], number: int) -> tuple[int, i
 
 
 async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int, season: int, episode: int,
-                              names: list[tuple[str, str]]) -> str:
+                              names: list[tuple[str, str]]) -> tuple[str, int | None]:
     """Why the file is another TMDB episode than its number says — its name (in the file, or Plex's)
     is TMDB's name of another episode of the season (Czech or English). "" when a name fits, or only
     reads differently (Plex in English, TMDB in Czech is no problem). Big Bang S12: the file
     "S12E24 Stockholmský syndrom" is part of TMDB's E23; Plex follows TMDB there, so the file's own
-    name tells it."""
+    name tells it. Returns (why, TMDB's number of the episode)."""
     key = (tmdb_id, season)
     if key not in cache:
         titles: dict[int, list[str]] = {}
@@ -491,8 +492,8 @@ async def _tmdb_other_episode(client: TMDBClient, db, cache: dict, tmdb_id: int,
         own = next((t for t in titles.get(episode, []) if t), "")
         for n, other in sorted(titles.items()):
             if n != episode and any(tv_inventory.same_episode(name, t, strict=True) for t in other):
-                return f"{who}: „{name}“ = v TMDB E{n:02d} „{other[0]}“ (E{episode:02d} je „{own}“)"
-    return ""
+                return f"{who}: „{name}“ = v TMDB E{n:02d} „{other[0]}“ (E{episode:02d} je „{own}“)", n
+    return "", None
 
 
 async def _lumina_show(client: TMDBClient, db, episodes: list[dict], show_name: str, year) -> tuple[int | None, str]:
@@ -610,6 +611,12 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 unknown.append(f)
                 continue
             entry["hint"] = hint
+            # the file's own numbers (an absolute mapping changes season/episode later); a file may hold
+            # more episodes ("S07E21E22", "s04e01+02") — Plex lists such a file under one of them
+            own = parse_episode(f["filename"])
+            entry["file_episodes"] = own.episodes if len(own.episodes) > 1 and own.season == entry["season"] \
+                and own.episodes[0] == entry["episode"] else [entry["episode"]]
+            entry["file_season"] = entry["season"]
             # only a number in the name ("Naruto 104.mp4"): may be the absolute number of an anime
             entry["bare"] = not re.search(r"(?i)s\d{1,2}\s?e\d{1,3}|\d{1,2}x\d{2,3}", f["filename"]) \
                 and entry.get("numbers_from") != "plex" and not ep_nfo
@@ -742,29 +749,40 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 )
                 stats["episodes_matched"] += 1
                 hint = ep_data.get("hint") or {}
+                file_title = _title_in_name(ep_data["filename"])
+                names = [("soubor", file_title), ("Plex", hint.get("episode_title") or "")]
+                facts: dict = {"file": [ep_data.get("file_season", ep_data["season"]),
+                                        ep_data.get("file_episodes") or [ep_data["episode"]]],
+                               "title": file_title}
+                if hint.get("season") is not None and hint.get("episode"):
+                    facts["plex"] = [hint["season"], hint["episode"], hint.get("episode_title") or ""]
+                if ep_data.get("absolute"):
+                    facts["absolute"] = ep_data["absolute"]
                 status, note = "ok", ""
                 if lumina_id and plex_id and lumina_id != plex_id and not override:
                     status, note = "show", f"Plex: {plex_title} · Lumina: {lumina_title}"
                 elif hint and (hint.get("season"), hint.get("episode")) != (ep_data["season"], ep_data["episode"]) \
+                        and not (hint.get("season") == ep_data["season"]
+                                 and hint.get("episode") in (ep_data.get("file_episodes") or [])) \
                         and ep_data.get("numbers_from") != "plex" and not ep_data.get("absolute"):
                     status, note = "numbers", f"soubor S{ep_data['season']:02d}E{ep_data['episode']:02d}, " \
                                               f"Plex S{(hint.get('season') or 0):02d}E{(hint.get('episode') or 0):02d}"
                 elif not cursor.rowcount:
                     status, note = "not_in_tmdb", "TMDB tento díl nezná (jiné číslování?)"
-                    other = await _tmdb_other_episode(client, db, season_titles, tmdb_id, ep_data["season"], ep_data["episode"],
-                                                      [("soubor", _title_in_name(ep_data["filename"])),
-                                                       ("Plex", hint.get("episode_title") or "")])
+                    other, n = await _tmdb_other_episode(client, db, season_titles, tmdb_id, ep_data["season"],
+                                                         ep_data["episode"], names)
                     if other:
                         note = f"TMDB díl pod tímto číslem nemá · {other.split(' (E')[0]}"
-                elif (other := await _tmdb_other_episode(
-                        client, db, season_titles, tmdb_id, ep_data["season"], ep_data["episode"],
-                        [("soubor", _title_in_name(ep_data["filename"])), ("Plex", hint.get("episode_title") or "")])):
+                        facts["tmdb_episode"] = n
+                elif (found := await _tmdb_other_episode(client, db, season_titles, tmdb_id, ep_data["season"],
+                                                         ep_data["episode"], names))[0]:
                     # Big Bang S12: TMDB has the two-part finale as E23 and the farewell special as E24
-                    status, note = "tmdb_other", other
+                    status, note = "tmdb_other", found[0]
+                    facts["tmdb_episode"] = found[1]
                 elif not hint and plex_votes:
                     status, note = "not_in_plex", "Plex soubor nezná"
                 inventory.file(ep_data["file_path"], folder or show_name, tmdb_id, ep_data["season"],
-                               [ep_data["episode"]], status, note)
+                               [ep_data["episode"]], status, note, facts)
 
         # a file this scan put under a show belongs to no other one (an earlier scan's wrong match:
         # "SGA" episodes under "Sgauth") — a show TMDB could not be asked about now keeps its files
@@ -777,4 +795,24 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                          "(SELECT DISTINCT show_tmdb_id FROM library_episodes WHERE has_file = 1)")
         await inventory.save(db)
         await db.commit()
+        await _tv_media(db, tv_files)
+
+
+async def _tv_media(db, files: list[dict]) -> None:
+    """MediaInfo of every episode file for the renamer's names ([1080p x265] [CS+EN]) — read again only
+    when the file changed (a first scan of a big library takes a while: ~0.1 s a file)."""
+    known = {r[0]: (r[1], r[2]) for r in await (await db.execute("SELECT file_path, size, mtime FROM tv_media")).fetchall()}
+    todo = [f for f in files if known.get(f["file_path"]) != (f["file_size"], f["added_at"])]
+    _job.update(phase="tv_media", total=len(todo), done=0)
+    for index, f in enumerate(todo, 1):
+        _job["current"] = f["filename"]
+        media = await probe_async(f["file_path"])
+        await db.execute("INSERT OR REPLACE INTO tv_media (file_path, size, mtime, media) VALUES (?, ?, ?, ?)",
+                         (f["file_path"], f["file_size"], f["added_at"], json.dumps(media or {})))
+        _job["done"] = index
+        if index % 25 == 0:
+            await db.commit()           # never hold the database for long (other modules write too)
+    present = {f["file_path"] for f in files}
+    await db.executemany("DELETE FROM tv_media WHERE file_path = ?", [(p,) for p in known if p not in present])
+    await db.commit()
 

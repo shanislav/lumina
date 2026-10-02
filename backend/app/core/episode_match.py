@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 from app.core.film_match import STOPWORDS, Verdict, tokens
 
-_SE = re.compile(r"(?<![a-z0-9])s(\d{1,2}) ?e(\d{1,3})((?: ?- ?e?\d{1,3}|e\d{1,3})*)(?![0-9])")
+_SE = re.compile(r"(?<![a-z0-9])s(\d{1,2}) ?e(\d{1,3})((?: ?[-+] ?e?\d{1,3}|e\d{1,3})*)(?![0-9])")   # S04E01+02 too
 _SE_MORE = re.compile(r"\d{1,3}")
 _X = re.compile(r"(?<![a-z0-9])(\d{1,2})x(\d{2,3})(?:-(\d{2,3}))?(?![0-9])")
 _SEASON_LIST = re.compile(r"(?<![a-z0-9])s\d{1,2}(?:(?: ?[/,+&] ?| )s\d{1,2}(?![0-9e]))+")

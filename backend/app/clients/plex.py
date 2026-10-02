@@ -64,9 +64,10 @@ class PlexClient:
                                                            "identifier": "com.plexapp.plugins.library"})
         resp.raise_for_status()
 
-    async def set_added_at(self, section_key: str, rating_key: str, added_at: int) -> None:
+    async def set_added_at(self, section_key: str, rating_key: str, added_at: int, kind: int = 1) -> None:
+        """kind: Plex's metadata type — 1 movie, 4 episode."""
         resp = await self._http.put(f"/library/sections/{section_key}/all",
-                                    params={"type": 1, "id": rating_key, "addedAt.value": added_at})
+                                    params={"type": kind, "id": rating_key, "addedAt.value": added_at})
         resp.raise_for_status()
 
     async def item(self, rating_key: str) -> dict:

@@ -34,7 +34,7 @@ from app.config import get_effective_settings
 from app.core import naming
 from app.core.film_match import length_verdict
 from app.core.mediainfo import probe_async
-from app.db import get_db
+from app.db import get_automation, get_db
 from app.core.release_name import SUBTITLE_EXTS, VIDEO_EXTS
 from app.core import events
 from app.modules.library.notify import emit_movie_updated
@@ -282,10 +282,33 @@ async def _ensure_show(db, tmdb_id: int, title: str, year: str) -> None:
                      tuple(values.values()))
 
 
+async def _tv_names(db, tmdb_id: int, title: str, year: str) -> dict | None:
+    """What a new episode is named by when the renamer is on: the TV templates, the show's title in the
+    renamer's language, TMDB's episode names — as the TV renamer names the library."""
+    from app.modules.library import organize_tv
+
+    cfg = await get_effective_settings()
+    client = TMDBClient(cfg.get("tmdb_api_key", ""))
+    try:
+        details = await organize_tv.show_details(client, db, tmdb_id) or {}
+    finally:
+        await client.close()
+    settings = await naming_settings()
+    show_title = naming.pick_title(details.get("titles_by_lang") or {}, details.get("original_language", ""),
+                                   details.get("original_title", ""), settings["language"],
+                                   settings["keep_local_original"]) or details.get("title") or title
+    titles = {(r[0], r[1]): r[2] or "" for r in await (await db.execute(
+        "SELECT season, episode, episode_title FROM library_episodes WHERE show_tmdb_id = ?", (tmdb_id,))).fetchall()}
+    return {"settings": settings, "title": show_title, "info": {"tmdb_id": tmdb_id, "year": details.get("year") or year},
+            "titles": titles}
+
+
 async def import_episode(payload: dict) -> None:
     """Episodes into the show's folder (the one it has in the library, else "{show} ({year})"), each
     season into its folder (the existing one, else "Season NN"), names kept (Plex reads SxxEyy).
     A season pack brings all its episodes (``extra_paths``). The library learns about them at once.
+    With the renamer on, a new show's folder, a new season's folder and the file are named by the TV
+    templates (core/naming.episode_paths) — an existing folder of the show stays the one used.
     ``library_action`` {"mode": "episode", "season", "episode", "replace"}: the episode the user picked
     (for files without SxxEyy in the name); replace = the owned file of that episode goes."""
     from app.core.episode_match import parse_episode
@@ -311,6 +334,12 @@ async def import_episode(payload: dict) -> None:
                 "SELECT season, episode, file_path FROM library_episodes WHERE show_tmdb_id = ? AND has_file = 1 "
                 "ORDER BY season, episode", (tmdb_id,))).fetchall()
         show_root, season_dirs = _show_folders(root, rows)
+        renamer = await get_automation("renamer")
+        names = await _tv_names(db, tmdb_id, title, year) if tmdb_id and renamer and renamer["enabled"] else None
+        if not show_root and names:
+            folder_rel, _s, _f = naming.episode_paths(names["info"], 1, [1], {}, "", names["title"], ".mkv",
+                                                      folder_format=names["settings"]["tv_folder_format"])
+            show_root = os.path.join(root, *folder_rel.split("/"))
         show_root = show_root or os.path.join(root, naming.sanitize(f"{title} ({year})" if year else title))
         owned = {(r["season"], r["episode"]): r["file_path"] for r in rows}
         targets = []
@@ -327,9 +356,19 @@ async def import_episode(payload: dict) -> None:
             if path != src and season and episodes and not action.get("replace_owned", True)                     and all((season, ep) in owned for ep in episodes):
                 logger.info("%s: S%02dE%02d is owned already — left in downloads", path, season, episodes[0])
                 continue
-            folder = season_dirs.get(season) or (os.path.join(show_root, f"Season {season:02d}") if season else show_root)
+            name, media = os.path.basename(path), None
+            if names and season is not None and episodes:
+                media = await probe_async(path)
+                st = names["settings"]
+                _r, season_rel, name = naming.episode_paths(
+                    names["info"], season, episodes, media, os.path.basename(path), names["title"],
+                    os.path.splitext(path)[1], names["titles"].get((season, episodes[0]), ""),
+                    st["tv_folder_format"], st["tv_season_format"], st["tv_file_format"])
+                folder = season_dirs.get(season) or os.path.join(show_root, season_rel)
+            else:
+                folder = season_dirs.get(season) or (os.path.join(show_root, f"Season {season:02d}") if season else show_root)
             _ensure_dir(folder)
-            target = _unique_path(os.path.join(folder, os.path.basename(path)))
+            target = _unique_path(os.path.join(folder, name))
             _move_with_subtitles(path, target)
             targets.append(target)
             if not (tmdb_id and season and episodes):
@@ -341,8 +380,11 @@ async def import_episode(payload: dict) -> None:
                     if old and old != target and os.path.exists(old):
                         deleted = _delete_version(old, target)
                         logger.info("Replaced S%02dE%02d: deleted %s", season, ep, deleted)
-            media = await probe_async(target)
+            media = media if media is not None else await probe_async(target)
             stat = os.stat(target)
+            # the TV renamer reads MediaInfo from here (no second probe on the next scan)
+            await db.execute("INSERT OR REPLACE INTO tv_media (file_path, size, mtime, media) VALUES (?, ?, ?, ?)",
+                             (target, stat.st_size, stat.st_mtime, json.dumps(media or {})))
             values = (os.path.basename(target), target, stat.st_size, naming.resolution_label(media) or "",
                       ",".join(sorted({a["lang"].upper() for a in media.get("audio", []) if a.get("lang")})))
             for ep in episodes:

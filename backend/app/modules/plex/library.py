@@ -113,3 +113,31 @@ def movie(meta: dict) -> dict:
 
 async def movies(client: PlexClient, section_key: str) -> list[dict]:
     return [movie(m) for m in await client.items(section_key)]
+
+
+async def show_episodes(client: PlexClient, section_key: str) -> list[dict]:
+    """Every episode of a TV section as the migration keeps it — like ``movie()``; ``ident`` = (show, season,
+    episode) tells the same episode when Plex gives it a new id (the show's TMDB id is no episode's own)."""
+    shows = {}
+    for meta in await client.items(section_key):
+        tmdb, _ = _ids(meta)
+        shows[str(meta["ratingKey"])] = {"tmdb_id": tmdb, "title": meta.get("title", "")}
+    out = []
+    for meta in await client.episodes(section_key):
+        show = shows.get(str(meta.get("grandparentRatingKey")), {})
+        title = show.get("title") or meta.get("grandparentTitle", "")
+        season, episode = meta.get("parentIndex") or 0, meta.get("index") or 0
+        out.append({
+            "rating_key": str(meta["ratingKey"]),
+            "title": f"{title} S{season:02d}E{episode:02d}",
+            "year": None,
+            "tmdb_id": show.get("tmdb_id"),
+            "imdb_id": None,
+            "files": sorted(p["file"] for m in meta.get("Media", []) for p in m.get("Part", []) if p.get("file")),
+            "view_count": int(meta.get("viewCount") or 0),
+            "last_viewed_at": meta.get("lastViewedAt"),
+            "added_at": meta.get("addedAt"),
+            "missing": bool(meta.get("deletedAt")),
+            "ident": [show.get("tmdb_id") or title, season, episode],
+        })
+    return out

@@ -47,6 +47,29 @@ CREATE TABLE IF NOT EXISTS tv_folder_overrides (
 );
 """
 
+# For the TV renamer: technical facts of every episode file (MediaInfo is slow — kept until the file
+# changes), how a show is to be numbered, TMDB's details of the shows
+TV_RENAME = """
+CREATE TABLE IF NOT EXISTS tv_media (
+    file_path TEXT PRIMARY KEY,
+    size INTEGER,
+    mtime REAL,
+    media TEXT DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS tv_naming (
+    tmdb_id INTEGER PRIMARY KEY,
+    numbering TEXT DEFAULT 'files',
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tmdb_shows (
+    tmdb_id INTEGER PRIMARY KEY,
+    data TEXT NOT NULL,
+    fetched_at REAL NOT NULL
+);
+"""
+
 # Plex's folders for a show's extras (bonus videos, not episodes) — and names users give them
 EXTRA_DIRS = {"behind the scenes", "deleted scenes", "featurettes", "interviews", "scenes", "shorts", "trailers", "other"}
 EXTRA_DIRS_OTHER_NAMES = {"bonus", "bonusy", "extra", "extras", "extras & bonus", "special features"}
@@ -84,8 +107,11 @@ class Inventory:
     def show(self, folder: str, tmdb_id, source: str, lumina_id, lumina_title: str, plex_id, plex_title: str, files: int):
         self.folders.append((folder, tmdb_id, source, lumina_id, lumina_title or "", plex_id, plex_title or "", files))
 
-    def file(self, path: str, folder: str, tmdb_id, season, episodes: list[int], status: str, note: str = ""):
-        self.files.append((path, folder, tmdb_id, season, json.dumps(episodes), status, note))
+    def file(self, path: str, folder: str, tmdb_id, season, episodes: list[int], status: str, note: str = "",
+             facts: dict | None = None):
+        """facts: what the renamer needs — {"plex": [season, episode, title], "file": [season, [episodes]],
+        "title": the episode's name in the file, "tmdb_episode": TMDB's number of it when TMDB orders differently}"""
+        self.files.append((path, folder, tmdb_id, season, json.dumps(episodes), status, note, json.dumps(facts or {})))
 
     async def save(self, db) -> None:
         """The scan sees the whole TV library: what it saw replaces the last inventory."""
@@ -96,7 +122,7 @@ class Inventory:
                              "plex_tmdb_id, plex_title, files, scanned_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                              [(*f, now) for f in self.folders])
         await db.executemany("INSERT OR REPLACE INTO tv_files (file_path, folder, show_tmdb_id, season, episodes, status, "
-                             "note, scanned_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [(*f, now) for f in self.files])
+                             "note, facts, scanned_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [(*f, now) for f in self.files])
 
 
 _COMMON = {"the", "and", "for", "with", "from", "part", "cast", "dil", "pro", "jak", "kde", "tak", "ale", "nebo", "who", "what"}

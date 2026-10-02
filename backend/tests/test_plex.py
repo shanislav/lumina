@@ -136,7 +136,7 @@ class FakeServer(FakePlex):
     async def mark_watched(self, key):
         FakeServer.calls.append(("watched", key))
 
-    async def set_added_at(self, section, key, at):
+    async def set_added_at(self, section, key, at, kind=1):
         FakeServer.calls.append(("added", key, at))
 
     async def item(self, key):
@@ -315,3 +315,19 @@ async def test_which_friend_has_a_film(plex):
                     "url": "https://app.plex.tv/desktop/#!/server/abc/details?key=%2Flibrary%2Fmetadata%2F77"}]
     assert await friends.who_has(None, "tt0133093") == has
     assert await friends.who_has(604, None) == []
+
+
+def test_episodes_compare_by_show_and_numbers():
+    """TV migration: a show's episodes share its TMDB id — an episode Plex added anew is found by (show, season, episode)."""
+    from app.modules.plex.migration import compare
+
+    def ep(key, e, files, ident=True):
+        return {"rating_key": key, "title": f"Loki S01E0{e}", "year": None, "tmdb_id": 84958, "imdb_id": None,
+                "files": files, "view_count": 1, "last_viewed_at": None, "added_at": 100 + e, "missing": False,
+                "ident": [84958, 1, e]}
+    snapshot = {"1": ep("1", 1, ["/a/Loki.S01E01.mkv"]), "2": ep("2", 2, ["/a/Loki.S01E02.mkv"])}
+    now = [ep("1", 1, ["/b/Loki - S01E01.mkv"]), ep("9", 2, ["/b/Loki - S01E02.mkv"])]
+    result = compare(snapshot, now)
+    assert [m["rating_key"] for m in result["moved"]] == ["1"]
+    assert [(r["old"]["rating_key"], r["new"]["rating_key"]) for r in result["readded"]] == [("2", "9")]
+    assert not result["new"]

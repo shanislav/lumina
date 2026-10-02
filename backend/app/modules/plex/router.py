@@ -50,14 +50,18 @@ def _fail(e: PlexError):
 
 
 @router.get("/migration", dependencies=[Depends(require("library.edit"))])
-async def migration_overview() -> dict:
-    return await migration.overview()
+async def migration_overview(kind: str = "movie") -> dict:
+    return await migration.overview(kind)
+
+
+class StartBody(BaseModel):
+    kind: str = "movie"         # movie | show
 
 
 @router.post("/migration/start", dependencies=[Depends(require("library.edit"))])
-async def migration_start() -> dict:
+async def migration_start(body: StartBody | None = None) -> dict:
     try:
-        return await migration.start()
+        return await migration.start((body or StartBody()).kind)
     except PlexError as e:
         _fail(e)
 

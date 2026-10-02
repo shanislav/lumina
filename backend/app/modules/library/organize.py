@@ -320,6 +320,19 @@ def _remove_empty_dirs(folder: str, root: str) -> None:
         folder = os.path.dirname(folder)
 
 
+async def path_moved(db, src: str, dst: str) -> None:
+    """A video got another path: every row that knows it by its path (movie, episode, TV inventory, MediaInfo)."""
+    name = os.path.basename(dst)
+    try:
+        mtime = os.stat(dst).st_mtime
+    except OSError:
+        mtime = 0
+    await db.execute("UPDATE library_movies SET file_path = ?, filename = ?, file_mtime = ? WHERE file_path = ?", (dst, name, mtime, src))
+    await db.execute("UPDATE library_episodes SET file_path = ?, filename = ? WHERE file_path = ?", (dst, name, src))
+    await db.execute("UPDATE OR REPLACE tv_files SET file_path = ? WHERE file_path = ?", (dst, src))
+    await db.execute("UPDATE OR REPLACE tv_media SET file_path = ? WHERE file_path = ?", (dst, src))
+
+
 async def apply_plan(db, plan: dict, root: str, batch_id: str | None = None) -> str:
     """Execute a plan. Returns batch id. Raises OrganizeError (after rollback) on failure."""
     if plan["conflicts"]:
@@ -348,10 +361,7 @@ async def apply_plan(db, plan: dict, root: str, batch_id: str | None = None) -> 
             (batch_id, movie_id, op["src"], op["dst"]),
         )
         if op["kind"] == "video":
-            await db.execute(
-                "UPDATE library_movies SET file_path = ?, filename = ?, file_mtime = ? WHERE file_path = ?",
-                (op["dst"], os.path.basename(op["dst"]), os.stat(op["dst"]).st_mtime, op["src"]),
-            )
+            await path_moved(db, op["src"], op["dst"])
     await db.commit()
     if plan["remove_folder"]:
         _remove_empty_dirs(plan["folder"], root)
@@ -359,7 +369,10 @@ async def apply_plan(db, plan: dict, root: str, batch_id: str | None = None) -> 
     return batch_id
 
 
-async def undo_batch(db, batch_id: str, root: str) -> int:
+async def undo_batch(db, batch_id: str, root: str | list[str]) -> int:
+    """Move a batch's files back. root: the library root(s) — empty folders are removed up to the one
+    holding them (a batch of TV shows lies under the TV library)."""
+    roots = [os.path.normpath(r) for r in ([root] if isinstance(root, str) else root) if r]
     cursor = await db.execute(
         "SELECT id, src, dst FROM file_operations WHERE batch_id = ? AND status = 'done' ORDER BY id DESC", (batch_id,)
     )
@@ -372,16 +385,15 @@ async def undo_batch(db, batch_id: str, root: str) -> int:
             continue
         _ensure_dir(os.path.dirname(op["src"]))
         os.rename(op["dst"], op["src"])
-        await db.execute(
-            "UPDATE library_movies SET file_path = ?, filename = ?, file_mtime = ? WHERE file_path = ?",
-            (op["src"], os.path.basename(op["src"]), os.stat(op["src"]).st_mtime, op["dst"]),
-        )
+        await path_moved(db, op["dst"], op["src"])
         await db.execute("UPDATE file_operations SET status = 'undone' WHERE id = ?", (op["id"],))
         touched_folders.add(os.path.dirname(op["dst"]))
         undone += 1
     await db.commit()
     # Folders created by the batch may still hold an NFO the nfo module wrote there.
-    for folder in touched_folders:
+    for folder in sorted(touched_folders, key=len, reverse=True):
         _drop_lumina_leftovers(folder)
-        _remove_empty_dirs(folder, root)
+        holder = next((r for r in roots if os.path.normpath(folder).startswith(r + os.sep)), None)
+        if holder:
+            _remove_empty_dirs(folder, holder)
     return undone
