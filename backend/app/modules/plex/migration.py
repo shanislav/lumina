@@ -6,6 +6,9 @@ After each batch: one scan of the whole section — Plex sees the old file gone 
 same scan — and a check that every movie is still the same Plex item, now with the new files.
 Finish: optionally give a movie Plex added anew its watched state and date back, empty the trash,
 switch the settings back to what they were. The state is in the DB, so it survives a restart.
+
+The same for the TV library (``kind`` "show"): the items are its episodes, the same episode is told by
+(show, season, episode). One migration at a time — the settings are the server's.
 """
 
 import asyncio
@@ -16,7 +19,7 @@ import shutil
 import time
 
 from app.db import get_db
-from app.modules.plex.library import PlexError, connect, movies
+from app.modules.plex.library import PlexError, connect, connect_tv, movies, show_episodes
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +57,15 @@ SCAN_START_S = 15        # a scan that never showed up as running was quicker th
 SCAN_MAX_S = 3600
 
 _job: dict = {}
+KINDS = ("movie", "show")
+
+
+async def _connect(kind: str):
+    return await (connect_tv() if kind == "show" else connect())
+
+
+async def _items(client, section_key: str, kind: str) -> list[dict]:
+    return await (show_episodes(client, section_key) if kind == "show" else movies(client, section_key))
 
 
 def _on(value) -> bool:
@@ -67,7 +79,7 @@ async def state() -> dict | None:
         if not row:
             return None
         count = (await (await db.execute("SELECT COUNT(*) FROM plex_snapshot")).fetchone())[0]
-        return {**dict(row), "prefs": json.loads(row["prefs"]),
+        return {**dict(row), "kind": row["kind"] or "movie", "prefs": json.loads(row["prefs"]),
                 "report": json.loads(row["report"]) if row["report"] else None, "movies": count}
     finally:
         await db.close()
@@ -77,12 +89,14 @@ async def active() -> bool:
     return await state() is not None
 
 
-async def overview() -> dict:
-    """For the rename dialog: the migration (if one runs) and Plex's settings as they are now."""
+async def overview(kind: str = "movie") -> dict:
+    """For the rename dialog: the migration (if one runs — of movies or of TV shows) and Plex's settings as they are now."""
     current = await state()
-    out = {"configured": True, "active": current is not None, "job": job_view()}
+    running = (current or {}).get("kind", kind)
+    out = {"configured": True, "active": current is not None and running == kind, "kind": kind, "job": job_view(),
+           "other_running": running if current is not None and running != kind else None}
     try:
-        client, _cfg, section, _root = await connect()
+        client, _cfg, section, _root = await _connect(kind)
     except PlexError as e:
         return {**out, "configured": "nastavený" not in str(e), "error": str(e)}
     try:
@@ -91,12 +105,12 @@ async def overview() -> dict:
         return {**out, "error": f"Plex neodpovídá: {e or type(e).__name__}"}
     finally:
         await client.close()
-    original = (current or {}).get("prefs", {})
+    original = (current or {}).get("prefs", {}) if out["active"] else {}
     out["section"] = section["title"]
     out["settings"] = [{"id": k, "title": t, "on": _on(prefs[k]),
                         **({"was_on": _on(original[k])} if k in original else {})}
                        for k, t in MANAGED.items() if k in prefs]
-    if current:
+    if current and out["active"]:
         out.update(started_at=current["started_at"], movies=current["movies"], report=current["report"])
     return out
 
@@ -139,26 +153,30 @@ async def _put_edits_back(client, section_key: str, rating_key: str, edits: dict
     await client.edit_fields(section_key, rating_key, edits.get("values", {}), edits.get("locked", []))
 
 
-async def start() -> dict:
+async def start(kind: str = "movie") -> dict:
+    if kind not in KINDS:
+        raise PlexError(f"Neznámý druh knihovny: {kind}")
     if await active():
         raise PlexError("Migrace už běží")
-    client, _cfg, section, _root = await connect()
+    client, _cfg, section, _root = await _connect(kind)
     try:
         prefs = await client.prefs()
-        found = await movies(client, section["key"])
-        edits = await _all_edits(client, [m["rating_key"] for m in found])
+        found = await _items(client, section["key"], kind)
+        # what the user set by hand on a movie (an episode's are rare — not kept)
+        edits = await _all_edits(client, [m["rating_key"] for m in found]) if kind == "movie" else {}
         original = {k: prefs[k] for k in MANAGED if k in prefs}
         db = await get_db()
         try:
             await db.execute("DELETE FROM plex_snapshot")
             await db.executemany(
                 "INSERT INTO plex_snapshot (rating_key, tmdb_id, imdb_id, title, year, files, view_count, last_viewed_at, "
-                "added_at, edits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "added_at, edits, ident) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [(m["rating_key"], m["tmdb_id"], m["imdb_id"], m["title"], m["year"], json.dumps(m["files"]), m["view_count"],
-                  m["last_viewed_at"], m["added_at"], json.dumps(edits[m["rating_key"]]) if m["rating_key"] in edits else None)
+                  m["last_viewed_at"], m["added_at"], json.dumps(edits[m["rating_key"]]) if m["rating_key"] in edits else None,
+                  json.dumps(m["ident"]) if m.get("ident") else None)
                  for m in found])
-            await db.execute("INSERT INTO plex_migration (id, section_key, section_title, prefs) VALUES (1, ?, ?, ?)",
-                             (section["key"], section["title"], json.dumps(original)))
+            await db.execute("INSERT INTO plex_migration (id, section_key, section_title, prefs, kind) VALUES (1, ?, ?, ?, ?)",
+                             (section["key"], section["title"], json.dumps(original), kind))
             await db.commit()
         finally:
             await db.close()
@@ -166,9 +184,9 @@ async def start() -> dict:
         await client.set_prefs({k: False for k in original})
     finally:
         await client.close()
-    logger.info("Plex migration started: %d movies of %s (%d edited by hand), settings off: %s",
-                len(found), section["title"], len(edits), list(original))
-    return await overview()
+    logger.info("Plex migration started: %d items (%s) of %s (%d edited by hand), settings off: %s",
+                len(found), kind, section["title"], len(edits), list(original))
+    return await overview(kind)
 
 
 def job_view() -> dict:
@@ -206,6 +224,13 @@ async def _wait_for_scan(client, key: str) -> None:
     raise PlexError("Plex prohledává knihovnu déle než hodinu")
 
 
+def _keys(item: dict) -> list[tuple]:
+    if item.get("ident"):
+        return [("ep", *item["ident"])]
+    return [k for k in (("tmdb", item["tmdb_id"]) if item.get("tmdb_id") else None,
+                        ("imdb", item["imdb_id"]) if item.get("imdb_id") else None) if k]
+
+
 def compare(snapshot: dict[str, dict], now: list[dict]) -> dict:
     """What happened to the movies since the snapshot. ``snapshot``: rating key → movie as saved."""
     current = {m["rating_key"]: m for m in now}
@@ -218,16 +243,17 @@ def compare(snapshot: dict[str, dict], now: list[dict]) -> dict:
             missing.append(old)
         elif m["files"] != old["files"]:
             moved.append({**old, "files": m["files"], "old_files": old["files"]})
-    # the same film: by its TMDB id, or IMDb id (an old item matched by IMDb only)
-    lost = {("tmdb", o["tmdb_id"]): o for o in missing + gone if o["tmdb_id"]}
-    lost |= {("imdb", o["imdb_id"]): o for o in missing + gone if o.get("imdb_id")}
+    # the same film: by its TMDB id, or IMDb id (an old item matched by IMDb only); an episode by its show and numbers
+    lost: dict[tuple, dict] = {}
+    for o in missing + gone:
+        lost |= {k: o for k in _keys(o)}
     # … or by its file name: a folder move keeps the names (a film Plex had wrong comes back as the right one)
     lost |= {("file", os.path.basename(f)): o for o in missing + gone for f in o["files"]}
     readded, new = [], []
     for m in now:
         if m["rating_key"] in snapshot:
             continue
-        old = (lost.get(("tmdb", m["tmdb_id"])) or lost.get(("imdb", m.get("imdb_id")))
+        old = (next((lost[k] for k in _keys(m) if k in lost), None)
                or next((lost[("file", os.path.basename(f))] for f in m["files"] if ("file", os.path.basename(f)) in lost), None))
         if old and old not in [r["old"] for r in readded]:
             readded.append({"old": old, "new": m})
@@ -245,19 +271,21 @@ async def check() -> dict:
     current = await state()
     if not current:
         raise PlexError("Migrace neběží")
-    client, _cfg, _section, _root = await connect()
+    kind = current["kind"]
+    client, _cfg, _section, _root = await _connect(kind)
     key = current["section_key"]
     try:
         await client.scan(key)
         await _wait_for_scan(client, key)
         _job["phase"] = "compare"
-        now = await movies(client, key)
+        now = await _items(client, key, kind)
     finally:
         await client.close()
     db = await get_db()
     try:
         rows = await (await db.execute("SELECT * FROM plex_snapshot")).fetchall()
-        snapshot = {r["rating_key"]: {**dict(r), "files": json.loads(r["files"])} for r in rows}
+        snapshot = {r["rating_key"]: {**dict(r), "files": json.loads(r["files"]),
+                                      "ident": json.loads(r["ident"]) if r["ident"] else None} for r in rows}
         result = compare(snapshot, now)
         # Plex made a new item but carried the date added and the watched state over (by the film's id):
         # nothing to repair — the new item takes the old one's place
@@ -266,15 +294,16 @@ async def check() -> dict:
         result["readded"] = [r for r in result["readded"] if r not in renewed]
         for r in renewed:
             n = r["new"]
-            await db.execute("UPDATE plex_snapshot SET rating_key = ?, files = ?, tmdb_id = ?, imdb_id = ? WHERE rating_key = ?",
-                             (n["rating_key"], json.dumps(n["files"]), n["tmdb_id"], n["imdb_id"], r["old"]["rating_key"]))
+            await db.execute("UPDATE plex_snapshot SET rating_key = ?, files = ?, tmdb_id = ?, imdb_id = ?, ident = ? "
+                             "WHERE rating_key = ?", (n["rating_key"], json.dumps(n["files"]), n["tmdb_id"], n["imdb_id"],
+                                                      json.dumps(n["ident"]) if n.get("ident") else None, r["old"]["rating_key"]))
         # the user's own poster and fields onto the new item
         restored = []
         for r in renewed:      # (a movie added anew gets them on finish, with the repair)
             if not r["old"].get("edits"):
                 continue
             try:
-                client = (await connect())[0]
+                client = (await _connect(kind))[0]
                 try:
                     await _put_edits_back(client, current["section_key"], r["new"]["rating_key"], json.loads(r["old"]["edits"]))
                 finally:
@@ -288,10 +317,10 @@ async def check() -> dict:
             await db.execute("UPDATE plex_snapshot SET files = ? WHERE rating_key = ?", (json.dumps(m["files"]), m["rating_key"]))
         for m in result["new"]:
             await db.execute(
-                "INSERT INTO plex_snapshot (rating_key, tmdb_id, imdb_id, title, year, files, view_count, last_viewed_at, added_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO plex_snapshot (rating_key, tmdb_id, imdb_id, title, year, files, view_count, last_viewed_at, added_at, "
+                "ident) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (m["rating_key"], m["tmdb_id"], m["imdb_id"], m["title"], m["year"], json.dumps(m["files"]), m["view_count"],
-                 m["last_viewed_at"], m["added_at"]))
+                 m["last_viewed_at"], m["added_at"], json.dumps(m["ident"]) if m.get("ident") else None))
         report = {
             "checked_at": time.time(),
             "moved": len(result["moved"]),
@@ -322,13 +351,14 @@ async def finish(empty_trash: bool, repair: bool) -> dict:
         raise PlexError("Migrace neběží")
     if _job.get("running"):
         raise PlexError("Ještě běží kontrola Plexu")
-    client, _cfg, _section, _root = await connect()
+    kind = current["kind"]
+    client, _cfg, _section, _root = await _connect(kind)
     repaired = 0
     try:
         if repair:
             readded = (current["report"] or {}).get("readded", [])
             # Plex often brings the watched state back itself (by the film's id) — mark only what it did not
-            viewed = {m["rating_key"]: m["view_count"] for m in await movies(client, current["section_key"])} if readded else {}
+            viewed = {m["rating_key"]: m["view_count"] for m in await _items(client, current["section_key"], kind)} if readded else {}
             db = await get_db()
             try:
                 edits = {row[0]: json.loads(row[1]) for row in await (await db.execute(
@@ -341,7 +371,7 @@ async def finish(empty_trash: bool, repair: bool) -> dict:
                 if r["watched"] and not viewed.get(r["new_key"]):
                     await client.mark_watched(r["new_key"])
                 if r["added_at"]:
-                    await client.set_added_at(current["section_key"], r["new_key"], r["added_at"])
+                    await client.set_added_at(current["section_key"], r["new_key"], r["added_at"], 4 if kind == "show" else 1)
                 repaired += 1
         if empty_trash:
             await client.empty_trash(current["section_key"])

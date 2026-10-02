@@ -442,10 +442,11 @@ async def list_operations(limit: int = 20):
 @router.post("/operations/{batch_id}/undo", dependencies=[Depends(require("library.edit"))])
 async def undo_operations(batch_id: str):
     cfg = await get_effective_settings()
-    root = movies_library_dir(cfg)
+    from app.config import tv_library_dir
+    roots = [movies_library_dir(cfg), tv_library_dir(cfg)]          # a batch of movies or of TV shows
     db = await get_db()
     try:
-        undone = await organize.undo_batch(db, batch_id, root)
+        undone = await organize.undo_batch(db, batch_id, roots)
         cursor = await db.execute("SELECT DISTINCT movie_id FROM file_operations WHERE batch_id = ?", (batch_id,))
         for row in await cursor.fetchall():
             if row[0]:
@@ -612,6 +613,105 @@ async def tv_override(body: TvOverride) -> dict:
         if body.tmdb_id:
             await db.execute("UPDATE tv_folders SET tmdb_id = ?, source = 'user' WHERE folder = ?", (body.tmdb_id, body.folder))
             await db.commit()
+    finally:
+        await db.close()
+    return {"ok": True}
+
+
+# ─── TV renamer (docs SERIALY) ───
+
+class TvOrganizeRequest(BaseModel):
+    folders: list[str]
+    # "names": new file names only, files stay in their folders (Plex keeps its items — decisions/0008)
+    stage: Literal["all", "names"] = "all"
+
+
+class TvNaming(BaseModel):
+    tmdb_id: int
+    numbering: Literal["files", "tmdb"]
+
+
+async def _tv_organize_context():
+    from app.config import tv_library_dir
+    cfg = await get_effective_settings()
+    root = tv_library_dir(cfg)
+    if not root:
+        raise HTTPException(400, "Knihovna seriálů není nastavená")
+    return TMDBClient(cfg["tmdb_api_key"]), root
+
+
+def _tv_plan_view(plan: dict, root: str) -> dict:
+    rel = lambda p: os.path.relpath(p, root).replace(os.sep, "/") if p else p  # noqa: E731
+    kinds: dict[str, int] = {}
+    for op in plan["ops"]:
+        kinds[op["kind"]] = kinds.get(op["kind"], 0) + 1
+    return {
+        **{k: plan.get(k) for k in ("folder", "tmdb_id", "title", "year", "numbering", "conflicts", "blocked",
+                                    "tips", "media_missing")},
+        "source_folder": rel(plan["source_folder"]),
+        "target_folder": rel(plan["target_folder"]),
+        "kinds": kinds,
+        "ops": [{"kind": op["kind"], "src": rel(op["src"]), "dst": rel(op["dst"])} for op in plan["ops"]],
+        "skipped": [{"file": rel(s["file"]), "why": s["why"]} for s in plan["skipped"]],
+    }
+
+
+@router.get("/tv/organize", dependencies=[Depends(require("library.edit"))])
+async def tv_organize_plans(folder: str | None = None):
+    """What fixing the TV shows on disk would do (nothing is changed): one show folder, or all that need it."""
+    from app.modules.library import organize_tv
+    client, root = await _tv_organize_context()
+    db = await get_db()
+    try:
+        if folder is not None:
+            return _tv_plan_view(await organize_tv.plan_show(db, client, folder, root), root)
+        return [_tv_plan_view(p, root) for p in await organize_tv.plan_all(db, client, root)]
+    except organize.OrganizeError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        await client.close()
+        await db.close()
+
+
+@router.post("/tv/organize", dependencies=[Depends(require("library.edit"))])
+async def tv_organize_apply(body: TvOrganizeRequest):
+    """Fix the given show folders on disk (one undoable batch). Plans are recomputed right before applying."""
+    from app.modules.library import organize_tv
+    client, root = await _tv_organize_context()
+    db = await get_db()
+    batch_id = None
+    done, failed = [], []
+    try:
+        for folder in body.folders:
+            try:
+                plan = await organize_tv.plan_show(db, client, folder, root)
+                if body.stage == "names":
+                    plan = organize_tv.names_only(plan)
+                if not plan["ops"]:
+                    continue
+                batch_id = await organize_tv.apply_plan(db, plan, root, batch_id)
+                done.append({"title": plan["title"], "folder": folder, "ops": len(plan["ops"]),
+                             "new_folder": os.path.relpath(plan["target_folder"], root).split(os.sep)[0]})
+            except organize.OrganizeError as e:
+                failed.append({"folder": folder, "error": str(e)})
+        if done:
+            from app.core import events
+            # Plex: the new folders and the old ones (gone, or left with what was not an episode)
+            await events.emit("library.files_added", {"folders": sorted({os.path.join(root, d[k]) for d in done
+                                                                         for k in ("folder", "new_folder")})})
+        return {"batch_id": batch_id, "done": done, "failed": failed}
+    finally:
+        await client.close()
+        await db.close()
+
+
+@router.put("/tv/naming", dependencies=[Depends(require("library.edit"))])
+async def tv_naming(body: TvNaming) -> dict:
+    """How a show's files are numbered: the user's (files/Plex) or TMDB's (its parts and specials)."""
+    from app.modules.library import organize_tv
+    db = await get_db()
+    try:
+        await organize_tv.set_numbering(db, body.tmdb_id, body.numbering)
     finally:
         await db.close()
     return {"ok": True}

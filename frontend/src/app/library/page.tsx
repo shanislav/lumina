@@ -5,6 +5,7 @@ import BulkFilmSettings from "@/components/BulkFilmSettings";
 import SubtitlesPanel from "@/components/SubtitlesPanel";
 import { useRouter } from "next/navigation";
 import TvInventory from "@/components/TvInventory";
+import TvRename from "@/components/TvRename";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -570,6 +571,9 @@ export default function LibraryPage() {
         placeholder={tab === "filmy" ? "Hledat v knihovně — název, rok, soubor…" : "Hledat seriál…"}
         className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-600" />
       {tab === "serialy" && <TvInventory />}
+      {tab === "serialy" && can("library.edit") && (
+        <div className="flex justify-end"><TvRename onChanged={loadData} /></div>
+      )}
 
       {loading ? (
         <div className="text-zinc-500 animate-pulse text-center py-12">Nacitam...</div>

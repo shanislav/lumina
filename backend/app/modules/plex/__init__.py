@@ -25,7 +25,9 @@ module = Module(
     migrations=[seed_automation("plex", "Plex (obnovení knihovny)"), migration.TABLES,
                 add_column("plex_snapshot", "edits", "TEXT"), add_column("plex_snapshot", "imdb_id", "TEXT"),
                 friends.TABLES, add_column("plex_friend_servers", "uri", "TEXT"),
-                add_column("plex_friend_servers", "token", "TEXT"), add_column("plex_friend_movies", "audio", "TEXT")],
+                add_column("plex_friend_servers", "token", "TEXT"), add_column("plex_friend_movies", "audio", "TEXT"),
+                # the migration of the TV library too: its episodes, the same one told by (show, season, episode)
+                add_column("plex_migration", "kind", "TEXT DEFAULT 'movie'"), add_column("plex_snapshot", "ident", "TEXT")],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=90),
                    Subscription("library.files_removed", on_files_removed),
                    Subscription("library.files_added", on_files_removed),     # the same: rescan the folder

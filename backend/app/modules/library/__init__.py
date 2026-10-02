@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS tmdb_movies (
 );
 """
 
-from app.modules.library.tv_inventory import TV_INVENTORY  # noqa: E402
+from app.modules.library.tv_inventory import TV_INVENTORY, TV_RENAME  # noqa: E402
 
 module = Module(
     name="library",
@@ -107,6 +107,9 @@ module = Module(
         add_column("library_films", "upgrade_once", "INTEGER DEFAULT 0"),
         # what the TV library holds — show folders and files as the last scan saw them, the user's fixes
         TV_INVENTORY,
+        # the TV renamer: per file what Plex and the name say, MediaInfo, numbering per show
+        add_column("tv_files", "facts", "TEXT DEFAULT '{}'"),
+        TV_RENAME,
     ],
     tasks=[TaskSource(tasks.read, "library.view")],
 )
