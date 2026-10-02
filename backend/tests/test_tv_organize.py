@@ -179,3 +179,24 @@ def test_file_title_before_tmdb_generic_is_none(tmp_path):
                                       {(1, 3): "Epizoda 3", (1, 4): "Epizoda 4"}, root, SETTINGS), root)
     assert got["Final Space/S01/Final Space_S01E03_Kapitola třetí.mkv"].endswith("/Final Space - S01E03 - Kapitola třetí.mkv")
     assert got["Final Space/S01/Final Space S01E04.mkv"].endswith("/Final Space - S01E04.mkv")
+
+
+def test_subtitles_keep_language_sdh_and_never_collide():
+    rest = organize_tv.subtitle_rest
+    assert rest("S01E01.CHe-CZtit.srt", "S01E01.CHe") == ".cs.srt"
+    assert rest("S01E01.CHe.srt", "S01E01.CHe") == ".srt"
+    assert rest("Urgent S01E01 07 00.eng.sdh.srt", "Urgent S01E01 07 00") == ".en.sdh.srt"
+    assert rest("Urgent S01E01 07 00.cze.forced.srt", "Urgent S01E01 07 00") == ".cs.forced.srt"
+
+
+def test_two_subtitles_of_one_name_get_numbers(tmp_path):
+    root = str(tmp_path)
+    a = touch(root, "Chernobyl/S01E01.CHe.avi")
+    touch(root, "Chernobyl/S01E01.CHe.srt")
+    touch(root, "Chernobyl/S01E01.CHe.cs.srt")
+    touch(root, "Chernobyl/S01E01.CHe-CZtit.srt")
+    plan = organize_tv.plan_folder([row(a, "Chernobyl", 1, [1], file=[1, [1]])], {"tmdb_id": 87108, "title": "Černobyl", "year": 2019},
+                                   {}, {}, root, SETTINGS)
+    names = sorted(os.path.basename(op["dst"]) for op in plan["ops"] if op["kind"] == "sidecar")
+    assert names == ["Černobyl - S01E01.cs.2.srt", "Černobyl - S01E01.cs.srt", "Černobyl - S01E01.srt"]
+    assert not plan["conflicts"]
