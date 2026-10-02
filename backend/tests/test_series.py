@@ -59,3 +59,20 @@ def test_scan_reads_episodes_the_old_parser_misses(tmp_path):
     assert got == {"show_name": "CHALUPÁŘI", "season": 1, "episode": 1, "year": None}
     loose = tmp_path / "x.mkv"
     assert _episode_by_folder({"filename": "x.mkv", "file_path": str(loose)}, str(tmp_path)) is None
+
+
+def test_show_is_its_folder_and_tmdb_must_really_match(tmp_path):
+    from types import SimpleNamespace as S
+    from app.modules.library.importer import _best_show, _show_folder
+    tv = str(tmp_path)
+    assert _show_folder(f"{tv}/StarGate Atlantis/2. HD/SGA - S02E02.mkv".replace("/", __import__("os").sep), tv) == ("StarGate Atlantis", None)
+    assert _show_folder(str(tmp_path / "The.Book.of.Boba.Fett.S01.1080p.WEB-DL-DeDo" / "x.mkv"), tv) == ("The Book of Boba Fett", None)
+    assert _show_folder(str(tmp_path / "Rodina Addamsovcov 1964" / "S01" / "x.avi"), tv) == ("Rodina Addamsovcov", "1964")
+    assert _show_folder(str(tmp_path / "x.mkv"), tv) is None
+    blue = S(tmdb_id=1, title="Blue", original_title="Blue", year="2018")
+    bluey = S(tmdb_id=2, title="Bluey", original_title="Bluey", year="2018")
+    sgauth = S(tmdb_id=3, title="Sgauth", original_title="Sgauth", year="2023")
+    assert _best_show([blue, bluey], "Bluey", None).tmdb_id == 2
+    assert _best_show([sgauth], "SGA", None) is None
+    atlantis = S(tmdb_id=2290, title="Hvězdná brána: Atlantida", original_title="Stargate Atlantis", year="2004")
+    assert _best_show([atlantis], "StarGate Atlantis", None).tmdb_id == 2290
