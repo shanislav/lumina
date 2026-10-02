@@ -2,7 +2,7 @@
 file's name in another language than TMDB's names ("Pomsta lovce hlav" = "Headhunters Revenge"), an order of
 the uploader's own (Znalec psí duše: the dogs' names in a Czech description).
 
-Groq gets the files of one season (own name, number, length) and TMDB's episodes of it and the seasons next to
+Groq gets the files of one season (own name, length — in order, without their numbers) and TMDB's episodes of it and the seasons next to
 it plus the specials (Czech and English names, runtime) and answers file → episode with a confidence. Lumina
 checks every answer (the episode exists, no two files on one, does it agree with its own rules) — a suggestion
 only: the user accepts it in the UI (it becomes the user's word, ``tv_episode_overrides``).
@@ -10,6 +10,7 @@ only: the user accepts it in the UI (it becomes the user's word, ``tv_episode_ov
 
 import json
 import logging
+import re
 
 import httpx
 
@@ -33,16 +34,26 @@ SYSTEM = (
 
 def _lines(files: list[dict], cat: dict, seasons: set[int]) -> tuple[str, list[tuple[int, int]]]:
     eps = sorted(k for k in cat if k[0] in seasons)[:MAX_EPISODES]
-    out = ["Files:"]
+    # the files' numbers are left out: they are what is in doubt (the model would copy them); the order stays
+    out = ["Files (in the user's order):"]
     for i, f in enumerate(files[:MAX_FILES]):
-        num = f"S{f['season']:02d}E{f['episode']:02d}" if f.get("season") is not None and f.get("episode") else "?"
-        out.append(f"{i}. [{num}] {f.get('own') or f['name']} ({round((f.get('duration') or 0) / 60)} min)")
+        out.append(f"{i}. {f.get('own') or f['name']} ({round((f.get('duration') or 0) / 60)} min)")
     out.append("TMDB episodes:")
     for s, e in eps:
         v = cat[(s, e)]
         names = " / ".join(dict.fromkeys(t for t in (v.get("cs"), v.get("en")) if t))
         out.append(f"S{s:02d}E{e:02d} {names} ({v.get('runtime') or '?'} min)")
     return "\n".join(out), eps
+
+
+def _num(value) -> int | None:
+    """8, "8", "S08", "E09", 8.0 → the number; None for none."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    m = re.search(r"\d+", str(value))
+    return int(m.group(0)) if m else None
 
 
 def _parse(content: str) -> list[list]:
@@ -85,12 +96,12 @@ async def suggest(cfg: dict, files: list[dict], cat: dict, season: int | None) -
     taken: dict[tuple[int, int], int] = {}
     for row in rows:
         try:
-            i, s, e, conf = int(row[0]), row[1], row[2], int(row[3] or 0)
+            i, s, e, conf = _num(row[0]), _num(row[1]), _num(row[2]), _num(row[3]) or 0
         except (TypeError, ValueError):
             continue
-        if not 0 <= i < min(len(files), MAX_FILES) or s is None or e is None:
+        if i is None or not 0 <= i < min(len(files), MAX_FILES) or s is None or e is None:
             continue
-        key = (int(s), int(e))
+        key = (s, e)
         if key not in cat:
             continue                                         # an episode TMDB does not have: made up
         f = files[i]
