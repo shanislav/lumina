@@ -375,7 +375,7 @@ def _show_folder(file_path: str, tv_dir: str) -> tuple[str, str | None] | None:
     return (name, year) if name else None
 
 
-def _best_show(results: list, name: str, year: str | None):
+def _best_show(results: list, name: str, year: str | None, exact_only: bool = False):
     """The TMDB show whose title really is the name — not just the first hit ("SGA" found "Sgauth",
     "Bluey" found "Blue"); the right year wins among namesakes. None when nothing fits."""
     want = normalize_for_search(name)
@@ -384,6 +384,8 @@ def _best_show(results: list, name: str, year: str | None):
     exact = [r for r in results if want in (normalize_for_search(r.title or ""), normalize_for_search(r.original_title or ""))]
     if exact:
         return next((r for r in exact if year and r.year == str(year)), exact[0])
+    if exact_only:
+        return None
     words = set(want.split())
     for r in results:        # "Mr Robot" ← "Mr. Robot", "Stargate Atlantis" ← "Stargate Atlantis: …"
         for t in (r.title or "", r.original_title or ""):
@@ -399,6 +401,10 @@ def _episode_by_folder(f: dict, tv_dir: str) -> dict | None:
     from app.core.episode_match import parse_episode
 
     info = parse_episode(f["filename"])
+    if not info.episodes and not info.is_pack:
+        m = re.match(r"(\d{1,3})(?:[ ._-]|\.\w+$)", f["filename"])
+        if m and not re.match(r"(19|20)\d{2}", f["filename"]):
+            info.episodes = [int(m.group(1))]
     if len(info.episodes) != 1:
         return None
     rel = os.path.relpath(f["file_path"], tv_dir)
@@ -407,8 +413,9 @@ def _episode_by_folder(f: dict, tv_dir: str) -> dict | None:
         return None
     season = info.season
     if season is None:
-        m = re.search(r"(?:season|s[eé]rie|sezona)\s*(\d{1,2})|^s(\d{1,2})$", os.path.basename(os.path.dirname(f["file_path"])), re.I)
-        season = int(m.group(1) or m.group(2)) if m else 1
+        folder = os.path.basename(os.path.dirname(f["file_path"])) if len(parts) > 2 else ""
+        m = re.search(r"(?:season|s[eé]rie|sezona)\s*(\d{1,2})|^s(\d{1,2})$|^(\d{1,2})(?:\.|$| )", folder, re.I)
+        season = int(next(g for g in m.groups() if g)) if m else 1
     year = re.search(r"\((19|20)\d{2}\)", parts[0])
     return {"show_name": re.sub(r"\s*\((19|20)\d{2}\)\s*$", "", parts[0]).strip(), "season": season,
             "episode": info.episodes[0], "year": year.group(0)[1:-1] if year else None}
@@ -517,6 +524,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                 # 3. TMDB search — a show whose title really is one of the names
                 if not tmdb_id:
                     first_hit = None
+                    found: list[tuple[str, list]] = []
                     for n in names:
                         try:
                             results = await client.search_tv(f"{n} {year}" if year and n == show_name else n)
@@ -530,7 +538,20 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                             logger.warning("TMDB search failed for show '%s': %s", n, e)
                             continue
                         first_hit = first_hit or (results[0] if results else None)
-                        best = _best_show(results, n, year)
+                        best = _best_show(results, n, year, exact_only=True)
+                        if not best:
+                            # a show without a Czech name comes in its original script ("俺だけレベルアップな件")
+                            try:
+                                english = await client.search_tv(n, language="en-US")
+                            except Exception:
+                                english = []
+                            best = _best_show(english, n, year, exact_only=True)
+                            found.append((n, results + english))
+                        if best:
+                            tmdb_id = best.tmdb_id
+                            break
+                    for n, results in found if not tmdb_id else []:
+                        best = _best_show(results, n, year)       # the name is the start of a title
                         if best:
                             tmdb_id = best.tmdb_id
                             break
