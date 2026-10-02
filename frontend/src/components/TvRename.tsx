@@ -116,8 +116,9 @@ export default function TvRename({ onChanged }: { onChanged?: () => void }) {
 
   return (
     <>
-      <button onClick={show} className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-violet-600 hover:text-zinc-100">
-        Opravit názvy seriálů na disku
+      <button onClick={show} title="Přejmenuje složky a soubory seriálů podle pravidel (s náhledem)"
+        className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition-colors hover:border-zinc-500">
+        Opravit názvy seriálů
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => !busy && setOpen(false)}>

@@ -501,14 +501,16 @@ export default function LibraryPage() {
           <h1 className="text-2xl font-bold text-zinc-100">Knihovna</h1>
         </div>
         {canEdit && <div className="flex flex-wrap items-center gap-2">
+          {tab === "serialy" ? <TvRename onChanged={loadData} /> : (
           <button
             onClick={() => openBulk()}
             disabled={scanning}
             title="Přejmenuje složky a soubory spárovaných filmů podle pravidel (s náhledem)"
             className="px-3 py-2 rounded-lg border border-zinc-700 hover:border-zinc-500 disabled:opacity-40 text-zinc-300 text-sm transition-colors"
           >
-            Opravit názvy
+            Opravit názvy filmů
           </button>
+          )}
           <button
             onClick={() => handleScan(true)}
             disabled={scanning}
@@ -571,9 +573,6 @@ export default function LibraryPage() {
         placeholder={tab === "filmy" ? "Hledat v knihovně — název, rok, soubor…" : "Hledat seriál…"}
         className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-600" />
       {tab === "serialy" && <TvInventory />}
-      {tab === "serialy" && can("library.edit") && (
-        <div className="flex justify-end"><TvRename onChanged={loadData} /></div>
-      )}
 
       {loading ? (
         <div className="text-zinc-500 animate-pulse text-center py-12">Nacitam...</div>
