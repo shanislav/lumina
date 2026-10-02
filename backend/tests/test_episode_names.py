@@ -45,3 +45,10 @@ def test_part_in_brackets():
     from app.modules.library.tv_inventory import title_score
     assert title_score("Heart of Archness Part I", "Heart of Archness (2)") == 0
     assert title_score("Heart of Archness Part I", "Heart of Archness (1)") == 1
+
+
+def test_origins_of_files_trading_places_in_one_batch():
+    rows = [("/s/78.Prvni.avi", "/s/E78 Prvni.avi", "b1"), ("/s/77.Napinavy.avi", "/s/E77 Napinavy.avi", "b1"),
+            ("/s/E78 Prvni.avi", "/s/E77 Prvni.avi", "b2"), ("/s/E77 Napinavy.avi", "/s/E79 Napinavy.avi", "b2")]
+    back = en.origins(rows)
+    assert back["/s/E77 Prvni.avi"] == "/s/78.Prvni.avi" and back["/s/E79 Napinavy.avi"] == "/s/77.Napinavy.avi"

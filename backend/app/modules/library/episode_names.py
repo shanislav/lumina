@@ -114,10 +114,29 @@ def best(name: str, cat: dict[tuple[int, int], dict], season: int | None, durati
 
 
 def origins(rows) -> dict[str, str]:
-    """Current path → the file's first path in Lumina's journal (before any rename by Lumina)."""
+    """Current path → the file's first path in Lumina's journal (before any rename by Lumina). rows: (src, dst)
+    or (src, dst, batch) in the journal's order; a batch moves its files at once (two files trading places
+    within one batch must not take each other's past)."""
     back: dict[str, str] = {}
-    for src, dst in rows:
-        back[dst] = back.pop(src, src)
+    batch: list[tuple[str, str]] = []
+    current = object()
+
+    def flush():
+        moved = [(src, dst, back.get(src, src)) for src, dst in batch]
+        for src, _dst, _o in moved:
+            back.pop(src, None)
+        for _src, dst, origin in moved:
+            back[dst] = origin
+        batch.clear()
+
+    for row in rows:
+        src, dst = row[0], row[1]
+        key = row[2] if len(row) > 2 else None
+        if key != current or key is None:
+            flush()
+            current = key
+        batch.append((src, dst))
+    flush()
     return back
 
 

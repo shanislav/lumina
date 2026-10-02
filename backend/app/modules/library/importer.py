@@ -637,7 +637,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
         stats["shows_found"] = len(show_groups)
         # a file's first name (before Lumina renamed it): its own episode name is read from there
         origin_of = episode_names.origins(await (await db.execute(
-            "SELECT src, dst FROM file_operations WHERE status = 'done' AND dst != '' ORDER BY id")).fetchall())
+            "SELECT src, dst, batch_id FROM file_operations WHERE status = 'done' AND dst != '' ORDER BY id")).fetchall())
         lengths = {r[0]: (json.loads(r[1] or "{}").get("duration_s") or 0)
                    for r in await (await db.execute("SELECT file_path, media FROM tv_media")).fetchall()}
         marked: set[tuple[int, int, int]] = set()       # (show, season, episode) this scan found
