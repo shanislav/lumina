@@ -8,6 +8,7 @@ checks every answer (the episode exists, no two files on one, does it agree with
 only: the user accepts it in the UI (it becomes the user's word, ``tv_episode_overrides``).
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 MAX_FILES = 60
 MAX_EPISODES = 160
+MAX_WAIT = 40                  # seconds a rate limit may hold the question (the UI waits for it)
 
 SYSTEM = (
     "You match video files of one TV show to TMDB episodes. File names are the user's (often Czech, a translation "
@@ -44,6 +46,16 @@ def _lines(files: list[dict], cat: dict, seasons: set[int]) -> tuple[str, list[t
         names = " / ".join(dict.fromkeys(t for t in (v.get("cs"), v.get("en")) if t))
         out.append(f"S{s:02d}E{e:02d} {names} ({v.get('runtime') or '?'} min)")
     return "\n".join(out), eps
+
+
+def _retry_after(resp) -> float:
+    """Seconds Groq asks to wait: retry-after, or its "try again in 12.5s" / "1m3s"; 10 when it does not say."""
+    try:
+        return float(resp.headers.get("retry-after"))
+    except (TypeError, ValueError):
+        pass
+    m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", resp.text or "")
+    return int(m.group(1) or 0) * 60 + float(m.group(2)) if m else 10.0
 
 
 def _num(value) -> int | None:
@@ -72,10 +84,16 @@ async def _ask(cfg: dict, files: list[dict], cat: dict, seasons: set[int]) -> di
         if model.startswith(prefix):
             body.update(params)
     async with httpx.AsyncClient(timeout=90) as client:
-        resp = await client.post(GROQ_API_URL, json=body,
-                                 headers={"Authorization": f"Bearer {cfg['groq_api_key']}", "Content-Type": "application/json"})
-        if resp.status_code == 429:
-            raise ValueError("Groq: překročený limit — zkus to za minutu")
+        for attempt in range(3):
+            resp = await client.post(GROQ_API_URL, json=body,
+                                     headers={"Authorization": f"Bearer {cfg['groq_api_key']}", "Content-Type": "application/json"})
+            if resp.status_code != 429:
+                break
+            wait = _retry_after(resp)               # the free tier's tokens per minute: the second question waits
+            if attempt == 2 or wait > MAX_WAIT:
+                raise ValueError("Groq: překročený limit — zkus to za minutu")
+            logger.info("Groq rate limit, waiting %.0f s", wait)
+            await asyncio.sleep(wait)
         resp.raise_for_status()
     payload = resp.json()
     logger.info("Groq %s mapped %d files, tokens=%s", model, len(files), (payload.get("usage") or {}).get("total_tokens"))

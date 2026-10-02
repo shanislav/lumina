@@ -84,3 +84,35 @@ async def test_two_files_on_one_episode_are_flagged(groq):
 async def test_no_key():
     with pytest.raises(ValueError):
         await ai_episodes.suggest({}, FILES, CAT, 8)
+
+
+async def test_rate_limit_waits_and_asks_again(monkeypatch):
+    """Groq's free tier: the second question often hits tokens per minute — it waits as asked, then goes on."""
+    calls, slept = [], []
+
+    class Limited:
+        status_code = 429
+        headers = {}
+        text = "Rate limit reached ... Please try again in 1.5s."
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def post(self, url, json=None, headers=None):
+            calls.append(1)
+            return Limited() if len(calls) == 1 else FakeResponse("[[0, 8, 9, 90]]")
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    monkeypatch.setattr(ai_episodes.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(ai_episodes.asyncio, "sleep", fake_sleep)
+    out = await ai_episodes._ask({"groq_api_key": "x"}, FILES, CAT, {8})
+    assert out == {0: ((8, 9), 90)} and slept == [1.5]
