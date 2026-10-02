@@ -107,7 +107,8 @@ def episode_queries(titles: list[str], season: int, episode: int) -> tuple[list[
     se = f"S{season:02d}E{episode:02d}"
     ddl = [f"{n} {se}" for n in names] + [f"{names[0]} {season}x{episode:02d}"]
     latin = next((n for n in names if n.isascii() and re.search(r"[A-Za-z]", n)), names[0])
-    return ddl[:MAX_DDL_QUERIES], [f"{latin} {se}", f"{latin} S{season:02d}"]
+    # Czech trackers name packs "Show (komplet,720p,CZ)", "Show 1. - S03" — "Show S02" finds nothing there
+    return ddl[:MAX_DDL_QUERIES], [f"{latin} {se}", f"{latin} S{season:02d}", latin]
 
 
 def _unique_names(names: list[str]) -> list[str]:

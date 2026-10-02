@@ -21,6 +21,9 @@ from app.core.episode_match import judge_episode, parse_episode
     ("Hra o trůny 3. řada", 3, [], [], False),
     ("Breaking Bad 2.serie dil 5.mkv", 2, [5], [], False),
     ("The Office S01-S09 complete", None, [], list(range(1, 10)), True),
+    ("Black Books 1. - S03 (CZ)", None, [], [1, 2, 3], False),
+    ("Black Books (komplet,720p,CZ)", None, [], [], True),
+    ("Final Space (S01)(2018)(720p)(x264)(WebDL)(EN-PL)(CZtit+MultiSUB", 1, [], [], False),
     ("Fotr na tripu - 03.mkv", None, [3], [], False),
     ("chalupari-01-chudak-dedecek-hd-1975-cs-78pt.mkv", None, [1], [], False),
     ("Dune.Part.One.2021.2160p.mkv", None, [], [], False),
@@ -59,7 +62,7 @@ def test_episode_queries():
     from app.core.offers.search import episode_queries
     ddl, torrent = episode_queries(["Přátelé", "Friends", "Friends"], 3, 5)
     assert ddl == ["Přátelé S03E05", "Friends S03E05", "Přátelé 3x05"]
-    assert torrent == ["Friends S03E05", "Friends S03"]
+    assert torrent == ["Friends S03E05", "Friends S03", "Friends"]
 
 
 def test_offer_of_an_episode_is_judged_as_an_episode():
