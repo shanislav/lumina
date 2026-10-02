@@ -28,6 +28,7 @@ import { FLAG } from "@/components/LanguageSelect";
 import FolderBrowser from "@/components/FolderBrowser";
 import QualityWeightsEditor from "@/components/QualityWeights";
 import ProfilesEditor from "@/components/ProfilesEditor";
+import SeriesDefaults from "@/components/SeriesDefaults";
 import ModulesPanel from "@/components/ModulesPanel";
 import UsersAdmin from "@/components/UsersAdmin";
 import { useAuth } from "@/components/AuthGate";
@@ -424,6 +425,7 @@ export default function SettingsPage() {
             <div className="space-y-4">
               {renderSettingsSections(GENERAL_SECTIONS)}
               <ProfilesEditor />
+              {can("settings") && <SeriesDefaults />}
               <QualityWeightsEditor value={settings.quality_weights || ""}
                 onChange={(json) => handleSettingChange("quality_weights", json)} />
               {renderSaveButton()}
