@@ -50,7 +50,8 @@ def parse_tv_filename(filename: str, file_path: str = "") -> dict | None:
     Returns dict with keys: show_name, season, episode, year (optional)
     or None if not a TV episode.
     """
-    name = filename
+    # a CRC checksum of anime releases ("[C190C5E5]") is not an episode number
+    name = re.sub(r"\[[0-9A-Fa-f]{8}\]", "", filename)
     # Remove extension
     for ext in VIDEO_EXTS:
         if name.lower().endswith(ext):

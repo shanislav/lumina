@@ -48,6 +48,7 @@ class EpisodeInfo:
 
 
 def _plain(name: str) -> str:
+    name = re.sub(r"\[[0-9A-Fa-f]{8}\]", "", name)        # an anime release's CRC ("[C190C5E5]")
     text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
     text = re.sub(r"\.(mkv|mp4|avi|ts|m4v|wmv|mov|webm)$", "", text)
     return re.sub(r" +", " ", re.sub(r"[._\[\]()]+", " ", text))

@@ -1693,3 +1693,50 @@ export async function downloadSeason(tmdbId: number, season: number, items: { ep
   if (!res.ok) throw new Error(`Stažení selhalo: ${res.status}`);
   return res.json();
 }
+
+// ── TV library inventory (backend modules/library/tv_inventory) ──
+
+export interface TvInventoryProblem {
+  file: string;
+  season: number | null;
+  episodes: number[];
+  status: string;
+  note: string;
+}
+
+export interface TvInventoryFolder {
+  folder: string;
+  tmdb_id: number | null;
+  title?: string | null;
+  year?: string | null;
+  source: "plex" | "lumina" | "user" | "";
+  lumina_tmdb_id?: number | null;
+  lumina_title?: string;
+  plex_tmdb_id?: number | null;
+  plex_title?: string;
+  files: number;
+  counts: Record<string, number>;
+  problems: TvInventoryProblem[];
+  disagree: boolean;
+}
+
+export interface TvInventory {
+  folders: TvInventoryFolder[];
+  total: Record<string, number>;
+  labels: Record<string, string>;
+  scanned_at: string | null;
+}
+
+export async function getTvInventory(): Promise<TvInventory> {
+  const res = await apiFetch(`${API_BASE}/api/library/tv/inventory`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Which show a folder of the TV library is (null = let the scan decide again). */
+export async function setTvOverride(folder: string, tmdbId: number | null): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/library/tv/override`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder, tmdb_id: tmdbId }),
+  });
+  if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
+}
