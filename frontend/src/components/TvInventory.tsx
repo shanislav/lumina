@@ -22,7 +22,7 @@ export default function TvInventory() {
   useEffect(() => { load(); }, []);
   if (!data || !data.folders.length) return null;
 
-  const problems = (f: TvInventoryFolder) => Object.entries(f.counts).filter(([k]) => k !== "ok").reduce((a, [, v]) => a + v, 0);
+  const problems = (f: TvInventoryFolder) => Object.entries(f.counts).filter(([k]) => k !== "ok" && k !== "extra").reduce((a, [, v]) => a + v, 0);
   const bad = data.folders.filter((f) => f.disagree || !f.tmdb_id || problems(f) > 0);
   const okFiles = data.total.ok ?? 0;
   const allFiles = Object.values(data.total).reduce((a, b) => a + b, 0);

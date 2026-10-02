@@ -47,8 +47,27 @@ CREATE TABLE IF NOT EXISTS tv_folder_overrides (
 );
 """
 
+# Plex's folders for a show's extras (bonus videos, not episodes) — and names users give them
+EXTRA_DIRS = {"behind the scenes", "deleted scenes", "featurettes", "interviews", "scenes", "shorts", "trailers", "other"}
+EXTRA_DIRS_OTHER_NAMES = {"bonus", "bonusy", "extra", "extras", "extras & bonus", "special features"}
+EXTRA_SUFFIXES = ("-behindthescenes", "-deleted", "-featurette", "-interview", "-scene", "-short", "-trailer", "-other")
+
+
+def extra_of(rel_parts: list[str]) -> str | None:
+    """The extras folder a file lies in under its show folder ("Other", "Bonus"), or "" for a Plex extra
+    suffix ("…-featurette.mkv"); None for an episode. rel_parts: path under the TV library."""
+    for part in rel_parts[1:-1]:
+        name = part.strip().lower()
+        if name in EXTRA_DIRS or name in EXTRA_DIRS_OTHER_NAMES:
+            return part
+    stem = rel_parts[-1].rsplit(".", 1)[0].lower()
+    return "" if stem.endswith(EXTRA_SUFFIXES) else None
+
+
 STATUS_LABELS = {
+    "extra": "bonus (ne díl)",
     "show": "Lumina a Plex se neshodnou na seriálu",
+    "tmdb_other": "TMDB má pod tímto číslem jiný díl",
     "numbers": "jiné číslo dílu než v Plexu",
     "not_in_tmdb": "TMDB díl nezná",
     "not_in_plex": "Plex soubor nezná",
@@ -80,6 +99,16 @@ class Inventory:
                              "note, scanned_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [(*f, now) for f in self.files])
 
 
+def same_episode(a: str, b: str) -> bool:
+    """Two names of one episode (Plex's and TMDB's) — a word in common is enough; an empty or generic
+    name ("Epizoda 3") says nothing, so it agrees."""
+    from app.core.naming import episode_title
+    from app.utils.tv_parser import normalize_for_search
+    wa = {w for w in normalize_for_search(episode_title(a or "")).split() if len(w) > 2}
+    wb = {w for w in normalize_for_search(episode_title(b or "")).split() if len(w) > 2}
+    return not wa or not wb or bool(wa & wb)
+
+
 async def overrides(db) -> dict[str, int]:
     rows = await (await db.execute("SELECT folder, tmdb_id FROM tv_folder_overrides")).fetchall()
     return {r[0]: r[1] for r in rows}
@@ -95,7 +124,7 @@ async def summary(db) -> dict:
     for r in await (await db.execute("SELECT file_path, folder, season, episodes, status, note FROM tv_files")).fetchall():
         c = counts.setdefault(r["folder"], {})
         c[r["status"]] = c.get(r["status"], 0) + 1
-        if r["status"] != "ok":
+        if r["status"] not in ("ok", "extra"):
             problems.setdefault(r["folder"], []).append(
                 {"file": r["file_path"], "season": r["season"], "episodes": json.loads(r["episodes"] or "[]"),
                  "status": r["status"], "note": r["note"]})
@@ -107,7 +136,7 @@ async def summary(db) -> dict:
         f["counts"] = counts.get(f["folder"], {})
         f["problems"] = sorted(problems.get(f["folder"], []), key=lambda p: (p["season"] or 0, p["episodes"]))[:200]
         f["disagree"] = bool(f.get("lumina_tmdb_id") and f.get("plex_tmdb_id") and f["lumina_tmdb_id"] != f["plex_tmdb_id"])
-    folders.sort(key=lambda f: (not (f["disagree"] or not f.get("tmdb_id")), -sum(v for k, v in f["counts"].items() if k != "ok"),
+    folders.sort(key=lambda f: (not (f["disagree"] or not f.get("tmdb_id")), -sum(v for k, v in f["counts"].items() if k not in ("ok", "extra")),
                                 f["folder"].lower()))
     total = {}
     for c in counts.values():

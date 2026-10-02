@@ -48,7 +48,9 @@ async def tv(tmp_path):
              "Scooby Doo/1x01.Střez se bestie.avi",
              "Solo Leveling/Solo Leveling S02/S02E01.mp4",
              "Solo Leveling/Solo Leveling S01/Solo Leveling S01E01.mp4",
-             "Divné/bez cisla.avi"]
+             "Divné/bez cisla.avi",
+             "StarGate Atlantis/Other/Cast Reunion (part 1).mkv",
+             "StarGate Atlantis/Bonus/Making of.mkv"]
     for f in files:
         path = root / f
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,7 +84,8 @@ async def scan(root):
 async def test_plex_decides_and_disagreements_show(tv):
     inv = await scan(tv)
     by = {f["folder"]: f for f in inv["folders"]}
-    assert by["StarGate Atlantis"]["tmdb_id"] == 2290 and by["StarGate Atlantis"]["counts"] == {"ok": 2}
+    assert by["StarGate Atlantis"]["tmdb_id"] == 2290 and by["StarGate Atlantis"]["counts"] == {"ok": 2, "extra": 2}
+    assert not by["StarGate Atlantis"]["problems"]                                               # bonuses are no problem
     scooby = by["Scooby Doo"]
     assert scooby["tmdb_id"] == 1011 and scooby["source"] == "plex" and scooby["disagree"]       # Lumina: 18123
     assert scooby["problems"][0]["status"] == "show"

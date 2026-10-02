@@ -422,6 +422,12 @@ def _episode_by_folder(f: dict, tv_dir: str) -> dict | None:
             "episode": info.episodes[0], "year": year.group(0)[1:-1] if year else None}
 
 
+async def _tmdb_episode_title(db, tmdb_id: int, season: int, episode: int) -> str:
+    row = await (await db.execute("SELECT episode_title FROM library_episodes WHERE show_tmdb_id = ? AND season = ? AND episode = ?",
+                                  (tmdb_id, season, episode))).fetchone()
+    return (row[0] if row else "") or ""
+
+
 async def _lumina_show(client: TMDBClient, db, episodes: list[dict], show_name: str, year) -> tuple[int | None, str]:
     """(TMDB id, title) of the show by Lumina's own means: the library, NFO files, TMDB search by the
     folder's and the files' names (a title that really is the name first)."""
@@ -501,7 +507,14 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
 
         # Group by show name — try episode NFO first for season/episode info
         show_groups: dict[str, list[dict]] = {}
+        extras: list[tuple[dict, str]] = []
         for f in tv_files:
+            # bonus videos in the show's extras folder ("Hra o trůny/Other/…Reunion….mkv") are not episodes
+            rel = os.path.relpath(f["file_path"], tv_dir).split(os.sep)
+            extra = tv_inventory.extra_of(rel) if len(rel) > 1 else None
+            if extra is not None:
+                extras.append((f, extra))
+                continue
             hint = hints.get(f["file_path"])
             # Try episode .nfo for accurate S/E numbers
             ep_nfo = _parse_episode_nfo(f["file_path"])
@@ -548,6 +561,11 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
         marked: set[tuple[int, int, int]] = set()       # (show, season, episode) this scan found
         matched_paths: set[str] = set()                 # files this scan put under a show
         inventory = tv_inventory.Inventory()
+        for f, extra in extras:
+            plex_named = extra.lower() in tv_inventory.EXTRA_DIRS or not extra
+            inventory.file(f["file_path"], os.path.relpath(f["file_path"], tv_dir).split(os.sep)[0], None, None, [], "extra",
+                           f"bonus ve složce „{extra}“" + ("" if plex_named else " — Plex ji nezná, renamer ji přejmenuje na Other")
+                           if extra else "bonus (přípona Plexu)")
         for f in unknown:
             folder_show = _show_folder(f["file_path"], tv_dir)
             inventory.file(f["file_path"], os.path.relpath(f["file_path"], tv_dir).split(os.sep)[0] if folder_show else "",
@@ -635,6 +653,10 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                                               f"Plex S{(hint.get('season') or 0):02d}E{(hint.get('episode') or 0):02d}"
                 elif not cursor.rowcount:
                     status, note = "not_in_tmdb", "TMDB tento díl nezná (jiné číslování?)"
+                elif hint.get("episode_title") and not tv_inventory.same_episode(hint["episode_title"], await _tmdb_episode_title(
+                        db, tmdb_id, ep_data["season"], ep_data["episode"])):
+                    # Big Bang S12: TMDB has the two-part finale as E23 and the farewell special as E24
+                    status, note = "tmdb_other", f"Plex: „{hint['episode_title']}“ · TMDB: „{await _tmdb_episode_title(db, tmdb_id, ep_data['season'], ep_data['episode'])}“"
                 elif not hint and plex_votes:
                     status, note = "not_in_plex", "Plex soubor nezná"
                 inventory.file(ep_data["file_path"], folder or show_name, tmdb_id, ep_data["season"],
