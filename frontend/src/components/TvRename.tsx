@@ -111,7 +111,8 @@ export default function TvRename({ onChanged }: { onChanged?: () => void }) {
     }
   }
 
-  const ready = (plans ?? []).filter((p) => !p.conflicts.length);
+  // a show with numbering by names only suggested is picked by hand, after a look at its new numbers
+  const ready = (plans ?? []).filter((p) => !p.conflicts.length && !p.suggested);
 
   return (
     <>
@@ -205,7 +206,7 @@ function ShowPlan({ plan, checked, expanded, onToggle, onCheck, onNumbering, dis
         <select value={plan.numbering} disabled={disabled} onChange={(e) => onNumbering(e.target.value as "files" | "tmdb")}
           className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-300" title="Číslování dílů">
           <option value="files">čísla podle souborů / Plexu</option>
-          <option value="tmdb">čísla podle TMDB</option>
+          <option value="tmdb">čísla podle názvu dílu</option>
         </select>
       </div>
       {plan.source_folder !== plan.target_folder && (
@@ -214,7 +215,22 @@ function ShowPlan({ plan, checked, expanded, onToggle, onCheck, onNumbering, dis
         </p>
       )}
       {plan.conflicts.map((c) => <p key={c} className="mt-1 text-xs text-red-400">{c}</p>)}
-      {plan.tips.map((t) => <p key={t} className="mt-1 text-xs text-amber-300">💡 {t}</p>)}
+      {plan.suggested && (
+        <p className="mt-1 text-xs text-amber-300">
+          Navrženo „čísla podle názvu dílu“: {plan.sure_names} souborů má v názvu jiný díl, než říká jejich číslo (např. české
+          pořadí vysílání). Zkontroluj změny čísel níže — nebo přepni na čísla podle souborů.
+        </p>
+      )}
+      {plan.tips.filter(() => !plan.suggested).map((t) => <p key={t} className="mt-1 text-xs text-amber-300">💡 {t}</p>)}
+      {plan.renumber.length > 0 && (
+        <div className="mt-1 space-y-0.5 font-mono text-[11px] text-sky-300">
+          {(expanded ? plan.renumber : plan.renumber.slice(0, 6)).map((r) => (
+            <p key={r.file} className="break-all">🔢 {r.from} → {r.to} {r.title && `„${r.title}“`} <span className="text-zinc-600">{name(r.file)}</span></p>
+          ))}
+          {!expanded && plan.renumber.length > 6 && <p className="text-zinc-500">+ dalších {plan.renumber.length - 6} změn čísel…</p>}
+        </div>
+      )}
+      {plan.unsure.map((u) => <p key={u.file} className="mt-0.5 break-all text-[11px] text-amber-400/80">⚠ {name(u.file)}: {u.why}</p>)}
       {plan.renumbered > 0 && (
         <p className="mt-1 text-xs text-amber-300">
           {plan.renumbered} dílů dostane jiné číslo, než ukazuje Plex — Plex je přidá jako nové; přejmenování s Plexem jim

@@ -75,9 +75,9 @@ def test_tmdb_numbering_makes_parts(tmp_path):
         row(e23, "Big Bang Theory", 12, [23], file=[12, [23]], plex=[12, 23, "Proměnlivá konstanta / Stockholmský syndrom"],
             title="Proměnlivá konstanta"),
         row(e24, "Big Bang Theory", 12, [24], status="tmdb_other", note="soubor: …", file=[12, [24]],
-            plex=[12, 24, "Rozloučení"], title="Stockholmský syndrom", tmdb_episode=23),
+            plex=[12, 24, "Rozloučení"], title="Stockholmský syndrom", tmdb_episode=23, tmdb_sure=True),
         row(e25, "Big Bang Theory", 12, [25], status="not_in_tmdb", file=[12, [25]], plex=[12, 25, "Episode 25"],
-            title="Rozlouceni", tmdb_episode=24),
+            title="Rozlouceni", tmdb_episode=24, tmdb_sure=True),
     ]
     show = {"tmdb_id": 1418, "title": "Teorie velkého třesku", "year": 2007}
     titles = {(12, 23): "Proměnlivá konstanta / Stockholmský syndrom", (12, 24): "Rozloučení"}
@@ -235,3 +235,49 @@ def test_file_title_when_plex_names_another_part(tmp_path):
     assert got["Archer/S03/Archer.S00E04.Heart.of.Archness.Part.I.mkv"].endswith("/Specials/Archer - S00E04 - Heart of Archness Part I.mkv")
     # another language is no other episode: Plex's (Czech) name stays
     assert got["Archer/S03/Archer.S01E01.Mole.Hunt.mkv"].endswith("/Season 01/Archer - S01E01 - Hon na krtka.mkv")
+
+
+def test_numbering_by_names_trades_numbers_and_never_doubles_one(tmp_path):
+    """South Park S01 in a Czech airing order: E02 "Posilovač 4000" is TMDB's E03, E03 "Sopka" TMDB's E02 —
+    they trade numbers. E05's name says E04, but E04 keeps its number (its name is its own): E05 stays."""
+    root = str(tmp_path)
+    f = {n: touch(root, f"South Park/s01/S01E0{n} {t}.mkv") for n, t in
+         ((2, "Posilovač 4000"), (3, "Sopka"), (4, "Velký Al"), (5, "Velký Al 2"))}
+    rows = [row(f[2], "South Park", 1, [2], status="tmdb_other", file=[1, [2]], plex=[1, 2, "Sopka"], title="Posilovač 4000",
+                tmdb_episode=3, tmdb_sure=True),
+            row(f[3], "South Park", 1, [3], status="tmdb_other", file=[1, [3]], plex=[1, 3, "Posilovač 4000"], title="Sopka",
+                tmdb_episode=2, tmdb_sure=True),
+            row(f[4], "South Park", 1, [4], file=[1, [4]], plex=[1, 4, "Velký Al"], title="Velký Al"),
+            row(f[5], "South Park", 1, [5], status="tmdb_other", file=[1, [5]], plex=[1, 5, "Zvířecí farma"], title="Velký Al 2",
+                tmdb_episode=4, tmdb_sure=True)]
+    titles = {(1, 2): "Sopka", (1, 3): "Posilovač 4000", (1, 4): "Velký Al", (1, 5): "Zvířecí farma"}
+    plan = organize_tv.plan_folder(rows, {"tmdb_id": 2190, "title": "South Park", "year": 1997}, {}, titles, root, SETTINGS, mode="tmdb")
+    got = {os.path.basename(op["src"]): os.path.basename(op["dst"]) for op in plan["ops"]}
+    assert got["S01E02 Posilovač 4000.mkv"] == "South Park - S01E03 - Posilovač 4000.mkv"
+    assert got["S01E03 Sopka.mkv"] == "South Park - S01E02 - Sopka.mkv"
+    assert got["S01E05 Velký Al 2.mkv"].startswith("South Park - S01E05 ")
+    assert [(r["from"], r["to"]) for r in plan["renumber"]] == [("S01E03", "S01E02"), ("S01E02", "S01E03")] or \
+        sorted((r["from"], r["to"]) for r in plan["renumber"]) == [("S01E02", "S01E03"), ("S01E03", "S01E02")]
+    assert len(plan["unsure"]) == 1 and plan["unsure"][0]["file"] == f[5]
+    assert not plan["conflicts"]
+
+
+def test_move_many_trades_places(tmp_path):
+    from app.modules.library.organize import move_many
+    a, b = touch(str(tmp_path), "s/E02.mkv"), touch(str(tmp_path), "s/E03.mkv")
+    open(a, "w").write("A")
+    open(b, "w").write("B")
+    move_many([(a, b), (b, a)])
+    assert open(a).read() == "B" and open(b).read() == "A"
+
+
+def test_parts_named_so_stay_parts(tmp_path):
+    """After a rename by TMDB's numbering both files say S12E23 — "- pt1" / "- pt2" keeps them parts."""
+    root = str(tmp_path)
+    stem = "Teorie velkého třesku (2007) {tmdb-1418}/Season 12/Teorie velkého třesku - S12E23 - Proměnlivá konstanta Stockholmský syndrom"
+    a, b = touch(root, stem + " - pt1.mkv"), touch(root, stem + " - pt2.mkv")
+    rows = [row(p, "Teorie velkého třesku (2007) {tmdb-1418}", 12, [23], file=[12, [23]], plex=[12, 23, "Proměnlivá konstanta / Stockholmský syndrom"],
+                title="Proměnlivá konstanta Stockholmský syndrom") for p in (a, b)]
+    show = {"tmdb_id": 1418, "title": "Teorie velkého třesku", "year": 2007}
+    for mode in ("files", "tmdb"):
+        assert not organize_tv.plan_folder(rows, show, {}, {(12, 23): "Proměnlivá konstanta / Stockholmský syndrom"}, root, SETTINGS, mode)["ops"]

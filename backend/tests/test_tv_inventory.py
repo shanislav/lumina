@@ -141,3 +141,9 @@ def test_names_of_other_parts_are_other_episodes():
     assert not tv_inventory.same_episode("Heart of Archness Part I", "Heart of Archness - Part II", strict=True)
     assert tv_inventory.same_episode("Heart of Archness: Part II", "Heart of Archness - Part II", strict=True)
     assert tv_inventory.same_episode("Stockholmský syndrom", "Proměnlivá konstanta / Stockholmský syndrom", strict=True)
+
+
+def test_bare_number_with_a_name_is_found_by_the_name():
+    titles = {(1, 37): "Dittův tajemný dům", (2, 36): "Dávný protivník", (1, 67): "Protivníci"}
+    assert importer._episode_by_title(importer._bare_title("37.Davný protivník.avi"), titles) == (2, 36)
+    assert importer._episode_by_title(importer._bare_title("Naruto 104.mp4"), titles) is None

@@ -320,6 +320,49 @@ def _remove_empty_dirs(folder: str, root: str) -> None:
         folder = os.path.dirname(folder)
 
 
+def move_many(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Rename files (src, dst) where a target may be another pair's source — two episodes trading their
+    numbers (E02 ↔ E03), a chain: such a file waits under a temporary name until its target is free.
+    Never overwrites; on a failure everything done is moved back and OrganizeError raised. Returns pairs."""
+    sources = {os.path.normcase(s) for s, _ in pairs}
+    waiting, direct = [], []
+    for src, dst in pairs:
+        (waiting if os.path.normcase(dst) in sources and os.path.normcase(dst) != os.path.normcase(src) else direct).append((src, dst))
+    done: list[tuple[str, str]] = []           # actual renames, for the rollback
+    try:
+        parked = []
+        for src, dst in waiting:
+            tmp = f"{src}.lumina-move"
+            if os.path.exists(tmp):
+                raise OrganizeError(f"Dočasný soubor už existuje: {tmp}")
+            os.rename(src, tmp)
+            done.append((src, tmp))
+            parked.append((tmp, dst))
+        for src, dst in direct + parked:
+            if os.path.exists(dst) and os.path.normcase(dst) != os.path.normcase(src):
+                raise OrganizeError(f"Cíl mezitím vznikl: {dst}")
+            _ensure_dir(os.path.dirname(dst))
+            os.rename(src, dst)
+            done.append((src, dst))
+    except (OSError, OrganizeError) as e:
+        for src, dst in reversed(done):
+            try:
+                os.rename(dst, src)
+            except OSError:
+                logger.exception("Rollback of %s failed", dst)
+        raise OrganizeError(f"Oprava selhala, vráceno zpět: {e}") from e
+    return pairs
+
+
+async def paths_moved(db, pairs: list[tuple[str, str]]) -> None:
+    """path_moved for many videos at once — through temporary keys, so files trading places never meet
+    in a row (UPDATE OR REPLACE would drop the other one's)."""
+    for i, (src, _dst) in enumerate(pairs):
+        await path_moved(db, src, f"/lumina-moving/{i}")
+    for i, (_src, dst) in enumerate(pairs):
+        await path_moved(db, f"/lumina-moving/{i}", dst)
+
+
 async def path_moved(db, src: str, dst: str) -> None:
     """A video got another path: every row that knows it by its path (movie, episode, TV inventory, MediaInfo)."""
     name = os.path.basename(dst)
@@ -377,18 +420,20 @@ async def undo_batch(db, batch_id: str, root: str | list[str]) -> int:
         "SELECT id, src, dst FROM file_operations WHERE batch_id = ? AND status = 'done' ORDER BY id DESC", (batch_id,)
     )
     ops = await cursor.fetchall()
-    undone = 0
     touched_folders: set[str] = set()
+    freed = {os.path.normcase(op["dst"]) for op in ops}          # targets the undo itself empties
+    back = []
     for op in ops:
-        if not os.path.exists(op["dst"]) or os.path.exists(op["src"]):
+        if not os.path.exists(op["dst"]) or (os.path.exists(op["src"]) and os.path.normcase(op["src"]) not in freed):
             logger.warning("Cannot undo %s → %s (file moved meanwhile)", op["dst"], op["src"])
             continue
-        _ensure_dir(os.path.dirname(op["src"]))
-        os.rename(op["dst"], op["src"])
-        await path_moved(db, op["dst"], op["src"])
+        back.append(op)
+    move_many([(op["dst"], op["src"]) for op in back])
+    await paths_moved(db, [(op["dst"], op["src"]) for op in back])
+    for op in back:
         await db.execute("UPDATE file_operations SET status = 'undone' WHERE id = ?", (op["id"],))
         touched_folders.add(os.path.dirname(op["dst"]))
-        undone += 1
+    undone = len(back)
     await db.commit()
     # Folders created by the batch may still hold an NFO the nfo module wrote there.
     for folder in sorted(touched_folders, key=len, reverse=True):
