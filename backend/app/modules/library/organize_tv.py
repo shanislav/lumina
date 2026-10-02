@@ -7,8 +7,10 @@ A plan is computed per *show folder* (the first folder under the TV library, as 
 - the numbers stay the user's: what Plex shows (it reads them from the names), else the file's own;
   an anime numbered through keeps the scan's mapping. Per show the user may choose TMDB's numbering
   instead (``tv_naming``): two files TMDB made one episode become its parts (" - pt1", " - pt2")
-- the episode's name: Plex's (clean, in the user's language), the file's own when TMDB/Plex call that
-  number another episode, else TMDB's
+- the episode's name: Plex's (clean, in the user's language), else the file's own (also when Plex shows
+  another episode's name for that number), else TMDB's; a generic one ("Epizoda 3") is no name
+- the show's name: TMDB's in the renamer's language — or Plex's when it is one of TMDB's names of the
+  show (TMDB's Czech "Blue" for Bluey; Plex shows what the user picked or fixed)
 - extras folders (Plex's Other, Featurettes …) move with the show unchanged; "Bonus", "Extra" … become
   "Other" (a name Plex knows)
 - anything else in the folder keeps its place under the new show folder; nothing is overwritten,
@@ -73,8 +75,18 @@ async def set_numbering(db, tmdb_id: int, value: str) -> None:
     await db.commit()
 
 
-def _generic(title: str) -> bool:
-    return not naming.episode_title(title or "")
+def _named(title: str) -> str:
+    """The name, or "" for none or a generic one ("Epizoda 3", "Episode 25")."""
+    return title if naming.episode_title(title or "") else ""
+
+
+def show_title(details: dict, settings: dict, plex_title: str = "") -> str:
+    tmdb = naming.pick_title(details.get("titles_by_lang") or {}, details.get("original_language", ""),
+                             details.get("original_title", ""), settings["language"], settings["keep_local_original"]) \
+        or details.get("title", "")
+    known = {t.casefold() for t in [*(details.get("titles_by_lang") or {}).values(), details.get("original_title") or "",
+                                    details.get("title") or "", *(details.get("titles") or [])] if t}
+    return plex_title if plex_title and plex_title.casefold() in known else tmdb
 
 
 def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]) -> tuple[int, list[int], str, tuple]:
@@ -84,9 +96,9 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
     plex = facts.get("plex")
     file_season, file_eps = facts.get("file") or [row["season"], row["episodes"]]
     scan = (row["season"], row["episodes"])                         # the scan's numbers (TMDB's, if it mapped)
-    file_title = facts.get("title") or ""
-    plex_title = plex[2] if plex and not _generic(plex[2]) else ""
-    tmdb_title = lambda s, e: tmdb_titles.get((s, e), "")  # noqa: E731
+    file_title = _named(facts.get("title") or "")
+    plex_title = _named(plex[2]) if plex else ""
+    tmdb_title = lambda s, e: _named(tmdb_titles.get((s, e), ""))  # noqa: E731
     order = (file_season or 0, file_eps[0] if file_eps else 0)
 
     if mode == "tmdb":
@@ -109,12 +121,12 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
         season, episodes = file_season, list(file_eps)
     if row["status"] == "tmdb_other" and file_title:
         title = file_title          # the name in the file is TMDB's other episode — Plex's name is not this one's
-    elif plex_title:
-        title = plex_title
+    elif plex_title or file_title:
+        title = plex_title or file_title
     elif (season, episodes[0]) == (scan[0], scan[1][0] if scan[1] else None) and row["status"] == "ok":
-        title = tmdb_title(season, episodes[0]) or file_title
+        title = tmdb_title(season, episodes[0])
     else:
-        title = file_title
+        title = ""
     return season, episodes, title, order
 
 
@@ -279,9 +291,7 @@ async def plan_show(db, client, folder: str, root: str, settings: dict | None = 
     if not details:
         raise OrganizeError("Nelze načíst údaje seriálu z TMDB")
     settings = settings or await naming_settings()
-    title = naming.pick_title(details.get("titles_by_lang") or {}, details.get("original_language", ""),
-                              details.get("original_title", ""), settings["language"], settings["keep_local_original"]) \
-        or details.get("title", "")
+    title = show_title(details, settings, f["plex_title"] or "")
     media = {r[0]: json.loads(r[1] or "{}") for r in await (await db.execute(
         "SELECT file_path, media FROM tv_media WHERE file_path IN (SELECT file_path FROM tv_files WHERE folder = ?)",
         (folder,))).fetchall()}

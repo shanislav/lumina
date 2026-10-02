@@ -294,9 +294,9 @@ async def _tv_names(db, tmdb_id: int, title: str, year: str) -> dict | None:
     finally:
         await client.close()
     settings = await naming_settings()
-    show_title = naming.pick_title(details.get("titles_by_lang") or {}, details.get("original_language", ""),
-                                   details.get("original_title", ""), settings["language"],
-                                   settings["keep_local_original"]) or details.get("title") or title
+    plex = await (await db.execute("SELECT plex_title FROM tv_folders WHERE tmdb_id = ? AND plex_title != '' LIMIT 1",
+                                   (tmdb_id,))).fetchone()
+    show_title = organize_tv.show_title(details, settings, plex[0] if plex else "") or title
     titles = {(r[0], r[1]): r[2] or "" for r in await (await db.execute(
         "SELECT season, episode, episode_title FROM library_episodes WHERE show_tmdb_id = ?", (tmdb_id,))).fetchall()}
     return {"settings": settings, "title": show_title, "info": {"tmdb_id": tmdb_id, "year": details.get("year") or year},

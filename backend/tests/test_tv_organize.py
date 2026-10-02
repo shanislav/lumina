@@ -158,3 +158,24 @@ async def test_apply_names_then_folders_and_undo(db_tv):
     assert not os.path.exists(os.path.join(root, "Loki (2021) {tmdb-84958}"))
     ep = await (await db.execute("SELECT file_path FROM library_episodes WHERE show_tmdb_id = 84958")).fetchone()
     assert ep[0] == a
+
+
+def test_show_title_plex_when_tmdb_knows_it():
+    """TMDB's Czech translation of Bluey is "Blue"; Plex shows "Bluey" — one of TMDB's names, so it is used."""
+    details = {"title": "Blue", "original_title": "Bluey", "original_language": "en",
+               "titles_by_lang": {"en": "Bluey", "cs": "Blue", "sk": "Bluey"}}
+    assert organize_tv.show_title(details, SETTINGS, "Bluey") == "Bluey"
+    assert organize_tv.show_title(details, SETTINGS, "") == "Blue"
+    assert organize_tv.show_title(details, SETTINGS, "Modrý pes") == "Blue"        # not a name TMDB knows
+
+
+def test_file_title_before_tmdb_generic_is_none(tmp_path):
+    root = str(tmp_path)
+    a = touch(root, "Final Space/S01/Final Space_S01E03_Kapitola třetí.mkv")
+    b = touch(root, "Final Space/S01/Final Space S01E04.mkv")
+    rows = [row(a, "Final Space", 1, [3], file=[1, [3]], title="Kapitola třetí"),
+            row(b, "Final Space", 1, [4], file=[1, [4]], title="")]
+    got = rel(organize_tv.plan_folder(rows, {"tmdb_id": 74387, "title": "Final Space", "year": 2018}, {},
+                                      {(1, 3): "Epizoda 3", (1, 4): "Epizoda 4"}, root, SETTINGS), root)
+    assert got["Final Space/S01/Final Space_S01E03_Kapitola třetí.mkv"].endswith("/Final Space - S01E03 - Kapitola třetí.mkv")
+    assert got["Final Space/S01/Final Space S01E04.mkv"].endswith("/Final Space - S01E04.mkv")
