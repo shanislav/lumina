@@ -97,8 +97,11 @@ interface Row {
   copies: ScoredFile[];  // all places where the file is
 }
 
+// one empty list for every render — a new [] each time would re-run the effects that depend on it
+const NO_OWNED: OwnedVersion[] = [];
+
 export default function FileTable({
-  files, loading, onDownloadStarted, tmdb_id, title, year, mediaType, owned = [], movie, preferLocalAudio = true,
+  files, loading, onDownloadStarted, tmdb_id, title, year, mediaType, owned = NO_OWNED, movie, preferLocalAudio = true,
   upgradeFrom = null, profileId, onPick, libraryAction,
 }: Props) {
   const { can } = useAuth();
@@ -408,7 +411,7 @@ export default function FileTable({
             <th className="py-2 px-3 font-medium">Kvalita</th>
             <th className="py-2 px-3 font-medium">Zvuk / tit.</th>
             <th className="py-2 px-3 font-medium">Velikost</th>
-            <th className="py-2 px-3 font-medium" title="Je to hledaný film?">Film</th>
+            <th className="py-2 px-3 font-medium" title={mediaType === "tv" ? "Je to hledaný díl?" : "Je to hledaný film?"}>{mediaType === "tv" ? "Díl" : "Film"}</th>
             <th className="py-2 px-3 font-medium"></th>
           </tr>
         </thead>
@@ -482,7 +485,7 @@ export default function FileTable({
         {verify.running && <span className="animate-pulse">· ověřuji u zdrojů {verify.done}/{verify.total}…</span>}
         {junk.length > 0 && (
           <button onClick={() => setShowJunk(!showJunk)} className="rounded border border-zinc-700 px-2 py-0.5 hover:border-zinc-500">
-            {showJunk ? "Skrýt" : "Zobrazit"} jiné filmy / odpad ({junk.length})
+            {showJunk ? "Skrýt" : "Zobrazit"} {mediaType === "tv" ? "jiné díly" : "jiné filmy"} / odpad ({junk.length})
           </button>
         )}
       </div>

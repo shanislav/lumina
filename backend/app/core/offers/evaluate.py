@@ -47,9 +47,10 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
              duration_s: int = 0, width: int = 0, height: int = 0) -> dict:
     facts = (facts_from_media(details, name, size) if details
              else facts_from_name(name, size, duration_s, width, height))
-    parts = 1
+    parts, pack = 1, False
     if ctx.episode:
         info = parse_episode(name)
+        pack = info.is_pack
         # a pack of a whole season: its size says nothing about one episode's bitrate
         parts = 0 if info.is_pack else max(1, len(info.episodes))
     if not facts.bitrate and size and ctx.runtime and parts:
@@ -87,6 +88,7 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
         "verified": facts.verified,
         "lang_tier": tier,
         "is_dubbed": tier >= 2,
+        "pack": pack,               # a TV season / show pack holding the episode, not the episode alone
     }
 
 

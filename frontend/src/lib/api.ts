@@ -128,6 +128,7 @@ export interface ScoredFile {
   audio: { lang: string; codec: string; channels: number }[];
   verified: boolean;
   lang_tier: number;
+  pack?: boolean;            // TV: a season / show pack holding the wanted episode
 }
 
 /** The film a file search was for — sent back with detail requests so files are re-evaluated with it. */

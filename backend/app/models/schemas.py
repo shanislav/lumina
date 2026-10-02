@@ -78,6 +78,7 @@ class ScoredFile(BaseModel):
     audio: list[dict] = []
     verified: bool = False
     lang_tier: int = 0
+    pack: bool = False        # TV: a season / show pack holding the wanted episode
 
 
 class SearchRequest(BaseModel):

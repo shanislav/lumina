@@ -71,3 +71,10 @@ def test_offer_of_an_episode_is_judged_as_an_episode():
     assert one["film"] == "yes" and one["bitrate"] == int(2e9 * 8 / 3000)
     assert pack["film"] == "unsure" and pack["bitrate"] == 0          # a pack's size says nothing per episode
     assert MovieContext.from_dict(ctx.as_dict()).episode == {"season": 1, "episode": 3}
+
+
+def test_profile_takes_a_season_pack_only_when_nothing_else_suits():
+    from app.core.profiles import Profile, suitable
+    episode = {"film": "yes", "pack": False, "verified": False, "quality_score": 40, "resolution": "720p"}
+    pack = {"film": "unsure", "pack": True, "verified": True, "quality_score": 70, "resolution": "1080p"}
+    assert suitable([pack, episode], Profile()) == [episode, pack]
