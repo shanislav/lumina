@@ -41,8 +41,10 @@ async def db():
 
 
 async def test_default_profiles_and_crud(db):
-    profiles = await load_profiles()
+    profiles = await load_profiles("movie")
     assert [p.name for p in profiles] == ["Standard", "Full HD", "4K"] and profiles[0].is_default
+    tv = await load_profiles("tv")
+    assert [p.name for p in tv] == ["Seriály"] and tv[0].is_default and not tv[0].audio_langs
     settings = importlib.import_module("app.modules.settings.router")
     kids = await settings.create_profile(settings.ProfileBody(
         name="Pro děti", is_default=True, config={"audio_langs": ["cs"], "max_size_gb": 4}))
@@ -52,7 +54,13 @@ async def test_default_profiles_and_crud(db):
         await settings.delete_profile(kids["id"])                           # the default cannot go
     await settings.update_profile(profiles[0].id, settings.ProfileBody(name="Standard", is_default=True))
     await settings.delete_profile(kids["id"])
-    assert [p.name for p in await load_profiles()] == ["Standard", "Full HD", "4K"]
+    assert [p.name for p in await load_profiles("movie")] == ["Standard", "Full HD", "4K"]
+    # each kind has its own default: a new default for TV shows leaves the films' default alone
+    anime = await settings.create_profile(settings.ProfileBody(name="Anime", is_default=True, config={"kind": "tv"}))
+    assert (await get_profile(None, "tv")).name == "Anime" and (await get_profile(None)).name == "Standard"
+    assert (await get_profile(9999, "tv")).name == "Anime"
+    assert [p.name for p in await load_profiles("tv")] == ["Anime", "Seriály"]
+    assert anime["kind"] == "tv"
 
 
 def test_audio_languages():
@@ -87,3 +95,12 @@ def test_suitable_offers_verified_first_then_score():
         {"ident": "e", "film": "yes", "resolution": "2160p", "audio_langs": ["en"], "quality_score": 95, "verified": True},
     ]
     assert [r["ident"] for r in suitable(rows, p)] == ["b", "a"]
+
+
+def test_score_range_of_a_tv_profile_counts_with_an_episode():
+    from app.core.profiles import score_range
+    from app.core.quality import Prefs
+    film = score_range(Profile(min_mbps=4, max_mbps=8), Prefs())
+    episode = score_range(Profile(min_mbps=4, max_mbps=8, kind="tv"), Prefs())
+    assert film["length_label"] == "film 2 h" and film["size_gb"] == [3.6, 7.2]
+    assert episode["length_label"] == "díl 45 min" and episode["size_gb"] == [1.4, 2.7]

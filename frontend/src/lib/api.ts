@@ -668,6 +668,7 @@ export interface QualityProfile {
   max_mbps: number;
   min_score: number;
   cutoff: number;
+  kind: "movie" | "tv";      // for films / for TV shows — each kind has its own default
 }
 
 export interface ScoreRange {
@@ -678,6 +679,8 @@ export interface ScoreRange {
   min_example?: string;
   max_example?: string;
   size_2h_gb: [number, number | null];
+  size_gb?: [number, number | null];     // of a 2-hour film / a 45-minute episode (kind)
+  length_label?: string;                 // "film 2 h" | "díl 45 min"
 }
 
 /** What score a file the (edited) profile lets through can get, and how big a 2-hour film is. */
@@ -690,8 +693,9 @@ export async function getScoreRange(p: QualityProfile): Promise<ScoreRange> {
   return res.json();
 }
 
-export async function getProfiles(): Promise<QualityProfile[]> {
-  const res = await apiFetch(`${API_BASE}/api/settings/profiles`);
+/** Profiles for films (default), for TV shows or all of them. */
+export async function getProfiles(kind: "movie" | "tv" | "all" = "movie"): Promise<QualityProfile[]> {
+  const res = await apiFetch(`${API_BASE}/api/settings/profiles?kind=${kind}`);
   if (!res.ok) throw new Error(`Failed to load profiles: ${res.status}`);
   return res.json();
 }

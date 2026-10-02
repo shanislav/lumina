@@ -180,23 +180,30 @@ async def profile_score_range(body: ProfileBody) -> dict:
 
 
 @router.get("/profiles")
-async def list_profiles() -> list[dict]:
+async def list_profiles(kind: str = "movie") -> list[dict]:
+    """Profiles for films (default), for TV shows (kind=tv) or all of them (kind=all)."""
     from app.core.profiles import load_profiles
-    return [_profile_out(p) for p in await load_profiles()]
+    return [_profile_out(p) for p in await load_profiles(None if kind == "all" else kind)]
 
 
 async def _save_profile(profile_id: int | None, body: ProfileBody) -> dict:
-    from app.core.profiles import CONFIG_FIELDS, Profile, profile_config
+    from app.core.profiles import CONFIG_FIELDS, KINDS, Profile, profile_config, profile_from_row
     from app.db import get_db
     p = Profile(name=body.name.strip()[:60] or "Profil", is_default=body.is_default)
     defaults = Profile()
     for key in CONFIG_FIELDS:
         value = body.config.get(key, getattr(defaults, key))
         setattr(p, key, value)
+    if p.kind not in KINDS:
+        p.kind = "movie"
     db = await get_db()
     try:
-        if p.is_default:
-            await db.execute("UPDATE quality_profiles SET is_default = 0")
+        others = [profile_from_row(r) for r in await (await db.execute("SELECT * FROM quality_profiles")).fetchall()]
+        same_kind = [o.id for o in others if o.kind == p.kind and o.id != profile_id]
+        if p.is_default and same_kind:
+            # one default per kind (films / TV shows)
+            await db.execute(f"UPDATE quality_profiles SET is_default = 0 WHERE id IN ({','.join('?' * len(same_kind))})",
+                             same_kind)
         if profile_id is None:
             cursor = await db.execute("INSERT INTO quality_profiles (name, config, is_default) VALUES (?, ?, ?)",
                                       (p.name, profile_config(p), int(p.is_default)))
@@ -207,10 +214,11 @@ async def _save_profile(profile_id: int | None, body: ProfileBody) -> dict:
             if not cursor.rowcount:
                 raise HTTPException(404, "Profil neexistuje")
             p.id = profile_id
-        # there is always exactly one default
-        cursor = await db.execute("SELECT COUNT(*) FROM quality_profiles WHERE is_default = 1")
-        if (await cursor.fetchone())[0] == 0:
-            await db.execute("UPDATE quality_profiles SET is_default = 1 WHERE id = (SELECT MIN(id) FROM quality_profiles)")
+        # there is always exactly one default of each kind
+        mine = [p.id, *same_kind]
+        if not p.is_default and not any(o.is_default for o in others if o.id in same_kind):
+            await db.execute("UPDATE quality_profiles SET is_default = 1 WHERE id = ?", (min(mine),))
+            p.is_default = min(mine) == p.id
         await db.commit()
     finally:
         await db.close()

@@ -38,13 +38,15 @@ CREATE TABLE IF NOT EXISTS automations (
 from app.core.offers.details import SOURCE_FILE_DETAILS  # noqa: E402
 
 # v3/v4: quality profiles (decisions/0005) — shared by the library and wanted films
-from app.core.profiles import QUALITY_PROFILES, seed_default_profiles  # noqa: E402
+from app.core.profiles import QUALITY_PROFILES, seed_default_profiles, seed_tv_profile  # noqa: E402
 
 # v5: accounts and sign-in sessions (decisions/0006) — every module's routes depend on them
 from app.core.auth import USERS  # noqa: E402
+# v6: a profile for TV shows (profiles have a kind: movie | tv, docs SERIALY)
 
 CORE = Module(name="core", title="Core", order=0, required=True,
-              migrations=[CORE_V1, SOURCE_FILE_DETAILS, QUALITY_PROFILES, seed_default_profiles(), USERS])
+              migrations=[CORE_V1, SOURCE_FILE_DETAILS, QUALITY_PROFILES, seed_default_profiles(), USERS,
+                          seed_tv_profile])
 
 
 def seed_automation(type_name: str, name: str) -> str:

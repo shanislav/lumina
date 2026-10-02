@@ -15,8 +15,9 @@ const langLabel = (code: string) => LANGS.find(([c]) => c === code)?.[1] ?? code
 const EMPTY: QualityProfile = {
   id: 0, name: "Nový profil", is_default: false, min_resolution: "", max_resolution: "",
   audio_langs: ["cs", "sk"], audio_mode: "any", codecs: [], hdr: "any", max_size_gb: 0, min_mbps: 0,
-  max_mbps: 0, min_score: 0, cutoff: 0,
+  max_mbps: 0, min_score: 0, cutoff: 0, kind: "movie",
 };
+const KIND_LABEL = { movie: "Filmy", tv: "Seriály" } as const;
 
 export default function ProfilesEditor() {
   const [profiles, setProfiles] = useState<QualityProfile[]>([]);
@@ -25,7 +26,7 @@ export default function ProfilesEditor() {
   const [open, setOpen] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
-  const load = () => getProfiles().then(setProfiles).catch(() => {});
+  const load = () => getProfiles("all").then(setProfiles).catch(() => {});
   useEffect(() => { load(); }, []);
 
   // hints while editing: the score a file can get with these conditions, the size of a 2-hour film
@@ -76,6 +77,7 @@ export default function ProfilesEditor() {
     p.cutoff ? `cíl ${p.cutoff}` : "bez cíle",
   ].filter(Boolean).join(" · ");
 
+  const sizes = range ? (range.size_gb || range.size_2h_gb) : null;
   const field = "rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-violet-500";
   const set = (patch: Partial<QualityProfile>) => editing && setEditing({ ...editing, ...patch });
   const num = (key: keyof QualityProfile, step = 1) => (
@@ -93,31 +95,40 @@ export default function ProfilesEditor() {
       {open && (
         <div className="px-5 pb-5 space-y-3 text-sm">
           <p className="text-xs text-zinc-500">
-            Profil říká, jakou verzi filmu chceš. Podmínky jsou tvrdý filtr (co nesplní, nenabídne se),
+            Profil říká, jakou verzi filmu nebo seriálu chceš. Podmínky jsou tvrdý filtr (co nesplní, nenabídne se),
             skóre pak řadí zbytek. <b>Cíl</b>: když verze v knihovně splní profil a má aspoň toto skóre, lepší se už nehledá.
           </p>
-          {profiles.map((p) => (
-            <div key={p.id} className="flex items-center gap-3 rounded-lg border border-zinc-800 px-3 py-2">
-              <div className="flex-1 min-w-0">
-                <p className="text-zinc-100">{p.name} {p.is_default && <span className="text-[10px] text-violet-300 ml-1">výchozí</span>}</p>
-                <p className="text-xs text-zinc-500 truncate">{summary(p)}</p>
-              </div>
-              <button onClick={() => setEditing({ ...p })} className="text-xs text-violet-300 hover:text-violet-200">Upravit</button>
-              {p.is_default ? (
-                <span className="text-xs text-zinc-600" title="Výchozí profil nejde smazat — nejdřív nastav jiný jako výchozí">Smazat</span>
-              ) : confirmDelete === p.id ? (
-                <span className="flex items-center gap-2 text-xs">
-                  <button onClick={() => { setConfirmDelete(null); remove(p); }} className="text-red-400 hover:text-red-300">Opravdu smazat</button>
-                  <button onClick={() => setConfirmDelete(null)} className="text-zinc-500 hover:text-zinc-300">Ne</button>
-                </span>
-              ) : (
-                <button onClick={() => setConfirmDelete(p.id)} className="text-xs text-zinc-500 hover:text-red-400">Smazat</button>
-              )}
+          {(["movie", "tv"] as const).map((kind) => (
+            <div key={kind} className="space-y-2">
+              <p className="text-xs font-medium text-zinc-400">{KIND_LABEL[kind]}</p>
+              {profiles.filter((p) => (p.kind || "movie") === kind).map((p) => (
+                <div key={p.id} className="flex items-center gap-3 rounded-lg border border-zinc-800 px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-zinc-100">{p.name} {p.is_default && <span className="text-[10px] text-violet-300 ml-1">výchozí</span>}</p>
+                    <p className="text-xs text-zinc-500 truncate">{summary(p)}</p>
+                  </div>
+                  <button onClick={() => setEditing({ ...p })} className="text-xs text-violet-300 hover:text-violet-200">Upravit</button>
+                  {p.is_default ? (
+                    <span className="text-xs text-zinc-600" title="Výchozí profil nejde smazat — nejdřív nastav jiný jako výchozí">Smazat</span>
+                  ) : confirmDelete === p.id ? (
+                    <span className="flex items-center gap-2 text-xs">
+                      <button onClick={() => { setConfirmDelete(null); remove(p); }} className="text-red-400 hover:text-red-300">Opravdu smazat</button>
+                      <button onClick={() => setConfirmDelete(null)} className="text-zinc-500 hover:text-zinc-300">Ne</button>
+                    </span>
+                  ) : (
+                    <button onClick={() => setConfirmDelete(p.id)} className="text-xs text-zinc-500 hover:text-red-400">Smazat</button>
+                  )}
+                </div>
+              ))}
+              <button onClick={() => setEditing({ ...EMPTY, kind, name: kind === "tv" ? "Nový profil seriálů" : EMPTY.name,
+                audio_langs: kind === "tv" ? [] : [...EMPTY.audio_langs] })}
+                className="rounded bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500">+ Nový profil</button>
             </div>
           ))}
-          <button onClick={() => setEditing({ ...EMPTY, audio_langs: [...EMPTY.audio_langs] })}
-            className="rounded bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500">+ Nový profil</button>
-          <p className="text-[11px] text-zinc-600">Filmy se smazaným profilem použijí výchozí profil.</p>
+          <p className="text-[11px] text-zinc-600">
+            Filmy a seriály se smazaným profilem použijí výchozí profil svého druhu. U seriálů jazyk řeší nastavení
+            seriálu (EN hned, CZ/SK později) — v profilu ho obvykle nech prázdný.
+          </p>
           {error && !editing && <p className="text-xs text-red-400">{error}</p>}
         </div>
       )}
@@ -125,7 +136,9 @@ export default function ProfilesEditor() {
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm" onClick={() => setEditing(null)}>
           <div className="w-full max-w-lg rounded-xl border border-zinc-800 bg-zinc-900 p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-zinc-100">{editing.id ? "Upravit profil" : "Nový profil"}</h3>
+            <h3 className="text-lg font-semibold text-zinc-100">
+              {editing.id ? "Upravit profil" : "Nový profil"} <span className="text-sm font-normal text-zinc-500">· {KIND_LABEL[editing.kind || "movie"]}</span>
+            </h3>
             <div className="grid grid-cols-[10rem_1fr] gap-x-3 gap-y-3 items-center text-sm">
               <label className="text-zinc-400">Název</label>
               <input value={editing.name} onChange={(e) => set({ name: e.target.value })} className={field} />
@@ -186,10 +199,10 @@ export default function ProfilesEditor() {
               <div className="space-y-1">
                 <div className="flex items-center gap-2">od {num("min_mbps", 0.5)} do {num("max_mbps", 0.5)}</div>
                 <p className="text-[11px] text-zinc-500">
-                  celkový (obraz + zvuk), 0 = bez limitu · 1 Mb/s ≈ 0,9 GB na 2 h
-                  {range && (range.size_2h_gb[0] > 0 || range.size_2h_gb[1] != null) && (
-                    <> · <span className="text-zinc-300">film 2 h: {range.size_2h_gb[0] > 0 ? `${range.size_2h_gb[0]} GB` : "0"}
-                      {" – "}{range.size_2h_gb[1] != null ? `${range.size_2h_gb[1]} GB` : "bez limitu"}</span></>
+                  celkový (obraz + zvuk), 0 = bez limitu · {editing.kind === "tv" ? "1 Mb/s ≈ 0,34 GB na díl 45 min" : "1 Mb/s ≈ 0,9 GB na 2 h"}
+                  {range && sizes && (sizes[0] > 0 || sizes[1] != null) && (
+                    <> · <span className="text-zinc-300">{range.length_label || "film 2 h"}: {sizes[0] > 0 ? `${sizes[0]} GB` : "0"}
+                      {" – "}{sizes[1] != null ? `${sizes[1]} GB` : "bez limitu"}</span></>
                   )}
                 </p>
               </div>
@@ -202,7 +215,7 @@ export default function ProfilesEditor() {
                 <div className="flex items-center gap-2">{num("cutoff")} <span className="text-xs text-zinc-600">0 = hledat pořád</span></div>
                 {range && (range.possible ? (
                   <div className="text-[11px] text-zinc-500 space-y-0.5">
-                    <p>S těmito podmínkami má soubor skóre <span className="text-zinc-200">{range.min}–{range.max}</span> (film 2 h, současné váhy skóre).</p>
+                    <p>S těmito podmínkami má soubor skóre <span className="text-zinc-200">{range.min}–{range.max}</span> ({range.length_label || "film 2 h"}, současné váhy skóre).</p>
                     <p title={range.max_example}>nejlepší: {range.max_example}</p>
                     <p title={range.min_example}>nejhorší, co projde: {range.min_example}</p>
                     {editing.cutoff > (range.max ?? 0) && (
@@ -217,7 +230,7 @@ export default function ProfilesEditor() {
               <label className="text-zinc-400">Výchozí</label>
               <label className="flex items-center gap-2 text-zinc-300">
                 <input type="checkbox" checked={editing.is_default} onChange={(e) => set({ is_default: e.target.checked })} />
-                použít, když film nemá vlastní profil
+                použít, když {editing.kind === "tv" ? "seriál" : "film"} nemá vlastní profil
               </label>
             </div>
             {error && <p className="text-xs text-red-400">{error}</p>}

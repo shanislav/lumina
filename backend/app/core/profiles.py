@@ -15,6 +15,7 @@ from app.core.quality import Facts, Prefs, facts_from_media, language_tier, scor
 
 RESOLUTIONS = ["SD", "720p", "1080p", "2160p"]
 HDR_MODES = ("any", "require", "forbid")
+KINDS = ("movie", "tv")            # profiles for films / for TV shows; each kind has its own default
 
 QUALITY_PROFILES = """
 CREATE TABLE IF NOT EXISTS quality_profiles (
@@ -42,6 +43,7 @@ class Profile:
     max_mbps: float = 0
     min_score: int = 0
     cutoff: int = 0                   # owned version at/above this score (and passing) = done; 0 = never done
+    kind: str = "movie"               # movie | tv
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -73,6 +75,18 @@ DEFAULT_PROFILES = [
     Profile(name="Full HD", min_resolution="1080p", max_resolution="1080p", audio_langs=["cs", "sk"], cutoff=75),
     Profile(name="4K", min_resolution="2160p", audio_langs=["cs", "sk"], cutoff=85),
 ]
+
+# the language of an episode is the show's own setting (EN now, CZ/SK later) — not a profile condition
+TV_PROFILE = Profile(name="Seriály", is_default=True, kind="tv", min_resolution="720p")
+
+
+async def seed_tv_profile(db) -> None:
+    """Migration: the first profile for TV shows, when there is none."""
+    cursor = await db.execute("SELECT config FROM quality_profiles")
+    if any(json.loads(r[0] or "{}").get("kind") == "tv" for r in await cursor.fetchall()):
+        return
+    await db.execute("INSERT INTO quality_profiles (name, config, is_default) VALUES (?, ?, 1)",
+                     (TV_PROFILE.name, profile_config(TV_PROFILE)))
 
 
 def seed_default_profiles() -> str:
@@ -152,13 +166,15 @@ def row_from_media(media: dict, filename: str, size: int, prefs: Prefs) -> dict:
 
 
 TWO_HOURS_S = 7200
+EPISODE_S = 45 * 60
 _CODECS = ("H.265", "AV1", "H.264", "VC-1", "MPEG-2", "XviD")
 
 
 def score_range(p: Profile, prefs: Prefs) -> dict:
     """What score a file this profile lets through can get, with the current score weights:
-    the best and the worst possible file (a 2-hour film, sound as the profile wants it).
-    Plus how big a 2-hour film is within the profile's bitrate / size limits."""
+    the best and the worst possible file (a 2-hour film / a 45-minute episode, sound as the profile
+    wants it). Plus how big such a file is within the profile's bitrate / size limits."""
+    length = EPISODE_S if p.kind == "tv" else TWO_HOURS_S
     lo_res, hi_res = _rank(p.min_resolution) if p.min_resolution else 0, \
         _rank(p.max_resolution) if p.max_resolution else len(RESOLUTIONS) - 1
     resolutions = RESOLUTIONS[lo_res:hi_res + 1]
@@ -166,7 +182,7 @@ def score_range(p: Profile, prefs: Prefs) -> dict:
     hdrs = {"require": ["HDR10", "DV"], "forbid": [""]}.get(p.hdr, ["", "HDR10", "DV"])
     langs = list(p.audio_langs) if p.audio_mode == "all" and p.audio_langs else (p.audio_langs[:1] or ["en"])
     max_bps = min(x for x in (p.max_mbps * 1e6 if p.max_mbps else 0,
-                              p.max_size_gb * 8e9 / TWO_HOURS_S if p.max_size_gb else 0, 120e6) if x)
+                              p.max_size_gb * 8e9 / length if p.max_size_gb else 0, 120e6) if x)
     min_bps = max(p.min_mbps * 1e6, 0.5e6)
     if min_bps > max_bps:
         return {"possible": False, "reason": "minimální bitrate je nad limitem bitrate / velikosti"}
@@ -179,8 +195,8 @@ def score_range(p: Profile, prefs: Prefs) -> dict:
             for hdr in hdrs:
                 for codec_a, ch, _ in sounds:
                     for bps in steps:
-                        f = Facts(resolution=res, codec=codec, hdr=hdr, bitrate=int(bps), duration_s=TWO_HOURS_S,
-                                  size=int(bps * TWO_HOURS_S / 8), audio_langs=langs, verified=True,
+                        f = Facts(resolution=res, codec=codec, hdr=hdr, bitrate=int(bps), duration_s=length,
+                                  size=int(bps * length / 8), audio_langs=langs, verified=True,
                                   audio=[{"lang": l, "codec": codec_a, "channels": ch} for l in langs])
                         row = {"resolution": res, "codec": codec, "hdr": hdr, "size": f.size, "bitrate": f.bitrate,
                                "audio_langs": langs}
@@ -193,8 +209,9 @@ def score_range(p: Profile, prefs: Prefs) -> dict:
                             best = (s, summary(f), f.size)
                         if worst is None or s < worst[0]:
                             worst = (s, summary(f), f.size)
-    gb = lambda bps: round(bps * TWO_HOURS_S / 8e9, 1)
-    out = {"size_2h_gb": [gb(min_bps if p.min_mbps else 0), gb(max_bps) if max_bps < 120e6 else None]}
+    gb = lambda bps: round(bps * length / 8e9, 1)
+    sizes = [gb(min_bps if p.min_mbps else 0), gb(max_bps) if max_bps < 120e6 else None]
+    out = {"size_2h_gb": sizes, "size_gb": sizes, "length_label": "díl 45 min" if p.kind == "tv" else "film 2 h"}
     if best is None:
         return {**out, "possible": False, "reason": "podmínky nesplní žádný soubor (min. skóre?)"}
     return {**out, "possible": True,
@@ -202,20 +219,26 @@ def score_range(p: Profile, prefs: Prefs) -> dict:
             "min": worst[0], "min_example": f"{worst[1]} · {worst[2] / 1e9:.1f} GB"}
 
 
-async def load_profiles() -> list[Profile]:
+async def load_profiles(kind: str | None = None) -> list[Profile]:
+    """All profiles (kind=None) or the ones for films / for TV shows; the default one first."""
     from app.db import get_db
     db = await get_db()
     try:
         cursor = await db.execute("SELECT * FROM quality_profiles ORDER BY is_default DESC, id")
-        return [profile_from_row(r) for r in await cursor.fetchall()]
+        profiles = [profile_from_row(r) for r in await cursor.fetchall()]
     finally:
         await db.close()
+    return [p for p in profiles if kind is None or p.kind == kind]
 
 
-async def get_profile(profile_id: int | None) -> Profile:
-    """The profile, or the default one when it is missing / was deleted."""
-    profiles = await load_profiles()
+def pick_profile(profiles: list[Profile], profile_id: int | None, kind: str = "movie") -> Profile:
+    """The profile, or the default one of its kind when it is missing / was deleted."""
     by_id = {p.id: p for p in profiles}
     if profile_id in by_id:
         return by_id[profile_id]
-    return next((p for p in profiles if p.is_default), profiles[0] if profiles else Profile(name="—"))
+    same = [p for p in profiles if p.kind == kind]
+    return next((p for p in same if p.is_default), same[0] if same else Profile(name="—", kind=kind))
+
+
+async def get_profile(profile_id: int | None, kind: str = "movie") -> Profile:
+    return pick_profile(await load_profiles(), profile_id, kind)
