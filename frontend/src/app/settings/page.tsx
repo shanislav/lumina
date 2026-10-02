@@ -90,6 +90,11 @@ const INTEGRATION_TYPES = [
         placeholder: "{title} ({year}) [{res} {codec} {hdr}] [{langs}] {tmdb-{tmdb_id}}",
       },
       { key: "use_mediainfo", label: "Use MediaInfo", type: "checkbox", hint: "Extract resolution and codec from file" },
+      { key: "tv_folder_format", label: "Seriály — složka seriálu", type: "text", default: "{title} ({year}) {tmdb-{tmdb_id}}",
+        hint: "Relativně ke knihovně seriálů. TMDB ID ve složce: Plex podle něj seriál nikdy nespáruje špatně" },
+      { key: "tv_season_format", label: "Seriály — složka série", type: "text", default: "Season {season}", hint: "{season} = 01, 02 … (série 0 = Specials)" },
+      { key: "tv_format", label: "Seriály — soubor", type: "text", placeholder: "{title} - {se} - {episode_title} [{res} {codec} {hdr}] [{langs}]",
+        hint: "{se} = S01E03 (S01E01-E02), {episode_title} = název dílu (vynechá se, když je jen „Epizoda 3“)" },
     ],
   },
   {
@@ -642,6 +647,7 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
   const [plexTest, setPlexTest] = useState<PlexTestResult | "loading" | null>(null);
 
   const DEFAULT_FORMAT = "{title} ({year}) [{res} {codec} {hdr}] [{langs}] {tmdb-{tmdb_id}}";
+  const DEFAULT_TV_FORMAT = "{title} - {se} - {episode_title} [{res} {codec} {hdr}] [{langs}]";
 
   useEffect(() => {
     const defaults: Record<string, string> = {};
@@ -649,6 +655,7 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
       if (f.default !== undefined && config[f.key] === undefined) defaults[f.key] = f.default;
     }
     if (type === "renamer" && !config.format) defaults.format = DEFAULT_FORMAT;
+    if (type === "renamer" && !config.tv_format) defaults.tv_format = DEFAULT_TV_FORMAT;
     if (Object.keys(defaults).length) setConfig({ ...config, ...defaults });
   }, [type, config.format]);
 
@@ -657,6 +664,7 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
     { tag: "{res}", desc: "Resolution" }, { tag: "{source}", desc: "Source (WEBDL...)" },
     { tag: "{codec}", desc: "Codec" }, { tag: "{langs}", desc: "Languages" },
     { tag: "{hdr}", desc: "HDR / DV" }, { tag: "{tmdb-{tmdb_id}}", desc: "TMDB ID tag (Plex)" },
+    { tag: "{se}", desc: "Seriál: S01E03" }, { tag: "{season}", desc: "Seriál: 01" }, { tag: "{episode_title}", desc: "Seriál: název dílu" },
   ];
 
   const getPreview = () => {
@@ -665,6 +673,15 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
       .replaceAll("{title}", "Avatar").replaceAll("{year}", "2009").replace("{res}", "2160p").replace("{source}", "BluRay")
       .replace("{codec}", "x265").replace("{hdr}", "HDR10").replace("{langs}", "CS+EN").replace("{tmdb_id}", "19995").replace("{imdb_id}", "tt0499549");
     return fill(config.folder_format || "{year}/{title} ({year})") + "/" + fill(config.format || DEFAULT_FORMAT) + ".mkv";
+  };
+  const getTvPreview = () => {
+    const fill = (t: string) => t
+      .replace("{tmdb-{tmdb_id}}", "{tmdb-2290}").replaceAll("{title}", "Hvězdná brána - Atlantida").replaceAll("{year}", "2004")
+      .replace("{season}", "02").replace("{se}", "S02E02").replace("{episode_title}", "Vetřelec").replace("{res}", "720p")
+      .replace("{source}", "WEBDL").replace("{codec}", "x264").replace("{hdr}", "").replace("{langs}", "CS+EN")
+      .replace("{tmdb_id}", "2290").replace(/\[\s*\]/g, "").replace(/\s+/g, " ").replace(" ]", "]");
+    return fill(config.tv_folder_format || "{title} ({year}) {tmdb-{tmdb_id}}") + "/" + fill(config.tv_season_format || "Season {season}")
+      + "/" + fill(config.tv_format || DEFAULT_TV_FORMAT) + ".mkv";
   };
 
   return (
@@ -728,6 +745,7 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
             {type === "renamer" && (
               <div className="mt-4 space-y-4">
                 <div className="rounded-lg bg-zinc-950 p-3 border border-zinc-800/50"><label className="text-[10px] uppercase font-bold text-zinc-600 block mb-2">Náhled (složka / soubor)</label><code className="text-xs text-violet-400 break-all">{getPreview()}</code></div>
+                <div className="rounded-lg bg-zinc-950 p-3 border border-zinc-800/50"><label className="text-[10px] uppercase font-bold text-zinc-600 block mb-2">Náhled seriálu (složka / série / soubor)</label><code className="text-xs text-violet-400 break-all">{getTvPreview()}</code></div>
                 <div className="grid grid-cols-2 gap-2">{TAGS.map(t => (<div key={t.tag} className="flex flex-col gap-0.5"><span className="text-[10px] font-mono text-violet-300">{t.tag}</span><span className="text-[9px] text-zinc-500">{t.desc}</span></div>))}</div>
               </div>
             )}

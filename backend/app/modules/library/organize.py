@@ -55,6 +55,10 @@ async def naming_settings() -> dict:
         "keep_local_original": cfg.get("keep_local_original", "true") != "false",
         "folder_format": cfg.get("folder_format") or naming.DEFAULT_FOLDER_FORMAT,
         "file_format": cfg.get("format") or naming.DEFAULT_FILE_FORMAT,
+        # TV shows (Seriály)
+        "tv_folder_format": cfg.get("tv_folder_format") or naming.DEFAULT_TV_FOLDER_FORMAT,
+        "tv_season_format": cfg.get("tv_season_format") or naming.DEFAULT_TV_SEASON_FORMAT,
+        "tv_file_format": cfg.get("tv_format") or naming.DEFAULT_TV_FILE_FORMAT,
     }
 
 

@@ -13,6 +13,15 @@ import re
 DEFAULT_FOLDER_FORMAT = "{year}/{title} ({year})"
 DEFAULT_FILE_FORMAT = "{title} ({year}) [{res} {codec} {hdr}] [{langs}] {tmdb-{tmdb_id}}"
 DEFAULT_TITLE_LANGUAGE = "en"
+# TV shows (docs SERIALY, user 2026-10-02): no year buckets (a few dozen shows), the TMDB ID on the show's
+# folder (Plex reads it there — the ID belongs to the show, not to an episode), "Season 01", and the
+# show's name in every file (a file copied out of its folder still says what it is)
+DEFAULT_TV_FOLDER_FORMAT = "{title} ({year}) {tmdb-{tmdb_id}}"
+DEFAULT_TV_SEASON_FORMAT = "Season {season}"
+DEFAULT_TV_FILE_FORMAT = "{title} - {se} - {episode_title} [{res} {codec} {hdr}] [{langs}]"
+TV_SPECIALS_FOLDER = "Specials"
+# what TMDB calls an episode it has no real name for ("Epizoda 3", "3. díl") — left out of file names
+_GENERIC_EPISODE = re.compile(r"^(?:(?:epizoda|episode|díl|dil|část|cast|folge|odcinek)\s*\d+|\d+\.?\s*(?:díl|dil|epizoda|část))$", re.IGNORECASE)
 LOCAL_LANGUAGES = {"cs", "sk"}
 
 _ILLEGAL = re.compile(r'[<>"/\\|?*\x00-\x1f]')
@@ -120,7 +129,10 @@ def render(template: str, values: dict[str, str]) -> str:
     text = re.sub(r"\[\s*[-+ ]*\s*\]|\(\s*\)", "", text)
     text = re.sub(r"\[\s*[-+]*\s*", "[", text)
     text = re.sub(r"\s*[-+]*\s*\]", "]", text)
-    return re.sub(r"\s+", " ", text).strip()
+    # an empty part between " - " separators ("Show - S01E03 -  [720p]")
+    text = re.sub(r"(\s-\s*)+(?=\s*(?:\[|$))", " ", text)
+    text = re.sub(r"(\s-)(\s-)+", r"\1", text)
+    return re.sub(r"\s+", " ", text).strip(" -")
 
 
 def movie_values(info: dict, media: dict, original_name: str, title: str) -> dict[str, str]:
@@ -147,3 +159,34 @@ def movie_paths(info: dict, media: dict, original_name: str, title: str, ext: st
     folder = "/".join(p for p in folder_parts if p)
     file_name = sanitize(render(file_format, values)) + ext.lower()
     return folder, file_name
+
+
+def episode_label(season: int, episodes: list[int]) -> str:
+    """S01E03, S01E01-E02 (a file with more episodes)."""
+    first = f"S{season:02d}E{episodes[0]:02d}"
+    return first if len(episodes) < 2 else f"{first}-E{episodes[-1]:02d}"
+
+
+def episode_title(name: str) -> str:
+    """The episode's name for the file — empty when TMDB has only "Epizoda 3" or the like."""
+    name = (name or "").strip()
+    return "" if not name or _GENERIC_EPISODE.match(name) else sanitize(name, component=False)
+
+
+def episode_values(show: dict, season: int, episodes: list[int], media: dict, original_name: str,
+                   title: str, episode_name: str = "") -> dict[str, str]:
+    values = movie_values(show, media, original_name, title)
+    values.update({"season": f"{season:02d}", "episode": f"{episodes[0]:02d}",
+                   "se": episode_label(season, episodes), "episode_title": episode_title(episode_name)})
+    return values
+
+
+def episode_paths(show: dict, season: int, episodes: list[int], media: dict, original_name: str, title: str,
+                  ext: str, episode_name: str = "", folder_format: str = DEFAULT_TV_FOLDER_FORMAT,
+                  season_format: str = DEFAULT_TV_SEASON_FORMAT,
+                  file_format: str = DEFAULT_TV_FILE_FORMAT) -> tuple[str, str, str]:
+    """(show folder, season folder, file name) of an episode file, relative to the TV library."""
+    values = episode_values(show, season, episodes, media, original_name, title, episode_name)
+    show_folder = "/".join(p for p in (sanitize(render(x, values)) for x in folder_format.split("/")) if p)
+    season_folder = TV_SPECIALS_FOLDER if season == 0 else sanitize(render(season_format, values))
+    return show_folder, season_folder, sanitize(render(file_format, values)) + ext.lower()
