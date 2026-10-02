@@ -147,7 +147,16 @@ export default function LibraryPage() {
   const router = useRouter();
   const { can } = useAuth();
   const canEdit = can("library.edit");
-  const [tab, setTab] = useState<Tab>("filmy");
+  const [tab, setTabState] = useState<Tab>("filmy");
+  // the tab is in the address (?tab=serialy), so "back" from a show's page returns to the shows
+  const setTab = (t: Tab) => {
+    setTabState(t);
+    try { window.history.replaceState(window.history.state, "", t === "filmy" ? "/library" : `/library?tab=${t}`); } catch { /* */ }
+  };
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t === "serialy") setTabState("serialy");
+  }, []);
   const [movies, setMovies] = useState<LibraryMovie[]>([]);
   const [shows, setShows] = useState<LibraryShow[]>([]);
   const [loading, setLoading] = useState(true);

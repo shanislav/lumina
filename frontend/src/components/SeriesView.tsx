@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
 import { useAuth } from "@/components/AuthGate";
@@ -42,6 +43,7 @@ function downloadOf(d: DownloadItem): EpisodeDownload {
 
 export default function SeriesView({ tmdbId }: { tmdbId: number }) {
   const { can } = useAuth();
+  const router = useRouter();
   const [data, setData] = useState<SeriesDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<number, boolean>>({});
@@ -94,6 +96,8 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
 
   return (
     <main className="mx-auto max-w-6xl space-y-5 px-4 py-6">
+      <button onClick={() => (window.history.length > 1 ? router.back() : router.push("/library?tab=serialy"))}
+        className="text-sm text-zinc-500 transition-colors hover:text-zinc-300">&larr; Zpět</button>
       <header className="flex gap-4">
         {show.poster_url && (
           <Image src={show.poster_url} alt="" width={120} height={180} unoptimized
