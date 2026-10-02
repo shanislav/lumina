@@ -95,7 +95,8 @@ class OpenSubtitlesClient:
             return hit[1], hit[2]
         resp = await self._http.post(f"{API}/login", json={"username": self._user, "password": self._password})
         if resp.status_code in (400, 401):
-            raise OpenSubtitlesError("OpenSubtitles: špatné jméno nebo heslo")
+            hint = " (zadej uživatelské jméno, ne e-mail)" if "@" in self._user else ""
+            raise OpenSubtitlesError(f"OpenSubtitles: špatné jméno nebo heslo{hint}")
         resp.raise_for_status()
         data = resp.json()
         base = data.get("base_url") or "api.opensubtitles.com"
