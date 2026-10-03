@@ -210,12 +210,22 @@ async def episode_name_check(cfg: dict, tmdb_id: int | None, season: int | None,
     """(file name → the TMDB episode its own episode name is, the wanted episode's names) for an episode
     search — uploaders number by another order, the name tells (library/episode_names)."""
     if not (tmdb_id and season is not None and episode):
-        return None, []
+        return None, [], None
     from app.modules.library import episode_names
 
     by_name, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, season)
     entry = cat.get((season, episode)) or {}
-    return by_name, [t for t in (entry.get("cs"), entry.get("en")) if t and naming.episode_title(t)]
+    anime = False
+    client = TMDBClient(cfg.get("tmdb_api_key", ""))
+    try:
+        show = await client.get_tv_full(tmdb_id)
+        anime = show.get("original_language") == "ja" and any(g in ("Animation", "Animace") for g in show.get("genres", []))
+    except Exception as e:  # noqa: BLE001 — no anime numbers then
+        logger.info("TMDB show %s: %s", tmdb_id, e)
+    finally:
+        await client.close()
+    other = episode_names.other_numbers(cat, season, episode, anime) if cat else None
+    return by_name, [t for t in (entry.get("cs"), entry.get("en")) if t and naming.episode_title(t)], other
 
 
 class SearchFilesResponse(BaseModel):
@@ -239,10 +249,12 @@ async def search_files(
     """All files of a film on all sources, judged (app/core/offers). A TV show with season + episode:
     the files of that episode."""
     cfg = await get_effective_settings()
-    by_name, names = await episode_name_check(cfg, tmdb_id, season, episode) if media_type == "tv" else (None, [])
+    by_name, names, other = (await episode_name_check(cfg, tmdb_id, season, episode) if media_type == "tv"
+                             else (None, [], None))
     offers = await find_offers(cfg, query, original_title=original_title or "", tmdb_id=tmdb_id,
                                media_type=media_type or "movie", wikidata_id=wikidata_id,
-                               season=season, episode=episode, torrent=torrent, by_name=by_name, episode_names=names)
+                               season=season, episode=episode, torrent=torrent, by_name=by_name, episode_names=names,
+                               other_numbers=other)
     return SearchFilesResponse(movie=offers.movie.as_dict(), prefer_local_audio=offers.prefs.prefer_local_audio,
                                files=[ScoredFile(**row) for row in offers.rows])
 

@@ -97,8 +97,8 @@ def torrent_query_list(query: str, en_title: str = "", original_title: str = "")
     return out[:2]
 
 
-def episode_queries(titles: list[str], season: int, episode: int, episode_names: list[str] = ()
-                    ) -> tuple[list[str], list[str]]:
+def episode_queries(titles: list[str], season: int, episode: int, episode_names: list[str] = (),
+                    other: dict | None = None) -> tuple[list[str], list[str]]:
     """(DDL queries, torrent queries) for one episode. Uploaders name episodes "Show S01E03" (sometimes
     "Show 1x03") after the local or the English name; torrent trackers also have the whole season
     ("Show S01") — a pack holds the episode too."""
@@ -107,12 +107,18 @@ def episode_queries(titles: list[str], season: int, episode: int, episode_names:
     if not names:
         return [], []
     se = f"S{season:02d}E{episode:02d}"
-    ddl = [f"{n} {se}" for n in names] + [f"{names[0]} {season}x{episode:02d}"]
+    # the world's other numbers of the episode ("Solo Leveling S02E01" = TMDB S01E13, "Naruto 120")
+    others = [f"S{s:02d}E{e:02d}" for s, e in (other or {}).get("alt", [])]
+    if (other or {}).get("absolute"):
+        others.append(str(other["absolute"]))
+    ddl = [f"{names[0]} {se}", *(f"{names[0]} {x}" for x in others), *(f"{n} {se}" for n in names[1:]),
+           f"{names[0]} {season}x{episode:02d}"]
     # by the episode's name too: an uploader of another order numbers it otherwise ("S01E02 - Sopka" is S01E03)
-    ddl[2:2] = [f"{names[0]} {t}" for t in list(dict.fromkeys(episode_names))[:2]]
+    ddl[1 + len(others) + 1:1 + len(others) + 1] = [f"{names[0]} {t}" for t in list(dict.fromkeys(episode_names))[:2]]
     latin = next((n for n in names if n.isascii() and re.search(r"[A-Za-z]", n)), names[0])
     # Czech trackers name packs "Show (komplet,720p,CZ)", "Show 1. - S03" — "Show S02" finds nothing there
-    return ddl[:MAX_DDL_QUERIES], [f"{latin} {se}", f"{latin} S{season:02d}", latin]
+    return ddl[:MAX_DDL_QUERIES + len(others)], [f"{latin} {se}", *(f"{latin} {x}" for x in others),
+                                                 f"{latin} S{season:02d}", latin]
 
 
 def _unique_names(names: list[str]) -> list[str]:
@@ -198,7 +204,8 @@ async def search_sources(sources, ddl: list[str], torrent_queries: list[str]) ->
 async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_id: int | None = None,
                       media_type: str = "movie", use_ai: bool = True, wikidata_id: str | None = None,
                       season: int | None = None, episode: int | None = None, torrent: bool = True,
-                      by_name=None, episode_names: list[str] | None = None) -> Offers:
+                      by_name=None, episode_names: list[str] | None = None,
+                      other_numbers: dict | None = None) -> Offers:
     """All files of a film on all sources, judged by rules (+ AI for unclear ones).
     A TV show with season + episode: the files of that episode (and packs that hold it); ``by_name`` checks
     a file's own episode name against TMDB's (``evaluate.judge_episode_name``), ``episode_names`` (the
@@ -274,6 +281,8 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
                                 en_title, *ctx.titles])
     if media_type == "tv" and season and episode:
         ctx.episode = {"season": season, "episode": episode}
+        if other_numbers and (other_numbers.get("alt") or other_numbers.get("absolute")):
+            ctx.episode["other"] = other_numbers
         ctx.year = None           # years in episode names are the show's, not a mismatch
         use_ai = False            # the episode rules know packs and other episodes; the AI knows films
 
@@ -282,7 +291,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     # torrent indexers at most two: Prowlarr asks its trackers one query after another (~1.5 s each),
     # a year in the query only narrows what the plain title finds, the film check sorts the rest out
     if ctx.episode:
-        ddl, torrent_queries = episode_queries(ctx.titles, season, episode, episode_names or [])
+        ddl, torrent_queries = episode_queries(ctx.titles, season, episode, episode_names or [], other_numbers)
     else:
         ddl = ddl_queries(query, original_title, en_title, local_titles, ctx.year)
         torrent_queries = torrent_query_list(query, en_title, original_title)

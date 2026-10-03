@@ -240,3 +240,46 @@ async def release_checker(tmdb_key: str, tmdb_id: int, season: int | None):
 def _client(tmdb_key: str):
     from app.clients.tmdb import TMDBClient
     return TMDBClient(tmdb_key)
+
+
+SPLIT_GAP_DAYS = 60       # a break this long within a TMDB season: the rest is the next season elsewhere
+
+
+def other_numbers(cat: dict[tuple[int, int], dict], season: int, episode: int, anime: bool = False) -> dict:
+    """How the rest of the world may number TMDB's episode: {"alt": [[season, episode]], "absolute": n}.
+
+    - a season TMDB keeps whole, aired in parts with a long break ("cours"): TVDB, the uploaders and Plex
+      make the part after the break the next season — Solo Leveling S01E13 (Jan 2025, after Mar 2024) is
+      "S02E01"; only when TMDB has no such season itself
+    - anime: the episode's number counted through the seasons ("Naruto 120"); TMDB counting through already
+      (Naruto S03E120) keeps its number"""
+    out: dict = {"alt": [], "absolute": None}
+    numbered = sorted(k for k in cat if k[0] > 0)
+    if (season, episode) not in cat:
+        return out
+    here = [k for k in numbered if k[0] == season]
+    blocks, last = [[]], None
+    for k in here:
+        air = cat[k].get("air") or ""
+        if last and air and (_days(last, air) or 0) > SPLIT_GAP_DAYS and blocks[-1]:
+            blocks.append([])
+        blocks[-1].append(k)
+        last = air or last
+    seasons = {k[0] for k in numbered}
+    for i, block in enumerate(blocks):
+        if (season, episode) in block and i > 0 and season + i not in seasons:
+            out["alt"].append([season + i, block.index((season, episode)) + 1])
+    if anime:
+        position = numbered.index((season, episode)) + 1
+        out["absolute"] = episode if episode > len(here) else position
+        if out["absolute"] == episode and season == 1:
+            out["absolute"] = None                     # the first season: its numbers are absolute already
+    return out
+
+
+def _days(a: str, b: str) -> int | None:
+    from datetime import date
+    try:
+        return (date.fromisoformat(b[:10]) - date.fromisoformat(a[:10])).days
+    except ValueError:
+        return None

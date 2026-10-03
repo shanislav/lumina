@@ -192,3 +192,24 @@ async def test_an_episodes_languages_are_its_audio_tracks(tmp_path, monkeypatch)
     finally:
         await db.close()
     assert row[0] == "CS,EN"
+
+
+def test_a_season_split_elsewhere_and_anime_numbers():
+    """Solo Leveling: TMDB S01E01–25, the second part after a break of nine months is "S02E01–13" for the
+    rest of the world; Naruto: "Naruto 120"."""
+    cat = {(1, e): {"air": "2024-01-07" if e <= 12 else "2025-01-05"} for e in range(1, 26)}
+    assert episode_names.other_numbers(cat, 1, 13) == {"alt": [[2, 1]], "absolute": None}
+    assert episode_names.other_numbers(cat, 1, 12) == {"alt": [], "absolute": None}
+    cat[(2, 1)] = {"air": "2026-01-01"}                                   # TMDB has S02 itself: no guessing
+    assert episode_names.other_numbers(cat, 1, 13)["alt"] == []
+    naruto = {(1, e): {"air": "2002-10-03"} for e in range(1, 53)} | {(2, e): {"air": "2003-10-01"} for e in range(53, 105)}
+    assert episode_names.other_numbers(naruto, 2, 60, anime=True)["absolute"] == 60
+
+    ctx = MovieContext(titles=["Solo Leveling"], runtime=24,
+                       episode={"season": 1, "episode": 13, "other": {"alt": [[2, 1]], "absolute": None}})
+    ev = evaluate("Solo.Leveling.S02E01.1080p.WEB.x264.mkv", 1, ctx, prefs_from_settings({}))
+    assert ev["film"] == "yes" and ev["film_reasons"][0] == "jiné číslování: S02E01"
+    assert evaluate("Solo.Leveling.S02E02.1080p.mkv", 1, ctx, prefs_from_settings({}))["film"] == "no"
+    ctx = MovieContext(titles=["Naruto"], runtime=23, episode={"season": 3, "episode": 120,
+                                                               "other": {"alt": [], "absolute": 120}})
+    assert evaluate("Naruto 120 CZ dabing.avi", 1, ctx, prefs_from_settings({}))["film"] in ("yes", "unsure")

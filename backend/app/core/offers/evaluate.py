@@ -65,6 +65,18 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
         verdict = judge_episode(name, ctx.titles, int(ctx.episode.get("season") or 0),
                                 int(ctx.episode.get("episode") or 0), facts.duration_s, ctx.runtime)
         film, reasons = verdict.status, verdict.reasons
+        other = ctx.episode.get("other") or {}
+        if film == "no" and reasons and reasons[0] != "jiný seriál" and other:
+            # the episode by another numbering: a season TMDB keeps whole, split elsewhere; anime counted through
+            tries = [((s, e), f"jiné číslování: S{s:02d}E{e:02d}") for s, e in other.get("alt", [])]
+            if other.get("absolute"):
+                tries.append(((int(ctx.episode.get("season") or 0), int(other["absolute"])),
+                              f"absolutní číslo {other['absolute']}"))
+            for (s, e), why in tries:
+                v = judge_episode(name, ctx.titles, s, e, facts.duration_s, ctx.runtime)
+                if v.status in ("yes", "unsure", "length"):
+                    film, reasons = v.status, [why, *v.reasons]
+                    break
     else:
         verdict = judge(name, ctx.titles, ctx.year, facts.duration_s, ctx.runtime, ctx.people, ctx.other_parts,
                         ctx.namesakes)
