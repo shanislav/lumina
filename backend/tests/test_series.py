@@ -35,7 +35,7 @@ def test_episode_states():
     assert store.episode_state(aired, cz, "local_or_temp", local, TODAY) == "owned"
     assert store.episode_state(aired, en, "local_or_temp", local, TODAY) == "temp"      # waits for the dub
     assert store.episode_state(aired, en, "original", local, TODAY) == "owned"
-    assert store.episode_state(aired, unknown, "local_or_temp", local, TODAY) == "owned"  # language not known
+    assert store.episode_state(aired, unknown, "local_or_temp", local, TODAY) == "unknown"  # the tracks say no language: not shown as Czech
     assert store.episode_state(aired, None, "local_or_temp", local, TODAY) == "missing"
     assert store.episode_state(future, None, "local_or_temp", local, TODAY) == "upcoming"
     assert store.episode_state({"air_date": ""}, None, "local_or_temp", local, TODAY) == "upcoming"
@@ -47,7 +47,7 @@ def test_season_view_counts_and_files_tmdb_does_not_list():
     eps = [{"episode_number": n, "air_date": "2026-01-0%d" % n} for n in (1, 2, 3)]
     owned = {(1, 1): {"languages": ["cs"]}, (1, 2): {"languages": ["en"]}, (1, 9): {"languages": ["cs"]}}
     view = store.season_view(season, eps, owned, "local_or_temp", ["cs", "sk"], TODAY)
-    assert view["counts"] == {"owned": 2, "temp": 1, "missing": 1, "upcoming": 0}
+    assert view["counts"] == {"owned": 2, "temp": 1, "unknown": 0, "missing": 1, "upcoming": 0}
     assert [e["episode"] for e in view["episodes"]] == [1, 2, 3, 9]
 
 

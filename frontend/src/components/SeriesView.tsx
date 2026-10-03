@@ -9,7 +9,7 @@ import ShowPacks from "@/components/ShowPacks";
 import EpisodeWindow from "@/components/EpisodeWindow";
 import { useAuth } from "@/components/AuthGate";
 import {
-  DownloadItem, getDownloads,
+  DownloadItem, getDownloads, setAudioLanguage,
   MovieContext, QualityProfile, ScoredFile, SeriesDetail, SeriesEpisode, SeriesLangMode, SeriesSeason,
   getProfiles, getSeries, saveSeriesSettings, searchFiles,
 } from "@/lib/api";
@@ -22,6 +22,7 @@ import {
 const STATE: Record<SeriesEpisode["state"], { label: string; cls: string; dot: string }> = {
   owned: { label: "mám", cls: "text-emerald-300", dot: "bg-emerald-500" },
   temp: { label: "čeká na dabing", cls: "text-amber-300", dot: "bg-amber-400" },
+  unknown: { label: "zvuk nezjištěn", cls: "text-sky-300", dot: "bg-sky-500" },
   missing: { label: "chybí", cls: "text-red-300", dot: "bg-red-500" },
   upcoming: { label: "nevyšlo", cls: "text-zinc-500", dot: "bg-zinc-600" },
 };
@@ -62,7 +63,7 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
       setError(null);
       // open the seasons with something missing (the first one when all is there)
       setOpen((prev) => Object.keys(prev).length ? prev : Object.fromEntries(
-        d.seasons.filter((s) => s.season_number > 0 && (s.counts.missing || s.counts.temp)).slice(0, 2).map((s) => [s.season_number, true])));
+        d.seasons.filter((s) => s.season_number > 0 && (s.counts.missing || s.counts.temp || s.counts.unknown)).slice(0, 2).map((s) => [s.season_number, true])));
     }).catch((e) => setError(e instanceof Error ? e.message : "Chyba"));
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tmdbId]);
 
@@ -119,6 +120,7 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
           <p className="text-xs">
             <span className="text-emerald-300">mám {totals.owned}</span>
             {totals.temp > 0 && <span className="text-amber-300"> · čeká na dabing {totals.temp}</span>}
+            {totals.unknown > 0 && <span className="text-sky-300" title="Zvuková stopa nemá v souboru jazyk — nevím, jestli je česky"> · zvuk nezjištěn {totals.unknown}</span>}
             <span className="text-red-300"> · chybí {totals.missing}</span>
             {totals.upcoming > 0 && <span className="text-zinc-500"> · nevyšlo {totals.upcoming}</span>}
             {show.next_episode && (
@@ -141,7 +143,8 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
             onStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }}
             season={s} open={!!open[s.season_number]}
             toggle={() => setOpen((o) => ({ ...o, [s.season_number]: !o[s.season_number] }))}
-            canSearch={can("search")} searching={searching} onOpen={setEpisodeWindow}
+            canSearch={can("search")} canEdit={can("library.edit")} onChanged={() => load()}
+            searching={searching} onOpen={setEpisodeWindow}
             onSearch={(episode) => setSearching(searching?.season === s.season_number && searching.episode === episode
               ? null : { season: s.season_number, episode })}>
             {searching?.season === s.season_number && (
@@ -232,34 +235,50 @@ function TriState({ value, fallback, yes, no, disabled, onChange }: {
   );
 }
 
-function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch, searching, onSearch, onOpen, children }: {
+function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch, canEdit, onChanged, searching, onSearch, onOpen, children }: {
   tmdbId: number; onStarted: () => void; downloads: Record<string, EpisodeDownload>;
-  season: SeriesSeason; open: boolean; toggle: () => void; canSearch: boolean;
+  season: SeriesSeason; open: boolean; toggle: () => void; canSearch: boolean; canEdit: boolean; onChanged: () => void;
   searching: { season: number; episode: number } | null; onSearch: (episode: number) => void;
   onOpen: (episodeId: number) => void; children?: React.ReactNode;
 }) {
   const [whole, setWhole] = useState(false);
+  const [langBusy, setLangBusy] = useState("");
   const c = season.counts;
+
+  // the user heard the episode: its sound's language goes into the file (MKV, MP4) and Lumina
+  const setLangs = async (ids: number[], lang: string, ask: boolean) => {
+    if (!ids.length) return;
+    if (ask && !window.confirm(`Zapsat jazyk ${L(lang)} ke zvuku ${ids.length} dílů (do souborů MKV a MP4)?`)) return;
+    setLangBusy(`zapisuji ${ids.length}…`);
+    try {
+      const r = await setAudioLanguage(ids, lang);
+      setLangBusy(r.errors.length ? `chyba: ${r.errors[0]}` : "");
+      onChanged();
+    } catch (e) {
+      setLangBusy(e instanceof Error ? e.message : "Chyba");
+    }
+  };
   const going = season.episodes.filter((e) => downloads[`${season.season_number}:${e.episode}`]).length;
   const total = season.episodes.length || 1;
   return (
     <section className="rounded-lg border border-zinc-800">
       <button onClick={toggle} className="flex w-full items-center gap-3 px-4 py-2.5 text-left">
         <span className="w-28 text-sm font-medium text-zinc-100">{season.name || `Série ${season.season_number}`}</span>
-        <span className="flex h-2 flex-1 overflow-hidden rounded bg-zinc-800" title={`mám ${c.owned}, čeká na dabing ${c.temp}, chybí ${c.missing}, nevyšlo ${c.upcoming}`}>
-          {(["owned", "temp", "missing", "upcoming"] as const).map((k) => c[k] > 0 && (
+        <span className="flex h-2 flex-1 overflow-hidden rounded bg-zinc-800" title={`mám ${c.owned}, čeká na dabing ${c.temp}, zvuk nezjištěn ${c.unknown}, chybí ${c.missing}, nevyšlo ${c.upcoming}`}>
+          {(["owned", "temp", "unknown", "missing", "upcoming"] as const).map((k) => c[k] > 0 && (
             <span key={k} className={STATE[k].dot} style={{ width: `${(c[k] / total) * 100}%` }} />
           ))}
         </span>
         {season.season_number === 0 ? (
         <span className="w-44 text-right text-xs text-zinc-500" title="Speciály, bonusy a souhrny — nepočítají se do chybějících">
-          mám {c.owned + c.temp} z {season.episodes.length}
+          mám {c.owned + c.temp + c.unknown} z {season.episodes.length}
           {going > 0 && <span className="text-violet-300"> · stahuje se {going}</span>}
         </span>
         ) : (
         <span className="w-44 text-right text-xs text-zinc-400">
-          {c.owned + c.temp}/{season.episodes.length - c.upcoming}
+          {c.owned + c.temp + c.unknown}/{season.episodes.length - c.upcoming}
           {c.temp > 0 && <span className="text-amber-300"> · {c.temp} EN</span>}
+          {c.unknown > 0 && <span className="text-sky-300" title="Zvuková stopa nemá v souboru jazyk"> · {c.unknown} ? zvuk</span>}
           {c.missing > 0 && <span className="text-red-300"> · chybí {c.missing}</span>}
           {going > 0 && <span className="text-violet-300"> · stahuje se {going}</span>}
         </span>
@@ -268,11 +287,24 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
       </button>
       {open && (
         <div className="border-t border-zinc-800">
-          {canSearch && season.season_number > 0 && c.missing + c.temp > 0 && (
+          {canSearch && season.season_number > 0 && c.missing + c.temp + c.unknown > 0 && (
             <div className="flex items-center gap-3 px-4 py-1.5 text-xs">
               <button onClick={() => setWhole(!whole)} className="text-violet-300 hover:text-violet-200">
-                {whole ? "Zavřít celou sérii" : `Celá série — chybějící díly najednou (${c.missing + c.temp})`}
+                {whole ? "Zavřít celou sérii" : `Celá série — chybějící díly najednou (${c.missing + c.temp + c.unknown})`}
               </button>
+            </div>
+          )}
+          {canEdit && c.unknown > 0 && (
+            <div className="flex flex-wrap items-center gap-2 px-4 py-1.5 text-xs text-sky-300">
+              <span title="Zvukové stopy nemají v souboru jazyk. Lumina ho zapíše do souboru (MKV, MP4), u AVI si ho pamatuje sama.">
+                Zvuk nezjištěn u {c.unknown} {c.unknown === 1 ? "dílu" : "dílů"} — všechny jsou:
+              </span>
+              {["cs", "sk", "en"].map((l) => (
+                <button key={l} disabled={!!langBusy}
+                  onClick={() => setLangs(season.episodes.filter((e) => e.state === "unknown" && e.file?.id).map((e) => e.file!.id!), l, true)}
+                  className="rounded border border-sky-800 px-1.5 py-0.5 font-medium uppercase hover:bg-sky-950 disabled:opacity-40">{L(l)}</button>
+              ))}
+              {langBusy && <span className="text-zinc-400">{langBusy}</span>}
             </div>
           )}
           {whole && (
@@ -295,11 +327,21 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
                     <span className="min-w-0 flex-1 truncate text-zinc-200" title={ep.overview}>{ep.name || "—"}</span>
                   )}
                   <span className="hidden w-20 text-zinc-500 sm:block">{czDate(ep.air_date)}</span>
+                  {ep.state === "unknown" && canEdit && ep.file?.id ? (
+                    <span className="flex w-28 items-center gap-1 text-sky-300" title={`${ep.file.filename}\nZvuková stopa nemá jazyk — pusť si kousek a klikni, jaký je (zapíše se do souboru)`}>
+                      <span className="mr-0.5">zvuk?</span>
+                      {["cs", "sk", "en"].map((l) => (
+                        <button key={l} disabled={!!langBusy} onClick={() => setLangs([ep.file!.id!], l, false)}
+                          className="rounded border border-sky-800 px-1 text-[10px] font-medium uppercase leading-4 hover:bg-sky-950 disabled:opacity-40">{L(l)}</button>
+                      ))}
+                    </span>
+                  ) : (
                   <span className={`w-28 ${STATE[ep.state].cls}`}
                     title={ep.file ? `${ep.file.filename}\n${(ep.file.size / 1e9).toFixed(2)} GB` : ""}>
                     {ep.file ? [ep.file.quality, ep.file.languages.map(L).join("+")].filter(Boolean).join(" · ") || STATE[ep.state].label
                       : STATE[ep.state].label}
                   </span>
+                  )}
                   {dl ? (
                     <span className={`w-24 whitespace-nowrap text-right ${dl.queued ? "text-amber-300" : "text-violet-300 animate-pulse"}`}
                       title="Stahování běží — díl se po dokončení sám objeví v knihovně">
@@ -307,7 +349,7 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
                     </span>
                   ) : canSearch && ep.state !== "upcoming" ? (
                     <button onClick={() => onSearch(ep.episode)} className="w-24 text-right text-violet-300 hover:text-violet-200">
-                      {active ? "Zavřít" : ep.state === "owned" ? "Jiná verze" : "Hledat"}
+                      {active ? "Zavřít" : ep.file ? "Jiná verze" : "Hledat"}
                     </button>
                   ) : <span className="w-24" />}
                 </div>

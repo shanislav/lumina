@@ -87,7 +87,7 @@ async def series_detail(tmdb_id: int, fresh: bool = False) -> dict:
     mode = settings["effective"]["lang_mode"]
     seasons = [store.season_view(s, episodes.get(s["season_number"], []), owned, mode, local, today)
                for s in show["seasons"]]
-    totals = {k: sum(s["counts"][k] for s in seasons) for k in ("owned", "temp", "missing", "upcoming")}
+    totals = {k: sum(s["counts"][k] for s in seasons) for k in ("owned", "temp", "unknown", "missing", "upcoming")}
     if episodes.get(0):
         # the specials last, out of the totals (Top Gear has 120 of them — "missing" would mean nothing)
         seasons.append(store.season_view({"season_number": 0, "name": "Speciály", "episode_count": len(episodes[0]),
@@ -136,7 +136,7 @@ async def season_offers(tmdb_id: int, season: int, episodes: str = "") -> dict:
     if not wanted:
         detail = await series_detail(tmdb_id)
         wanted = [e["episode"] for s in detail["seasons"] if s["season_number"] == season
-                  for e in s["episodes"] if e["state"] in ("missing", "temp")]
+                  for e in s["episodes"] if e["state"] in ("missing", "temp", "unknown")]
         if not wanted:
             return {"season": season, "wanted": [], "sets": [], "packs": [], "plan": [], "movie": None}
     try:

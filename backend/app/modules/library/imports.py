@@ -379,6 +379,29 @@ def pack_skip(files: list[dict], owned: set[tuple[int, int]], pack_season: int |
     return sorted(skip)
 
 
+async def _episode_title(names: dict, cat: dict, tmdb_id: int, season: int, episode: int) -> str:
+    """The episode's name for the file: the library's, else TMDB's catalog; a generic one ("2. epizoda") is
+    none — a new episode is named shortly before it airs: the catalog is read again then (an hour old)."""
+    title = names["titles"].get((season, episode)) or ""
+    if naming.episode_title(title):
+        return title
+    title = _catalog_title(cat, season, episode)
+    if not title and tmdb_id:
+        from app.db import get_db as _db
+        db = await _db()
+        client = episode_names._client((await get_effective_settings()).get("tmdb_api_key", ""))
+        try:
+            fresh = await episode_names.catalog(client, db, tmdb_id, max_age_s=3600)
+        except Exception:  # noqa: BLE001 — TMDB down: no name
+            fresh = {}
+        finally:
+            await client.close()
+            await db.close()
+        cat.update(fresh)
+        title = _catalog_title(cat, season, episode)
+    return title
+
+
 def _catalog_title(cat: dict, season: int, episode: int) -> str:
     """TMDB's name of the episode in the user's language, else the English one (a show new to the library has
     no names in library_episodes yet)."""
@@ -467,7 +490,7 @@ async def import_episode(payload: dict) -> None:
                 st = names["settings"]
                 _r, season_rel, name = naming.episode_paths(
                     names["info"], season, episodes, media, os.path.basename(path), names["title"],
-                    os.path.splitext(path)[1], names["titles"].get((season, episodes[0])) or _catalog_title(cat, season, episodes[0]),
+                    os.path.splitext(path)[1], await _episode_title(names, cat, tmdb_id, season, episodes[0]),
                     st["tv_folder_format"], st["tv_season_format"], st["tv_file_format"])
                 folder = season_dirs.get(season) or os.path.join(show_root, season_rel)
             else:

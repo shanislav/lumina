@@ -896,3 +896,37 @@ async def tv_ai_map(body: TvAiMap) -> dict:
     finally:
         await client.close()
         await db.close()
+
+
+class AudioLanguage(BaseModel):
+    ids: list[int]                 # library_episodes ids
+    lang: str                      # cs | sk | en …
+    track: int | None = None       # an audio track (0-based); None = every track without a language
+
+
+@router.post("/tv/audio-language", dependencies=[Depends(require("library.edit"))])
+async def tv_audio_language(body: AudioLanguage) -> dict:
+    """The user's word on episodes' sound language — into the files (MKV, MP4) and Lumina."""
+    from app.modules.library import audio_lang
+    db = await get_db()
+    done, errors = [], []
+    try:
+        for ep_id in body.ids[:200]:
+            row = await (await db.execute("SELECT file_path FROM library_episodes WHERE id = ? AND has_file = 1",
+                                          (ep_id,))).fetchone()
+            if not row or not os.path.exists(row[0]):
+                errors.append(f"{ep_id}: soubor nenalezen")
+                continue
+            path = row[0]
+            cached = await (await db.execute("SELECT media FROM tv_media WHERE file_path = ?", (path,))).fetchone()
+            try:
+                out = await audio_lang.set_language(path, body.lang, body.track,
+                                                    json.loads(cached[0]) if cached and cached[0] else None)
+                langs = await audio_lang.save(db, path, out["media"])
+                await db.commit()
+                done.append({"id": ep_id, "written": out["written"], "languages": langs, "tracks": out["tracks"]})
+            except (ValueError, RuntimeError, OSError) as e:
+                errors.append(f"{os.path.basename(path)}: {e}")
+    finally:
+        await db.close()
+    return {"done": done, "errors": errors}

@@ -43,11 +43,12 @@ CREATE TABLE IF NOT EXISTS tmdb_episodes (
 _MOJIBAKE = re.compile(r"[ÃÅÄ][\x80-\xbf¡-¿]|Ã|Å¾|Ä")
 
 
-async def catalog(client, db, tmdb_id: int) -> dict[tuple[int, int], dict]:
-    """(season, episode) → {cs, en, runtime, air} of every TMDB episode of the show, specials too."""
+async def catalog(client, db, tmdb_id: int, max_age_s: float = CATALOG_DAYS * 86400) -> dict[tuple[int, int], dict]:
+    """(season, episode) → {cs, en, runtime, air} of every TMDB episode of the show, specials too.
+    ``max_age_s``: older than this is read again (a new episode gets its name shortly before it airs)."""
     rows = await (await db.execute("SELECT season, episode, title_cs, title_en, runtime, air_date, fetched_at "
                                    "FROM tmdb_episodes WHERE show_tmdb_id = ?", (tmdb_id,))).fetchall()
-    if rows and time.time() - min(r[6] for r in rows) < CATALOG_DAYS * 86400:
+    if rows and time.time() - min(r[6] for r in rows) < max_age_s:
         return {(r[0], r[1]): {"cs": r[2] or "", "en": r[3] or "", "runtime": r[4] or 0, "air": r[5] or ""} for r in rows}
     try:
         full = await client.get_tv_full(tmdb_id)

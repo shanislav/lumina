@@ -1602,7 +1602,7 @@ export interface SeriesEpisode {
   air_date: string;
   runtime: number;
   overview: string;
-  state: "owned" | "temp" | "missing" | "upcoming";
+  state: "owned" | "temp" | "unknown" | "missing" | "upcoming";
   file: SeriesEpisodeFile | null;
 }
 
@@ -1613,7 +1613,7 @@ export interface SeriesSeason {
   air_date: string;
   poster_url: string | null;
   episodes: SeriesEpisode[];
-  counts: { owned: number; temp: number; missing: number; upcoming: number };
+  counts: { owned: number; temp: number; unknown: number; missing: number; upcoming: number };
 }
 
 export interface SeriesDetail {
@@ -1628,7 +1628,7 @@ export interface SeriesDetail {
               defaults: SeriesSettingValues };
   profile: { id: number; name: string };
   seasons: SeriesSeason[];
-  totals: { owned: number; temp: number; missing: number; upcoming: number };
+  totals: { owned: number; temp: number; unknown: number; missing: number; upcoming: number };
   local_langs: string[];
   in_library: boolean;
 }
@@ -1924,6 +1924,19 @@ export async function getTvFolder(folder: string): Promise<TvFolderDetail> {
 }
 
 /** The user's word on which episode a file is (season/episode null = no word, the scan decides). */
+export async function setAudioLanguage(ids: number[], lang: string, track?: number):
+    Promise<{ done: { id: number; written: boolean; languages: string; tracks: number }[]; errors: string[] }> {
+  const res = await apiFetch(`${API_BASE}/api/library/tv/audio-language`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids, lang, track: track ?? null }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Uložení selhalo: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function setEpisodeOverride(file: string, season: number | null, episode: number | null, note = ""): Promise<void> {
   const res = await apiFetch(`${API_BASE}/api/library/tv/episode-override`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file, season, episode, note }),

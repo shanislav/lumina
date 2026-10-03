@@ -310,3 +310,10 @@ def test_one_word_of_a_longer_name_is_not_sure():
     hit = episode_names.release_episode("Top Gear speciál. Když se nedaří VII(CZ)[TvRip].mkv", cat, 12, ["Top Gear"])
     assert hit is None or hit[1] is False
     assert episode_names.release_episode("Městečko South Park - S01E03 - Sopka.avi", CAT, 1)[1] is True   # whole name
+
+
+async def test_a_new_episode_gets_the_name_tmdb_gave_it_since():
+    """The library still says "2. epizoda" (scanned before TMDB named it): the catalog's name goes in."""
+    names = {"titles": {(29, 2): "2. epizoda"}}
+    cat = {(29, 2): {"cs": "2. epizoda", "en": "Billionaire Weenietown"}}
+    assert await imports._episode_title(names, cat, 2190, 29, 2) == "Billionaire Weenietown"

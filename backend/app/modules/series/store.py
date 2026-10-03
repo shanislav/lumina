@@ -129,9 +129,12 @@ async def owned_episodes(tmdb_id: int) -> dict[tuple[int, int], dict]:
 
 
 def episode_state(ep: dict, owned: dict | None, lang_mode: str, local_langs: list[str], today: date) -> str:
-    """owned | temp (owned, but not in CZ/SK — waits for the dub) | missing | upcoming."""
+    """owned | temp (owned, but not in CZ/SK — waits for the dub) | unknown (owned, its sound's language not
+    known — the tracks say nothing) | missing | upcoming."""
     if owned:
         langs = owned.get("languages") or []
+        if lang_mode != "original" and not langs:
+            return "unknown"
         if lang_mode != "original" and langs and not any(l in local_langs for l in langs):
             return "temp"
         return "owned"
@@ -144,7 +147,7 @@ def episode_state(ep: dict, owned: dict | None, lang_mode: str, local_langs: lis
 def season_view(season: dict, episodes: list[dict], owned: dict, lang_mode: str, local_langs: list[str],
                 today: date) -> dict:
     n = season["season_number"]
-    out, counts = [], {"owned": 0, "temp": 0, "missing": 0, "upcoming": 0}
+    out, counts = [], {"owned": 0, "temp": 0, "unknown": 0, "missing": 0, "upcoming": 0}
     for ep in episodes:
         have = owned.get((n, ep["episode_number"]))
         state = episode_state(ep, have, lang_mode, local_langs, today)
