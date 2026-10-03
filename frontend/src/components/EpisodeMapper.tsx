@@ -266,6 +266,7 @@ export default function EpisodeMapper({ folder, title, onClose, onSaved }: {
                       <span className={`w-10 text-right ${s.confidence >= 70 ? "text-emerald-300" : s.confidence >= 40 ? "text-amber-300" : "text-red-300"}`}>{s.confidence} %</span>
                     </div>
                   ) : null}
+                  {s?.heard && <p className="text-[11px] text-sky-300" title="Soubor nemá název dílu — AI porovnala jeho titulky s popisy dílů">podle titulků</p>}
                   {s?.agrees && !s.same && <p className="text-[11px] text-emerald-400">souhlasí s pravidly Luminy</p>}
                   {s?.rules && <p className="text-[11px] text-amber-400">pravidla Luminy: {s.rules}</p>}
                   {s?.warning && <p className="text-[11px] text-red-400">{s.warning}</p>}

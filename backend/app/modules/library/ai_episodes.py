@@ -157,7 +157,8 @@ async def suggest(cfg: dict, files: list[dict], cat: dict, season: int | None) -
         out.append({"path": f["path"], "season": key[0], "episode": key[1], "confidence": conf, "title": title or "",
                     "agrees": bool(rule) and rule == key,
                     "rules": _label(rule) if rule and sure and rule != key else "",
-                    "same": key == (f.get("season"), f.get("episode")), "warning": warning})
+                    "same": key == (f.get("season"), f.get("episode")), "warning": warning,
+                    "heard": bool(f.get("dialogue"))})           # decided by the file's subtitles
         taken[key] = taken.get(key, 0) + 1
     for s in out:
         if taken[(s["season"], s["episode"])] > 1 and not s["warning"]:

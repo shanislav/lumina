@@ -1914,6 +1914,7 @@ export interface TvAiSuggestion {
   rules: string;                // Lumina's rules surely say another episode ("S05E03")
   same: boolean;                // the number it has now
   warning?: string;
+  heard?: boolean;          // the file has no name: the AI read its subtitles
 }
 
 export async function getTvFolder(folder: string): Promise<TvFolderDetail> {
