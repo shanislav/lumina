@@ -361,38 +361,34 @@ class DescribeRequest(BaseModel):
 
 @router.get("/search/describe")
 async def describe_status(user=Depends(require("search"))) -> dict:
-    """Is „Neznám název" available (a Groq key), and how many questions are left today."""
+    """Is „Neznám název" available (an AI key), how many questions are left today, and (for an admin) what is
+    left of the AIs' own limits."""
+    from app.clients import ai
     from app.db import get_db
     from app.modules.search import describe
     cfg = await get_effective_settings()
-    if not cfg.get("groq_api_key"):
-        return {"enabled": False, "left": 0, "daily": describe.DAILY_PER_USER, "groq": None}
+    if not ai.available(cfg):
+        return {"enabled": False, "left": 0, "daily": describe.DAILY_PER_USER, "ai": {}}
     db = await get_db()
     try:
         mine = await describe.usage(db, user.id)
     finally:
         await db.close()
     return {"enabled": True, "left": describe.left(mine, user.is_admin), "daily": describe.DAILY_PER_USER,
-            "groq": _groq_left(user)}
-
-
-def _groq_left(user) -> dict | None:
-    """What is left of the Groq key's own limits (for an admin): requests today, tokens this minute."""
-    from app.clients import groq_quota
-    q = groq_quota.get() if user.is_admin else None
-    return {k: q.get(k) for k in ("requests_left", "requests_limit", "tokens_left", "tokens_limit")} if q else None
+            "ai": ai.quotas(cfg) if user.is_admin else {}}
 
 
 @router.post("/search/describe")
 async def describe_title(body: DescribeRequest, user=Depends(require("search"))) -> dict:
-    """The user's description → Groq's guesses → TMDB titles with why each fits (and a question to narrow
-    them down)."""
+    """The user's description → the AIs' guesses (Gemini searching Google, else Groq with TMDB's keywords) →
+    TMDB titles with why each fits (and a question to narrow them down)."""
     from fastapi import HTTPException
+    from app.clients import ai
     from app.db import get_db
     from app.modules.search import describe
     cfg = await get_effective_settings()
-    if not cfg.get("groq_api_key"):
-        raise HTTPException(400, "Groq není nastavený (Nastavení → AI)")
+    if not ai.available(cfg):
+        raise HTTPException(400, "AI není nastavená (Nastavení → AI: Groq nebo Gemini)")
     if not any(m.get("role") != "assistant" and str(m.get("content") or "").strip() for m in body.talk):
         raise HTTPException(400, "Popiš film nebo seriál")
     db = await get_db()
@@ -401,17 +397,19 @@ async def describe_title(body: DescribeRequest, user=Depends(require("search")))
         if describe.left(mine, user.is_admin) == 0:
             raise HTTPException(429, "Dnešní limit AI otázek je vyčerpaný — zítra zase")
         try:
-            guesses, ask = await describe.ask_groq(cfg, body.talk)
+            found = await describe.ask(cfg, body.talk)
         except ValueError as e:
             raise HTTPException(502, str(e))
         except Exception as e:
-            logger.warning("Describe: Groq failed: %s", e)
-            raise HTTPException(502, "Groq neodpověděl — zkus to za chvíli")
+            logger.warning("Describe failed: %s", e)
+            raise HTTPException(502, "AI neodpověděla — zkus to za chvíli")
         await describe.count(db, user.id)
         left = describe.left(mine + 1, user.is_admin)
     finally:
         await db.close()
     _, locale = _locale(cfg, None)
+    guesses = found["guesses"]
     results = await describe.resolve(cfg, locale, guesses)
-    return {"results": results, "ask": ask, "left": left, "groq": _groq_left(user),
+    return {"results": results, "ask": found["ask"], "left": left, "by": found["by"], "searched": found["searched"],
+            "ai": ai.quotas(cfg) if user.is_admin else {},
             "guessed": [f"{g['title']} ({g['year']})" if g["year"] else g["title"] for g in guesses]}

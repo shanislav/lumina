@@ -32,7 +32,7 @@ import SeriesDefaults from "@/components/SeriesDefaults";
 import ModulesPanel from "@/components/ModulesPanel";
 import UsersAdmin from "@/components/UsersAdmin";
 import { useAuth } from "@/components/AuthGate";
-import { getGroqModels, GroqModels } from "@/lib/api";
+import { getGroqModels, getGeminiModels, GroqModels } from "@/lib/api";
 
 const SOURCE_TYPES = [
   {
@@ -140,8 +140,29 @@ const GENERAL_SECTIONS = [
     icon: "🔑",
     fields: [
       { key: "tmdb_api_key", label: "TMDB API Key", type: "password", hint: "Pro vyhledávání filmů (themoviedb.org)" },
-      { key: "groq_api_key", label: "Groq API Key", type: "password", hint: "Pro AI hodnocení souborů (console.groq.com)" },
-      { key: "groq_model", label: "Groq Model", type: "groq_model", hint: "Model pro AI scoring souborů — seznam se načítá z Groq (modely se občas ruší)" },
+    ],
+  },
+  {
+    title: "AI — Groq a Gemini",
+    icon: "✨",
+    fields: [
+      { key: "groq_api_key", label: "Groq API Key", type: "password", hint: "Zdarma na console.groq.com — rychlá, velký denní limit" },
+      { key: "groq_model", label: "Groq Model", type: "groq_model", hint: "Seznam se načítá z Groq (modely se občas ruší)" },
+      { key: "gemini_api_key", label: "Gemini API Key", type: "password",
+        hint: "Zdarma na aistudio.google.com → Get API key (předplatné Gemini Pro klíč nedává). Umí hledat na Googlu — najde i méně známé filmy" },
+      { key: "gemini_model", label: "Gemini Model", type: "gemini_model", hint: "Seznam se načítá z Google; „flash“ je rychlý a s větším denním limitem" },
+      ...([
+        ["ai_describe", "Hledání podle popisu", "Gemini hledá scénu na Googlu, Groq vybírá z titulů TMDB podle klíčových slov"],
+        ["ai_episodes", "Návrh dílů seriálů", "Ptá se dvakrát — s oběma AI jednou každé, shoda dvou AI je jistější"],
+        ["ai_scoring", "Hodnocení souborů při hledání", "Mnoho krátkých otázek — Groq je rychlejší"],
+      ] as const).map(([key, label, hint]) => ({
+        key, label: `Kdo odpovídá: ${label}`, type: "select_static", hint: `${hint}. Když první AI selže nebo vyčerpá limit, odpoví druhá.`,
+        options: [
+          { value: "auto", label: "automaticky (doporučeno)" },
+          { value: "gemini", label: "nejdřív Gemini" },
+          { value: "groq", label: "nejdřív Groq" },
+        ],
+      })),
     ],
   },
   {
@@ -258,6 +279,11 @@ export default function SettingsPage() {
   const [allLanguages, setAllLanguages] = useState<LanguageOption[]>([]);
   const [browsingField, setBrowsingField] = useState<string | null>(null);
   const [groqModels, setGroqModels] = useState<GroqModels | null>(null);
+  const [geminiModels, setGeminiModels] = useState<GroqModels | null>(null);
+  useEffect(() => {
+    if (!full) return;
+    getGeminiModels().then(setGeminiModels).catch(() => setGeminiModels({ models: [], default: "", error: "nedostupné" }));
+  }, [settings.gemini_api_key, full]);
 
   useEffect(() => {
     if (!full) return;
@@ -331,19 +357,22 @@ export default function SettingsPage() {
                     className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none" />
                   <button type="button" onClick={() => setBrowsingField(field.key)} className="rounded bg-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-600 transition-colors">Procházet</button>
                 </div>
-              ) : field.type === "groq_model" ? (
+              ) : field.type === "groq_model" || field.type === "gemini_model" ? (() => {
+                const models = field.type === "groq_model" ? groqModels : geminiModels;
+                return (
                 <>
-                  <select value={settings[field.key] || groqModels?.default || ""} onChange={(e) => handleSettingChange(field.key, e.target.value)}
+                  <select value={settings[field.key] || models?.default || ""} onChange={(e) => handleSettingChange(field.key, e.target.value)}
                     className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none">
-                    {Array.from(new Set([...(groqModels?.models ?? []), settings[field.key]].filter(Boolean))).map((m) => (
+                    {Array.from(new Set([...(models?.models ?? []), settings[field.key]].filter(Boolean))).map((m) => (
                       <option key={m} value={m}>
-                        {m}{m === groqModels?.default ? " (doporučeno)" : ""}{groqModels && groqModels.models.length > 0 && !groqModels.models.includes(m) ? " — nedostupný!" : ""}
+                        {m}{m === models?.default ? " (doporučeno)" : ""}{models && models.models.length > 0 && !models.models.includes(m) ? " — nedostupný!" : ""}
                       </option>
                     ))}
                   </select>
-                  {groqModels?.error && <p className="text-[10px] text-orange-400 mt-1">Seznam modelů nelze načíst: {groqModels.error}</p>}
+                  {models?.error && <p className="text-[10px] text-orange-400 mt-1">Seznam modelů nelze načíst: {models.error}</p>}
                 </>
-              ) : field.type === "select_static" ? (
+                );
+              })() : field.type === "select_static" ? (
                 <select value={settings[field.key] || (field as any).options?.[0]?.value || ""} onChange={(e) => handleSettingChange(field.key, e.target.value)}
                   className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-zinc-100 text-sm focus:border-violet-500 outline-none">
                   {(field as any).options?.map((opt: {value: string, label: string}) => (

@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.clients.ai import DEFAULT_GEMINI_MODEL, gemini_models as list_gemini_models
 from app.clients.groq_scorer import DEFAULT_GROQ_MODEL, list_models
 from app.db import get_all_settings, set_settings
 from app.core.auth import require
@@ -11,12 +12,17 @@ from app.core.auth import require
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-SENSITIVE_KEYS = {"tmdb_api_key", "groq_api_key", "aria2_rpc_secret", "qbittorrent_password",
+SENSITIVE_KEYS = {"tmdb_api_key", "groq_api_key", "gemini_api_key", "aria2_rpc_secret", "qbittorrent_password",
                   "opensubtitles_api_key", "opensubtitles_password"}
 DEFAULTS = {
     "tmdb_api_key": "",
     "groq_api_key": "",
     "groq_model": DEFAULT_GROQ_MODEL,
+    "gemini_api_key": "",             # Google AI Studio (aistudio.google.com), a free tier
+    "gemini_model": DEFAULT_GEMINI_MODEL,
+    "ai_describe": "auto",            # which AI answers first (app/clients/ai): auto | groq | gemini
+    "ai_episodes": "auto",
+    "ai_scoring": "auto",
     "aria2_rpc_url": "http://aria2:6800/jsonrpc",
     "aria2_rpc_secret": "your_aria2_secret",
     "plex_media_dir": "/downloads/plex",
@@ -304,3 +310,18 @@ async def groq_models() -> dict:
     except Exception as e:
         logger.warning("Listing Groq models failed: %s", e)
         return {"models": [], "default": DEFAULT_GROQ_MODEL, "error": str(e)}
+
+
+
+@router.get("/gemini-models", dependencies=[Depends(require("settings"))])
+async def gemini_models() -> dict:
+    """Gemini chat models available for the stored key."""
+    stored = await get_all_settings()
+    key = stored.get("gemini_api_key", "")
+    if not key:
+        return {"models": [], "default": DEFAULT_GEMINI_MODEL, "error": "Gemini API key not configured"}
+    try:
+        return {"models": await list_gemini_models(key), "default": DEFAULT_GEMINI_MODEL, "error": None}
+    except Exception as e:
+        logger.warning("Listing Gemini models failed: %s", e)
+        return {"models": [], "default": DEFAULT_GEMINI_MODEL, "error": str(e)}

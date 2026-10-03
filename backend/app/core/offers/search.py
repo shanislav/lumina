@@ -7,6 +7,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+from app.clients import ai
 from app.clients.groq_scorer import score_results
 from app.clients.tmdb import TMDBClient
 from app.core.offers.details import cached_details, get_details
@@ -329,7 +330,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
 
     # AI only decides what the rules could not ("Dune Part Two" vs "Dune: Part One", odd names).
     unclear = [row for row in rows if row["film"] == "unsure"]
-    if use_ai and unclear and cfg.get("groq_api_key"):
+    if use_ai and unclear and ai.available(cfg):
         await _ask_ai(cfg, ctx, prefs, unclear)
 
     rows.sort(key=lambda row: recommended_key(row, prefs))
@@ -344,8 +345,8 @@ async def _ask_ai(cfg: dict, ctx: MovieContext, prefs: Prefs, unclear: list[dict
                 for i, row in enumerate(unclear)]
     try:
         ai_names = " / ".join(ctx.titles) + (f" ({ctx.year})" if ctx.year else "")
-        scored = await score_results(ai_names, scorable, cfg["groq_api_key"],
-                                     languages=list(prefs.local_langs), model=cfg["groq_model"])
+        scored = await score_results(ai_names, scorable, cfg.get("groq_api_key", ""),
+                                     languages=list(prefs.local_langs), model=cfg.get("groq_model", ""), cfg=cfg)
         by_ident = {x.ident: x.relevance_score for x in scored}
         min_score = int(cfg.get("min_relevance_score", "70"))
         for row in unclear:

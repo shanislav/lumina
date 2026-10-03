@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from app.clients.ai import DEFAULT_GEMINI_MODEL
 from app.clients.groq_scorer import DEFAULT_GROQ_MODEL
 from app.db import get_all_settings
 
@@ -7,6 +8,7 @@ from app.db import get_all_settings
 class Settings(BaseSettings):
     tmdb_api_key: str = ""
     groq_api_key: str = ""
+    gemini_api_key: str = ""
     aria2_rpc_url: str = "http://aria2:6800/jsonrpc"
     aria2_rpc_secret: str = "your_aria2_secret"
     plex_media_dir: str = "/downloads/plex"
@@ -43,6 +45,12 @@ async def get_effective_settings() -> dict[str, str]:
         "tmdb_api_key": db_settings.get("tmdb_api_key") or env.tmdb_api_key,
         "groq_api_key": db_settings.get("groq_api_key") or env.groq_api_key,
         "groq_model": db_settings.get("groq_model") or DEFAULT_GROQ_MODEL,
+        "gemini_api_key": db_settings.get("gemini_api_key") or env.gemini_api_key,
+        "gemini_model": db_settings.get("gemini_model") or DEFAULT_GEMINI_MODEL,
+        # which AI answers first in each feature (app/clients/ai): auto | groq | gemini
+        "ai_describe": db_settings.get("ai_describe") or "auto",
+        "ai_episodes": db_settings.get("ai_episodes") or "auto",
+        "ai_scoring": db_settings.get("ai_scoring") or "auto",
         "aria2_rpc_url": db_settings.get("aria2_rpc_url") or env.aria2_rpc_url,
         "aria2_rpc_secret": db_settings.get("aria2_rpc_secret") or env.aria2_rpc_secret,
         "plex_media_dir": db_settings.get("plex_media_dir") or env.plex_media_dir,

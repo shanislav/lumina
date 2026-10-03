@@ -8,7 +8,7 @@ import {
 
 /**
  * „Upravit díly“ — which TMDB episode each file of a show folder is, for what the name can not tell (another
- * language, an order of the uploader's own). The user picks the episode, or accepts an AI (Groq) suggestion;
+ * language, an order of the uploader's own). The user picks the episode, or accepts an AI (Gemini / Groq) suggestion;
  * either becomes the user's word (backend tv_episode_overrides) — the scan and the renamer follow it.
  */
 
@@ -180,7 +180,7 @@ export default function EpisodeMapper({ folder, title, onClose, onSaved }: {
         {data && (
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <button onClick={askAi} disabled={!!busy || !data.groq || !files.length}
-              title={data.groq ? "Groq porovná názvy souborů (i přeložené), pořadí a délky s díly v TMDB" : "Groq není nastavený (Nastavení)"}
+              title={data.groq ? "AI (Gemini a Groq) porovná názvy souborů (i přeložené), pořadí a délky s díly v TMDB" : "AI není nastavená (Nastavení → AI)"}
               className="rounded border border-violet-700 px-2.5 py-1 text-violet-200 hover:bg-violet-950 disabled:opacity-40">
               {busy === "ai" ? "AI přemýšlí…" : `✨ Navrhnout pomocí AI (${files.length} souborů)`}
             </button>
@@ -189,7 +189,7 @@ export default function EpisodeMapper({ folder, title, onClose, onSaved }: {
                 Převzít jisté návrhy (≥ 70 %)
               </button>
             )}
-            {!data.groq && <span className="text-zinc-500">AI návrh potřebuje Groq klíč v Nastavení.</span>}
+            {!data.groq && <span className="text-zinc-500">AI návrh potřebuje klíč Groq nebo Gemini v Nastavení.</span>}
             {Object.keys(ai).length > 0 && (() => {
               const all = Object.values(ai);
               const same = all.filter((x) => x.same && !x.warning).length;

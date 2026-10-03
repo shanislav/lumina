@@ -88,6 +88,7 @@ async def _migrate_sources_from_env(db: aiosqlite.Connection) -> None:
 _ENV_MIGRATION_MAP = {
     "tmdb_api_key": "TMDB_API_KEY",
     "groq_api_key": "GROQ_API_KEY",
+    "gemini_api_key": "GEMINI_API_KEY",
     "aria2_rpc_url": "ARIA2_RPC_URL",
     "aria2_rpc_secret": "ARIA2_RPC_SECRET",
     "plex_media_dir": "PLEX_MEDIA_DIR",

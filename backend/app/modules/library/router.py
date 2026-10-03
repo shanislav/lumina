@@ -827,7 +827,8 @@ async def tv_folder_detail(folder: str) -> dict:
         cat = await episode_names.catalog(client, db, tmdb_id)
         episodes = [{"season": s, "episode": e, "cs": naming.episode_title(v["cs"]) and v["cs"] or "", "en": v["en"],
                      "runtime": v["runtime"], "air": v["air"]} for (s, e), v in sorted(cat.items())]
-        return {"folder": folder, "tmdb_id": tmdb_id, "groq": bool(cfg.get("groq_api_key")),
+        from app.clients import ai
+        return {"folder": folder, "tmdb_id": tmdb_id, "groq": bool(ai.available(cfg)),
                 "files": [{k: v for k, v in f.items() if k != "path"} for f in files if f["status"] != "extra"],
                 "episodes": episodes}
     finally:
@@ -872,7 +873,7 @@ async def _dialogue_and_plots(client, tmdb_id: int, files: list[dict], cat: dict
 
 @router.post("/tv/ai-map", dependencies=[Depends(require("library.edit"))])
 async def tv_ai_map(body: TvAiMap) -> dict:
-    """AI (Groq) suggests which TMDB episode each file is — a suggestion the user accepts or not."""
+    """AI (Gemini / Groq) suggests which TMDB episode each file is — a suggestion the user accepts or not."""
     from app.config import tv_library_dir
     from app.modules.library import ai_episodes, episode_names
     cfg = await get_effective_settings()
@@ -895,7 +896,7 @@ async def tv_ai_map(body: TvAiMap) -> dict:
         except ValueError as e:
             raise HTTPException(400, str(e))
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"Groq: {e or type(e).__name__}")
+            raise HTTPException(502, f"AI: {e or type(e).__name__}")
         for s in found:
             s["file"] = os.path.relpath(s.pop("path"), root).replace(os.sep, "/")
         return {"suggestions": found, "asked": len(files)}

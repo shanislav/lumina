@@ -2,8 +2,8 @@
 file's name in another language than TMDB's names ("Pomsta lovce hlav" = "Headhunters Revenge"), an order of
 the uploader's own (Znalec psí duše: the dogs' names in a Czech description).
 
-Groq gets the files of one season (own name, length — in order, without their numbers) and TMDB's episodes of it and the seasons next to
-it plus the specials (Czech and English names, runtime) and answers file → episode with a confidence. Lumina
+An AI (Gemini or Groq, app/clients/ai) gets the files of one season (own name, length — in order, without their
+numbers) and TMDB's episodes of it and the seasons next to it plus the specials (Czech and English names, runtime) and answers file → episode with a confidence. Lumina
 checks every answer (the episode exists, no two files on one, does it agree with its own rules) — a suggestion
 only: the user accepts it in the UI (it becomes the user's word, ``tv_episode_overrides``).
 """
@@ -13,10 +13,7 @@ import json
 import logging
 import re
 
-import httpx
-
-from app.clients import groq_quota
-from app.clients.groq_scorer import GROQ_API_URL, _REASONING_PARAMS
+from app.clients import ai
 from app.core import naming
 from app.modules.library import episode_names
 
@@ -26,7 +23,6 @@ MAX_FILES = 60
 MAX_EPISODES = 160
 DIALOGUE_CHARS = 320           # a file without a name: this much of its subtitles' text
 PLOT_CHARS = 170               # TMDB's plot of an episode (when files come with dialogue)
-MAX_WAIT = 40                  # seconds a rate limit may hold the question (the UI waits for it)
 
 SYSTEM = (
     "You match video files of one TV show to TMDB episodes. File names are the user's (often Czech, a translation "
@@ -56,16 +52,6 @@ def _lines(files: list[dict], cat: dict, seasons: set[int]) -> tuple[str, list[t
     return "\n".join(out), eps
 
 
-def _retry_after(resp) -> float:
-    """Seconds Groq asks to wait: retry-after, or its "try again in 12.5s" / "1m3s"; 10 when it does not say."""
-    try:
-        return float(resp.headers.get("retry-after"))
-    except (TypeError, ValueError):
-        pass
-    m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", resp.text or "")
-    return int(m.group(1) or 0) * 60 + float(m.group(2)) if m else 10.0
-
-
 def _num(value) -> int | None:
     """8, "8", "S08", "E09", 8.0 → the number; None for none."""
     if value is None:
@@ -82,32 +68,19 @@ def _parse(content: str) -> list[list]:
     return [row for row in data if isinstance(row, list) and len(row) >= 4]
 
 
-async def _ask(cfg: dict, files: list[dict], cat: dict, seasons: set[int]) -> dict[int, tuple[tuple[int, int], int]]:
-    """One question to Groq: file index → (episode, confidence) for the episodes TMDB has."""
+async def _ask(cfg: dict, files: list[dict], cat: dict, seasons: set[int],
+               providers: list[str] | None = None) -> tuple[dict[int, tuple[tuple[int, int], int]], str]:
+    """One question to an AI (``providers`` in order, the next one when one fails): file index → (episode,
+    confidence) for the episodes TMDB has; and who answered."""
     user, _eps = _lines(files, cat, seasons)
-    model = cfg.get("groq_model") or ""
-    body = {"model": model, "temperature": 0.1, "max_tokens": 3000,
-            "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]}
-    for prefix, params in _REASONING_PARAMS.items():
-        if model.startswith(prefix):
-            body.update(params)
-    async with httpx.AsyncClient(timeout=90) as client:
-        for attempt in range(3):
-            resp = await client.post(GROQ_API_URL, json=body,
-                                     headers={"Authorization": f"Bearer {cfg['groq_api_key']}", "Content-Type": "application/json"})
-            groq_quota.note(resp)
-            if resp.status_code != 429:
-                break
-            wait = _retry_after(resp)               # the free tier's tokens per minute: the second question waits
-            if attempt == 2 or wait > MAX_WAIT:
-                raise ValueError("Groq: překročený limit — zkus to za minutu")
-            logger.info("Groq rate limit, waiting %.0f s", wait)
-            await asyncio.sleep(wait)
-        resp.raise_for_status()
-    payload = resp.json()
-    logger.info("Groq %s mapped %d files, tokens=%s", model, len(files), (payload.get("usage") or {}).get("total_tokens"))
     try:
-        rows = _parse(payload["choices"][0]["message"]["content"])
+        answer = await ai.chat(cfg, "episodes", SYSTEM, [{"role": "user", "content": user}], max_tokens=3000,
+                               temperature=0.1, providers=providers)
+    except ai.LimitError as e:
+        raise ValueError(f"{e}") from e
+    logger.info("%s mapped %d files", ai.LABELS[answer.provider], len(files))
+    try:
+        rows = _parse(answer.text)
     except (json.JSONDecodeError, ValueError, KeyError, IndexError) as e:
         raise ValueError(f"AI odpověděla nesrozumitelně: {e}") from e
     out = {}
@@ -119,7 +92,7 @@ async def _ask(cfg: dict, files: list[dict], cat: dict, seasons: set[int]) -> di
         if i is None or not 0 <= i < min(len(files), MAX_FILES) or s is None or e is None or (s, e) not in cat:
             continue                                         # no answer, or an episode TMDB does not have: made up
         out[i] = ((s, e), max(0, min(100, conf)))
-    return out
+    return out, answer.provider
 
 
 async def suggest(cfg: dict, files: list[dict], cat: dict, season: int | None) -> list[dict]:
@@ -128,14 +101,19 @@ async def suggest(cfg: dict, files: list[dict], cat: dict, season: int | None) -
 
     The model is asked twice, the files in the user's order and reversed: its confidence alone says little (a blind
     test: 7 of 31 wrong at 95 %) — an answer both times the same is a suggestion, two different ones are a doubt."""
-    if not cfg.get("groq_api_key"):
-        raise ValueError("Groq není nastavený (Nastavení → AI)")
+    who = ai.order(cfg, "episodes")
+    if not who:
+        raise ValueError("AI není nastavená (Nastavení → AI: Groq nebo Gemini)")
     files = files[:MAX_FILES]
     seasons = {season} if season is not None else {f["season"] for f in files if f.get("season") is not None}
     seasons |= {s + d for s in list(seasons) for d in (-1, 1) if s + d > 0} | {0}
-    first = await _ask(cfg, files, cat, seasons)
+    # with both AIs each one answers once (the second question goes to the other one first): two AIs agreeing
+    # is worth more than one agreeing with itself
+    first, by_first = await _ask(cfg, files, cat, seasons, who)
     n = len(files)
-    second = {n - 1 - i: v for i, v in (await _ask(cfg, list(reversed(files)), cat, seasons)).items()}
+    again, by_second = await _ask(cfg, list(reversed(files)), cat, seasons, who[::-1])
+    second = {n - 1 - i: v for i, v in again.items()}
+    both = by_first != by_second
 
     out: list[dict] = []
     taken: dict[tuple[int, int], int] = {}
@@ -147,10 +125,12 @@ async def suggest(cfg: dict, files: list[dict], cat: dict, season: int | None) -
         warning = ""
         if a and b and a[0] != b[0]:
             conf = min(a[1], b[1], 40)
-            warning = f"AI si není jistá (jednou {_label(a[0])}, podruhé {_label(b[0])})"
+            warning = (f"AI se neshodly ({ai.LABELS[by_first]} {_label(a[0])}, {ai.LABELS[by_second]} {_label(b[0])})"
+                       if both else f"AI si není jistá (jednou {_label(a[0])}, podruhé {_label(b[0])})")
         elif not (a and b):
             conf = min(conf, 50)
-            warning = "AI odpověděla jen jednou z dvou"
+            warning = (f"odpověděl jen {ai.LABELS[by_first if a else by_second]}" if both
+                       else "AI odpověděla jen jednou z dvou")
         else:
             conf = min(a[1], b[1])
         rule, sure = episode_names.best(f.get("own") or "", cat, f.get("season"), f.get("duration") or 0)
@@ -160,7 +140,8 @@ async def suggest(cfg: dict, files: list[dict], cat: dict, season: int | None) -
                     "agrees": bool(rule) and rule == key,
                     "rules": _label(rule) if rule and sure and rule != key else "",
                     "same": key == (f.get("season"), f.get("episode")), "warning": warning,
-                    "heard": bool(f.get("dialogue"))})           # decided by the file's subtitles
+                    "heard": bool(f.get("dialogue")),            # decided by the file's subtitles
+                    "by": [ai.LABELS[p] for p in dict.fromkeys((by_first, by_second))]})
         taken[key] = taken.get(key, 0) + 1
     for s in out:
         if taken[(s["season"], s["episode"])] > 1 and not s["warning"]:

@@ -758,6 +758,12 @@ export interface GroqModels {
   error: string | null;
 }
 
+export async function getGeminiModels(): Promise<GroqModels> {
+  const res = await apiFetch(`${API_BASE}/api/settings/gemini-models`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 export async function getGroqModels(): Promise<GroqModels> {
   const res = await apiFetch(`${API_BASE}/api/settings/groq-models`);
   if (!res.ok) return { models: [], default: "", error: `HTTP ${res.status}` };
@@ -1966,13 +1972,20 @@ export interface DescribeTurn { role: "user" | "assistant"; content: string }
 export interface DescribeHit extends TMDBMovie { why: string }
 /** what is left of the Groq key's own limits (admin only): requests today, tokens this minute */
 export interface GroqLeft { requests_left: number | null; requests_limit: number | null; tokens_left: number | null; tokens_limit: number | null }
-/** left: questions left today, null = not limited (admin) */
-export interface DescribeStatus { enabled: boolean; left: number | null; daily: number; groq: GroqLeft | null }
-export interface DescribeAnswer { results: DescribeHit[]; ask: string; left: number | null; groq: GroqLeft | null; guessed: string[] }
+/** Gemini sends no "what is left": Lumina counts its calls of Google's day */
+export interface GeminiUsed { calls: number; searches: number; exhausted: boolean }
+export interface AiQuotas { groq?: Partial<GroqLeft>; gemini?: GeminiUsed }
+/** left: questions left today, null = not limited (admin); ai: the AIs' own limits (admin only) */
+export interface DescribeStatus { enabled: boolean; left: number | null; daily: number; ai: AiQuotas }
+export interface DescribeAnswer {
+  results: DescribeHit[]; ask: string; left: number | null; ai: AiQuotas; guessed: string[];
+  by: string;            // which AI answered ("Gemini" / "Groq")
+  searched: boolean;     // Gemini searched Google for it
+}
 
 export async function getDescribeStatus(): Promise<DescribeStatus> {
   const res = await apiFetch(`${API_BASE}/api/search/describe`);
-  if (!res.ok) return { enabled: false, left: 0, daily: 0, groq: null };
+  if (!res.ok) return { enabled: false, left: 0, daily: 0, ai: {} };
   return res.json();
 }
 

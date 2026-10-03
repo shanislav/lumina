@@ -1,17 +1,25 @@
 "use client";
 
 import { useEffect, useRef, useState, FormEvent, KeyboardEvent } from "react";
-import { DescribeHit, DescribeStatus, DescribeTurn, GroqLeft, TMDBMovie, describeTitle, getDescribeStatus } from "@/lib/api";
+import { AiQuotas, DescribeHit, DescribeStatus, DescribeTurn, TMDBMovie, describeTitle, getDescribeStatus } from "@/lib/api";
 
-interface Entry { role: "user" | "assistant"; text: string; hits?: DescribeHit[]; ask?: string; error?: boolean }
+interface Entry { role: "user" | "assistant"; text: string; hits?: DescribeHit[]; ask?: string; error?: boolean; by?: string }
 
 const k = (n: number) => (n >= 1000 ? `${String(Math.round(n / 100) / 10).replace(".", ",")}k` : String(n));
 
-/** "Groq: 987/1000 dotazů dnes · 6,5k/8k tokenů za minutu" — what the key itself has left */
-function groqText(g: GroqLeft | null): string {
-  if (!g || g.requests_left == null) return "Groq: zbytek limitu se ukáže po prvním dotazu";
-  const req = `Groq: ${g.requests_left}/${g.requests_limit} dotazů dnes`;
-  return g.tokens_left == null ? req : `${req} · ${k(g.tokens_left)}/${k(g.tokens_limit ?? 0)} tokenů za minutu`;
+/** what the AIs have left: "Groq: 987/1000 dotazů dnes · 6,5k/8k tokenů za minutu · Gemini: dnes 12 dotazů" */
+function aiText(q: AiQuotas): string {
+  const out: string[] = [];
+  const g = q.groq;
+  if (g) {
+    if (g.requests_left == null) out.push("Groq: zbytek limitu se ukáže po prvním dotazu");
+    else out.push(`Groq: ${g.requests_left}/${g.requests_limit} dotazů dnes`
+      + (g.tokens_left == null ? "" : ` · ${k(g.tokens_left)}/${k(g.tokens_limit ?? 0)} tokenů za minutu`));
+  }
+  const m = q.gemini;
+  if (m) out.push(m.exhausted ? "Gemini: dnešní limit vyčerpaný (zítra zase)"
+    : `Gemini: dnes ${m.calls} dotazů${m.searches ? ` (${m.searches}× hledal na Googlu)` : ""}`);
+  return out.join(" · ");
 }
 
 const QUICK = ["Nic z toho", "Je to seriál", "Je to film", "Novější", "Starší", "Český / slovenský"];
@@ -55,9 +63,10 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
     setBusy(true);
     try {
       const a = await describeTitle(talkOf(next));
-      setStatus({ ...status, left: a.left, groq: a.groq ?? status.groq });
+      setStatus({ ...status, left: a.left, ai: a.ai ?? status.ai });
       const summary = (a.guessed.length ? `Tipy: ${a.guessed.join(", ")}.` : "Nic mě nenapadlo.") + (a.ask ? ` ${a.ask}` : "");
-      setEntries([...next, { role: "assistant", text: summary, hits: a.results, ask: a.ask }]);
+      setEntries([...next, { role: "assistant", text: summary, hits: a.results, ask: a.ask,
+        by: a.searched ? `${a.by} · hledal na Googlu` : a.by }]);
     } catch (e) {
       setEntries([...next, { role: "assistant", text: e instanceof Error ? e.message : "Chyba", error: true }]);
     } finally {
@@ -85,7 +94,7 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
       <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2">
         <span className="text-sm font-medium text-violet-300">✨ Najdi podle popisu</span>
         <span className="ml-auto text-[11px] text-zinc-500"
-          title={status.left == null ? groqText(status.groq) : "Groq má denní limity — Lumina hlídá, ať se jich neplýtvá"}>
+          title={status.left == null ? aiText(status.ai) : "Groq má denní limity — Lumina hlídá, ať se jich neplýtvá"}>
           {status.left == null ? "bez limitu" : `dnes zbývá ${status.left}/${status.daily}`}
         </span>
         {entries.length > 0 && (
@@ -94,8 +103,8 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
         <button onClick={() => setOpen(false)} className="text-zinc-500 hover:text-zinc-300" aria-label="Zavřít">✕</button>
       </div>
 
-      {status.left == null && (
-        <p className="border-b border-zinc-800 px-4 py-1 text-[11px] text-zinc-500">{groqText(status.groq)}</p>
+      {status.left == null && aiText(status.ai) && (
+        <p className="border-b border-zinc-800 px-4 py-1 text-[11px] text-zinc-500">{aiText(status.ai)}</p>
       )}
       <div className="max-h-[60vh] space-y-3 overflow-y-auto px-4 py-3">
         {entries.length === 0 && (
@@ -140,6 +149,7 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
               <p className="text-sm text-zinc-400">Nic jsem nenašel. Zkus přidat víc podrobností.</p>
             )}
             {e.ask && <p className="text-sm text-zinc-300">🤔 {e.ask}</p>}
+            {e.by && <p className="text-[10px] text-zinc-600">odpověděl {e.by}</p>}
           </div>
         ))}
         {busy && <p className="animate-pulse text-sm text-zinc-500">Přemýšlím…</p>}

@@ -6,6 +6,7 @@ import re
 
 import pytest
 
+from app.clients import ai
 from app.modules.library import ai_episodes
 
 CAT = {(8, 9): {"cs": "9. epizoda", "en": "Teeth of the Tegha", "runtime": 40},
@@ -54,7 +55,7 @@ def groq(monkeypatch):
             state["asked"] += 1
             return FakeResponse(_json.dumps(out))
     _json = json
-    monkeypatch.setattr(ai_episodes.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(ai.httpx, "AsyncClient", FakeClient)
     return state
 
 
@@ -112,10 +113,10 @@ async def test_rate_limit_waits_and_asks_again(monkeypatch):
     async def fake_sleep(s):
         slept.append(s)
 
-    monkeypatch.setattr(ai_episodes.httpx, "AsyncClient", FakeClient)
-    monkeypatch.setattr(ai_episodes.asyncio, "sleep", fake_sleep)
-    out = await ai_episodes._ask({"groq_api_key": "x"}, FILES, CAT, {8})
-    assert out == {0: ((8, 9), 90)} and slept == [1.5]
+    monkeypatch.setattr(ai.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(ai.asyncio, "sleep", fake_sleep)
+    out, by = await ai_episodes._ask({"groq_api_key": "x"}, FILES, CAT, {8})
+    assert out == {0: ((8, 9), 90)} and slept == [1.5] and by == "groq"
 
 
 def test_files_without_a_name_come_with_their_dialogue_and_episodes_with_a_plot():

@@ -216,7 +216,10 @@ async def score_results(
     api_key: str,
     languages: list[str] | None = None,
     model: str = DEFAULT_GROQ_MODEL,
+    cfg: dict | None = None,
 ) -> list[ScoredFile]:
+    """``cfg``: ask Lumina's AIs (app/clients/ai — Groq first, Gemini when Groq fails); without it Groq with
+    ``api_key``."""
     if not files:
         return []
 
@@ -253,37 +256,45 @@ async def score_results(
                else "Movie (one film, known under any of these names): " + " / ".join(f'"{n}"' for n in names))
     user_prompt = heading + "\n" + "\n".join(lines)
 
-    body = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": _build_system_prompt(languages or ["cs"])},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 2048,
-    }
-    for prefix, params in _REASONING_PARAMS.items():
-        if model.startswith(prefix):
-            body.update(params)
+    system = _build_system_prompt(languages or ["cs"])
+    if cfg is not None:
+        from app.clients import ai
+        answer = await ai.chat(cfg, "scoring", system, [{"role": "user", "content": user_prompt}], max_tokens=2048,
+                               temperature=0.1)
+        content = answer.text
+        logger.info("%s scored %d files", ai.LABELS[answer.provider], len(files))
+    else:
+        body = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 2048,
+        }
+        for prefix, params in _REASONING_PARAMS.items():
+            if model.startswith(prefix):
+                body.update(params)
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            GROQ_API_URL,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=body,
-        )
-        groq_quota.note(resp)
-        resp.raise_for_status()
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                GROQ_API_URL,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=body,
+            )
+            groq_quota.note(resp)
+            resp.raise_for_status()
 
-    payload = resp.json()
-    usage = payload.get("usage", {})
-    logger.info("Groq %s scored %d files, tokens=%s", model, len(files), usage.get("total_tokens"))
-    content = payload["choices"][0]["message"]["content"]
+        payload = resp.json()
+        usage = payload.get("usage", {})
+        logger.info("Groq %s scored %d files, tokens=%s", model, len(files), usage.get("total_tokens"))
+        content = payload["choices"][0]["message"]["content"]
 
     try:
         scored_data = _parse_scores(content)
     except (json.JSONDecodeError, ValueError, TypeError):
-        logger.error("Groq returned invalid JSON: %s", content[:500])
+        logger.error("AI returned invalid JSON: %s", content[:500])
         return _fallback_scoring(files, languages, query=movie_title) + local_scored + overflow_scored
 
     results: list[ScoredFile] = []

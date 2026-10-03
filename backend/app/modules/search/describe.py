@@ -1,12 +1,13 @@
 """„Neznám název" — the user describes a film or a show in their own words ("cestování časem, kluk s
-DeLoreanem"), Groq guesses the titles and TMDB finds them; the user can say more ("ne, novější, seriál") and
+DeLoreanem"), an AI guesses the titles and TMDB finds them; the user can say more ("ne, novější, seriál") and
 the guesses follow the whole talk.
 
-The model alone remembers famous titles only (asked for "a man struck by a light becomes a genius and moves
+Groq's model alone remembers famous titles only (asked for "a man struck by a light becomes a genius and moves
 things by thought" it never says Phenomenon). So it first turns the description into plot keywords, TMDB gives
 the best-known titles tagged with them, and the model picks from those (with their plot) and its own memory.
 
-Only with a Groq key. Groq's free tier has daily limits that the other AI features share — a user has
+Gemini (when it has a key) answers first: it searches Google for the scene. Groq answers when Gemini can not.
+Only with an AI key. Groq's free tier has daily limits that the other AI features share — a user has
 ``DAILY_PER_USER`` questions a day, an admin is not limited (and sees what is left of the key's own limits).
 """
 
@@ -16,12 +17,8 @@ import logging
 import re
 from datetime import date
 
-import httpx
-
-from app.clients import groq_quota
-from app.clients.groq_scorer import GROQ_API_URL, _REASONING_PARAMS
+from app.clients import ai
 from app.clients.tmdb import TMDBClient
-from app.modules.library.ai_episodes import _retry_after
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +30,6 @@ MAX_KEYWORDS = 8
 PER_KEYWORD = 20               # best-known titles of one keyword (films and shows each)
 MAX_CANDIDATES = 35
 OVERVIEW_CHARS = 160
-MAX_WAIT = 20                  # seconds a rate limit may hold the question
 
 AI_USAGE = """
 CREATE TABLE IF NOT EXISTS ai_usage (
@@ -52,6 +48,11 @@ SYSTEM = (
     '"why": "one short sentence in Czech why it fits"}], "ask": "one short question in Czech that would tell the '
     'guesses apart, or empty"}. At most 8 guesses, only titles that really exist. When the viewer rejects a title, '
     "do not offer it again."
+)
+
+SEARCH = (
+    " Before answering, search the web for the scene or plot detail the viewer remembers (search in English too, "
+    "e.g. 'film where a man learns a language in minutes'); trust what you find over your memory."
 )
 
 KEYWORDS = (
@@ -104,28 +105,10 @@ def _parse(content: str) -> tuple[list[dict], str]:
 
 
 async def _groq(cfg: dict, messages: list[dict], max_tokens: int, temperature: float = 0.3) -> str:
-    """One question; a rate limit of a few seconds (tokens per minute — the second question of one search)
-    is waited out."""
-    model = cfg.get("groq_model") or ""
-    body = {"model": model, "temperature": temperature, "max_tokens": max_tokens, "messages": messages}
-    for prefix, params in _REASONING_PARAMS.items():
-        if model.startswith(prefix):
-            body.update(params)
-    async with httpx.AsyncClient(timeout=60) as client:
-        for attempt in range(2):
-            resp = await client.post(GROQ_API_URL, json=body, headers={
-                "Authorization": f"Bearer {cfg['groq_api_key']}", "Content-Type": "application/json"})
-            groq_quota.note(resp)
-            if resp.status_code != 429:
-                break
-            wait = _retry_after(resp)
-            if attempt or wait > MAX_WAIT:
-                raise ValueError("Groq má teď plno (limit) — zkus to za chvíli")
-            await asyncio.sleep(wait)
-    resp.raise_for_status()
-    payload = resp.json()
-    logger.info("Groq %s describe, tokens=%s", model, (payload.get("usage") or {}).get("total_tokens"))
-    return payload["choices"][0]["message"]["content"] or ""
+    """One question to Groq (the first message is the system one)."""
+    answer = await ai.ask(cfg, "groq", messages[0]["content"], messages[1:], max_tokens=max_tokens,
+                          temperature=temperature)
+    return answer.text
 
 
 async def plot_keywords(cfg: dict, talk: list[dict]) -> list[str]:
@@ -166,7 +149,7 @@ async def candidates(cfg: dict, keywords: list[str]) -> list[str]:
 
 
 async def ask_groq(cfg: dict, talk: list[dict]) -> tuple[list[dict], str]:
-    """Plot keywords → TMDB's titles with them → the model picks from those and its own memory."""
+    """Groq: plot keywords → TMDB's titles with them → the model picks from those and its own memory."""
     messages = _messages(talk)
     try:
         cands = await candidates(cfg, await plot_keywords(cfg, talk))
@@ -183,6 +166,39 @@ async def ask_groq(cfg: dict, talk: list[dict]) -> tuple[list[dict], str]:
         return _parse(content)
     except (json.JSONDecodeError, ValueError, KeyError, IndexError) as e:
         raise ValueError("AI odpověděla nesrozumitelně — zkus to popsat jinak") from e
+
+
+async def ask_gemini(cfg: dict, talk: list[dict]) -> tuple[list[dict], str, bool]:
+    """Gemini searches Google for the scene described (forums, lists "films where…") — finds titles a model
+    does not remember. (guesses, question, did it search)"""
+    answer = await ai.ask(cfg, "gemini", SYSTEM + SEARCH, _messages(talk), max_tokens=2000, search=True)
+    try:
+        guesses, question = _parse(answer.text)
+    except (json.JSONDecodeError, ValueError, KeyError, IndexError) as e:
+        raise ValueError("AI odpověděla nesrozumitelně — zkus to popsat jinak") from e
+    return guesses, question, answer.searched
+
+
+async def ask(cfg: dict, talk: list[dict]) -> dict:
+    """The AIs in the feature's order (Gemini first: it searches Google), the next one when one fails or
+    guesses nothing. {guesses, ask, by, searched}"""
+    who = ai.order(cfg, "describe")
+    if not who:
+        raise ValueError("AI není nastavená (Nastavení → AI: Groq nebo Gemini)")
+    last: Exception | None = None
+    for provider in who:
+        try:
+            if provider == "gemini":
+                guesses, question, searched = await ask_gemini(cfg, talk)
+            else:
+                (guesses, question), searched = await ask_groq(cfg, talk), False
+        except Exception as e:                       # the other AI answers
+            logger.warning("Describe: %s failed: %s", ai.LABELS[provider], e)
+            last = e
+            continue
+        if guesses or provider == who[-1]:
+            return {"guesses": guesses, "ask": question, "by": ai.LABELS[provider], "searched": searched}
+    raise last if isinstance(last, ValueError) else ValueError(f"AI neodpověděla — zkus to za chvíli ({last})")
 
 
 def _best(found: list, year: int | None):
