@@ -91,9 +91,38 @@ async def test_gemini_out_for_the_day_groq_answers_and_gemini_goes_last(monkeypa
         return groq_ok("from groq")
     calls = fake_http(monkeypatch, answer)
     got = await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}])
-    assert (got.text, got.provider) == ("from groq", "groq") and len(calls) == 2
+    # every Gemini model it knows of (the chosen one, the lite alias) out → Groq
+    assert (got.text, got.provider) == ("from groq", "groq") and len(calls) == 3
     assert ai.gemini_out(BOTH) and ai.order(BOTH, "describe") == ["groq", "gemini"]
-    assert not ai.gemini_out({**BOTH, "gemini_model": "gemini-flash-lite-latest"})   # each model its own limit
+
+
+async def test_one_gemini_model_out_the_next_one_answers(monkeypatch):
+    """The free tier: each model its own daily limit — "gemini-flash-latest" is counted as the model behind it."""
+    def answer(url, body):
+        if "gemini-flash-latest" in url:
+            return Resp(429, text='{"error": {"details": [{"violations": [{"quotaId": '
+                                  '"GenerateRequestsPerDayPerProjectPerModel-FreeTier", '
+                                  '"quotaDimensions": {"model": "gemini-3.8-flash"}}]}]}}')
+        if "generativelanguage" in url:
+            return gemini_ok("Fenomén (1996)")
+        return groq_ok("from groq")
+    calls = fake_http(monkeypatch, answer)
+    monkeypatch.setattr(ai, "_models", {"at": 9e12, "key": hash("k"), "names": [
+        "gemini-flash-latest", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-pro-latest", "gemini-flash-lite-latest",
+        "gemma-4-31b-it"]})
+    got = await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}])
+    assert (got.text, got.provider, got.model, got.label) == ("Fenomén (1996)", "gemini", "gemini-3.7-flash", "Gemini 3.7 flash")
+    assert len(calls) == 2 and set(ai.gemini_usage()["out"]) == {"gemini-flash-latest", "gemini-3.8-flash"}
+    assert ai.gemini_chain(BOTH) == ["gemini-3.7-flash", "gemini-flash-lite-latest", "gemma-4-31b-it"]  # no pro
+    assert ai.order(BOTH, "describe") == ["gemini", "groq"]
+
+
+async def test_gemma_gets_the_system_text_in_the_question(monkeypatch):
+    calls = fake_http(monkeypatch, lambda url, body: gemini_ok("ok"))
+    await ai._gemini_ask(BOTH, "sys", [{"role": "user", "content": "q"}], 100, 0.3, True, "gemma-4-31b-it")
+    body = calls[0][1]
+    assert "systemInstruction" not in body and "tools" not in body
+    assert body["contents"][0]["parts"][0]["text"] == "sys\n\nq"
 
 
 async def test_no_ai_answers():

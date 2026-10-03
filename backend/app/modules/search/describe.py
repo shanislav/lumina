@@ -6,7 +6,10 @@ Groq's model alone remembers famous titles only (asked for "a man struck by a li
 things by thought" it never says Phenomenon). So it first turns the description into plot keywords, TMDB gives
 the best-known titles tagged with them, and the model picks from those (with their plot) and its own memory.
 
-Gemini (when it has a key) answers first: it searches Google for the scene. Groq answers when Gemini can not.
+Gemini (when it has a key) answers first — from its memory, which knows far more films than Groq's model (it
+searches Google where the key allows it); one model out of its daily limit, the next Gemini model answers. Groq
+answers only when no Gemini model can. An answer that only asks back (no guesses) is an answer too — Groq is not
+asked to guess instead.
 Only with an AI key. Groq's free tier has daily limits that the other AI features share — a user has
 ``DAILY_PER_USER`` questions a day, an admin is not limited (and sees what is left of the key's own limits).
 """
@@ -168,7 +171,7 @@ async def ask_groq(cfg: dict, talk: list[dict]) -> tuple[list[dict], str]:
         raise ValueError("AI odpověděla nesrozumitelně — zkus to popsat jinak") from e
 
 
-async def ask_gemini(cfg: dict, talk: list[dict]) -> tuple[list[dict], str, bool]:
+async def ask_gemini(cfg: dict, talk: list[dict]) -> tuple[list[dict], str, bool, str]:
     """Gemini searches Google for the scene described (forums, lists "films where…") — finds titles a model
     does not remember. (guesses, question, did it search)"""
     answer = await ai.ask(cfg, "gemini", SYSTEM + SEARCH, _messages(talk), max_tokens=2000, search=True)
@@ -176,7 +179,7 @@ async def ask_gemini(cfg: dict, talk: list[dict]) -> tuple[list[dict], str, bool
         guesses, question = _parse(answer.text)
     except (json.JSONDecodeError, ValueError, KeyError, IndexError) as e:
         raise ValueError("AI odpověděla nesrozumitelně — zkus to popsat jinak") from e
-    return guesses, question, answer.searched
+    return guesses, question, answer.searched, answer.label
 
 
 async def ask(cfg: dict, talk: list[dict]) -> dict:
@@ -189,15 +192,15 @@ async def ask(cfg: dict, talk: list[dict]) -> dict:
     for provider in who:
         try:
             if provider == "gemini":
-                guesses, question, searched = await ask_gemini(cfg, talk)
+                guesses, question, searched, by = await ask_gemini(cfg, talk)
             else:
-                (guesses, question), searched = await ask_groq(cfg, talk), False
+                (guesses, question), searched, by = await ask_groq(cfg, talk), False, ai.LABELS[provider]
         except Exception as e:                       # the other AI answers
             logger.warning("Describe: %s failed: %s", ai.LABELS[provider], e)
             last = e
             continue
-        if guesses or provider == who[-1]:
-            return {"guesses": guesses, "ask": question, "by": ai.LABELS[provider], "searched": searched}
+        if guesses or question or provider == who[-1]:
+            return {"guesses": guesses, "ask": question, "by": by, "searched": searched}
     raise last if isinstance(last, ValueError) else ValueError(f"AI neodpověděla — zkus to za chvíli ({last})")
 
 

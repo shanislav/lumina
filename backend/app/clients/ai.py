@@ -6,15 +6,19 @@ Every AI feature asks through ``chat(cfg, feature, …)``: the AIs with a key, i
 - Groq (OpenAI-like API): fast, a big daily limit, knows famous titles only.
 - Gemini (Google AI Studio key, a free tier): remembers far more titles than Groq's model; can search Google
   while answering (``search=True``) where the key allows it (the free tier of newer models does not — then it
-  answers from its memory, and Lumina does not try the search again that day). Google sends no "what is left" with an answer: Lumina counts its own calls
-  per Google's day (midnight Pacific time) and asks the other AI first for the day once Google says the
-  model's daily limit is out (each model has its own).
+  answers from its memory, and Lumina does not try the search again that day). The free tier gives each model
+  its own small daily limit (gemini-flash-latest = the newest flash: 20 a day), so when the chosen model is out
+  the next Gemini model answers (older flash models, then the lite ones, then Gemma — measured 2026-10-03: all of
+  them know "Phenomenon" from a vague description, Groq's model never), and Groq only when every one is out.
+  Google sends no "what is left" with an answer: Lumina counts its own calls per Google's day (midnight Pacific
+  time) and remembers the models Google says are out.
 """
 
 import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -29,7 +33,10 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GEMINI_API = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 # Non-chat Gemini models (embeddings, speech, images, live) cannot answer a question.
-_GEMINI_NON_CHAT = ("embedding", "tts", "image", "live", "audio", "aqa", "imagen", "veo", "robotics", "computer-use")
+_GEMINI_NON_CHAT = ("embedding", "tts", "image", "live", "audio", "aqa", "imagen", "veo", "robotics", "computer-use",
+                    "transcribe", "customtools", "omni", "lyria", "nano-banana", "antigravity", "deep-research")
+MODELS_TTL_S = 24 * 3600
+_models: dict = {}                     # the key's chat models: {"at": time, "key": hash, "names": [...]}
 
 # extra request parameters that cut hidden reasoning tokens (they count against Groq's limit)
 REASONING_PARAMS = {
@@ -68,6 +75,14 @@ class Answer:
     text: str
     provider: str
     searched: bool = False             # Gemini searched Google for it
+    model: str = ""                    # Gemini: which model answered
+
+    @property
+    def label(self) -> str:
+        """"Gemini 3.7 flash", "Groq"."""
+        if self.provider != "gemini" or not self.model:
+            return LABELS[self.provider]
+        return "Gemini " + self.model.removeprefix("gemini-").replace("-latest", "").replace("-it", "").replace("-", " ")
 
 
 # ── which AI ──
@@ -90,6 +105,30 @@ def order(cfg: dict, feature: str) -> list[str]:
         base = (choice, *[p for p in base if p != choice])
     out = [p for p in base if p in have]
     return sorted(out, key=lambda p: p == "gemini" and gemini_out(cfg))
+
+
+def _version(name: str) -> float:
+    m = re.search(r"-(\d+(?:\.\d+)?)-", name + "-")
+    return float(m.group(1)) if m else 0.0
+
+
+def gemini_chain(cfg: dict, names: list[str] | None = None) -> list[str]:
+    """The Gemini models to ask, in order: the chosen one, the other flash models (the newest first), the lite
+    ones, Gemma — without those out of their daily limit today. ``names``: the key's chat models (else the
+    last list read from Google; before any, the chosen model and the lite alias)."""
+    chosen = cfg.get("gemini_model") or DEFAULT_GEMINI_MODEL
+    if names is None:
+        names = _models.get("names") or [chosen, "gemini-flash-lite-latest"]
+    usable = [n for n in names if "pro" not in n]          # pro: 0 requests a day on the free tier
+
+    def rank(n: str) -> tuple:
+        if "gemma" in n:
+            return (3, "a4b" in n, -_version(n), n)          # the dense model before the small MoE one
+        return (1 + ("lite" in n), "preview" in n, -(99 if "latest" in n else _version(n)), n)
+
+    out = [chosen] + sorted((n for n in usable if n != chosen), key=rank)
+    gone = set(gemini_usage()["out"])
+    return [n for n in dict.fromkeys(out) if n not in gone]
 
 
 # ── Gemini's day ──
@@ -115,8 +154,8 @@ def gemini_usage() -> dict:
 
 
 def gemini_out(cfg: dict) -> bool:
-    """Is the configured model out of its daily limit (Google counts each model on its own)?"""
-    return (cfg.get("gemini_model") or DEFAULT_GEMINI_MODEL) in gemini_usage()["out"]
+    """Is every Gemini model out of its daily limit (Google counts each model on its own)?"""
+    return not gemini_chain(cfg)
 
 
 def _gemini_note(searched: bool = False, out: str = "") -> None:
@@ -141,8 +180,10 @@ def quotas(cfg: dict) -> dict:
         out["groq"] = {k: q.get(k) for k in keep} if q else {}
     if cfg.get("gemini_api_key"):
         u = gemini_usage()
-        out["gemini"] = {"calls": u["calls"], "searches": u["searches"], "exhausted": gemini_out(cfg),
-                         "no_search": bool(u.get("no_search"))}
+        chain = gemini_chain(cfg)
+        out["gemini"] = {"calls": u["calls"], "searches": u["searches"], "exhausted": not chain,
+                         "no_search": bool(u.get("no_search")), "model": chain[0] if chain else "",
+                         "out": u["out"]}
     return out
 
 
@@ -202,13 +243,24 @@ def _gemini_contents(messages: list[dict]) -> list[dict]:
     return out
 
 
+def _quota_model(text: str) -> str:
+    """The model Google counts a 429 against — "gemini-flash-latest" is counted as "gemini-3.8-flash"."""
+    m = re.search(r'"model":\s*"([^"]+)"', text or "")
+    return m.group(1) if m else ""
+
+
 async def _gemini_ask(cfg: dict, system: str, messages: list[dict], max_tokens: int, temperature: float,
-                      search: bool) -> tuple[str, bool]:
-    model = cfg.get("gemini_model") or DEFAULT_GEMINI_MODEL
-    body: dict = {"contents": _gemini_contents(messages),
+                      search: bool, model: str = "") -> tuple[str, bool]:
+    model = model or cfg.get("gemini_model") or DEFAULT_GEMINI_MODEL
+    contents = _gemini_contents(messages)
+    body: dict = {"contents": contents,
                   "systemInstruction": {"parts": [{"text": system}]},
                   # thinking models count their thoughts in the output: room for both
                   "generationConfig": {"temperature": temperature, "maxOutputTokens": max(max_tokens * 4, 4096)}}
+    if "gemma" in model:                  # Gemma: no system instruction, no Google search
+        del body["systemInstruction"]
+        contents[0]["parts"][0]["text"] = system + "\n\n" + contents[0]["parts"][0]["text"]
+        search = False
     if search:
         body["tools"] = [{"google_search": {}}]
     url = f"{GEMINI_API}/models/{model}:generateContent"
@@ -225,11 +277,15 @@ async def _gemini_ask(cfg: dict, system: str, messages: list[dict], max_tokens: 
                 raise SearchLimitError("Gemini: hledání na Googlu není s tímto klíčem dostupné")
             if "PerDay" in (resp.text or "") or attempt == 1 or retry_after(resp) > MAX_WAIT:
                 if "PerDay" in (resp.text or ""):
-                    _gemini_note(out=model)               # out for today: the other AI answers until tomorrow
-                raise LimitError("Gemini: překročený limit")
+                    _gemini_note(out=model)               # out for today: the next model answers until tomorrow
+                    if (counted := _quota_model(resp.text)) and counted != model:
+                        _gemini_note(out=counted)         # the alias and the model behind it share the limit
+                raise LimitError(f"Gemini {model}: překročený limit")
             await asyncio.sleep(retry_after(resp))
+    if resp.status_code in (400, 403, 404):  # "no longer available to new users", not for this key: skip it today
+        _gemini_note(out=model)
     if resp.status_code >= 400:
-        raise AIError(f"Gemini HTTP {resp.status_code}: {(resp.text or '')[:200]}")
+        raise AIError(f"Gemini {model} HTTP {resp.status_code}: {(resp.text or '')[:200]}")
     payload = resp.json()
     cand = (payload.get("candidates") or [{}])[0]
     text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", []) if not p.get("thought"))
@@ -248,13 +304,27 @@ async def ask(cfg: dict, provider: str, system: str, messages: list[dict], *, ma
     if provider == "gemini":
         if search and gemini_usage().get("no_search"):
             search = False                       # Google said no today: do not ask (and wait) again
-        try:
-            text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, search)
-        except SearchLimitError as e:
-            logger.info("%s — asking without it until tomorrow", e)
-            gemini_usage()["no_search"] = True
-            text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, False)
-        return Answer(text, "gemini", searched)
+        await _load_models(cfg)
+        chain = gemini_chain(cfg)
+        if not chain:
+            raise LimitError("Gemini: všechny modely mají dnes vyčerpaný limit")
+        last: Exception | None = None
+        for model in chain:                      # a model out of its limit (or failing): the next one
+            if model in gemini_usage()["out"]:  # the alias's 429 named the model behind it
+                continue
+            try:
+                try:
+                    text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, search, model)
+                except SearchLimitError as e:
+                    logger.info("%s — asking without it until tomorrow", e)
+                    gemini_usage()["no_search"] = True
+                    search = False
+                    text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, False, model)
+                return Answer(text, "gemini", searched, model)
+            except (AIError, httpx.HTTPError) as e:
+                logger.info("Gemini %s: %s — the next model", model, e)
+                last = e
+        raise last if isinstance(last, LimitError) else AIError(str(last))
     return Answer(await _groq(cfg, system, messages, max_tokens, temperature), "groq")
 
 
@@ -277,7 +347,20 @@ async def chat(cfg: dict, feature: str, system: str, messages: list[dict], *, ma
     raise AIError(str(last) or type(last).__name__)
 
 
-async def gemini_models(api_key: str) -> list[str]:
+async def _load_models(cfg: dict) -> None:
+    """The key's chat models, read once a day (the order of the fallbacks comes from them)."""
+    key = cfg.get("gemini_api_key") or ""
+    if _models.get("names") and _models.get("key") == hash(key) and time.time() - _models["at"] < MODELS_TTL_S:
+        return
+    try:
+        names = await gemini_models(key, gemma=True)
+    except Exception as e:  # noqa: BLE001 — without the list: the chosen model and the lite alias
+        logger.info("Gemini models not read: %s", e)
+        return
+    _models.update(at=time.time(), key=hash(key), names=names)
+
+
+async def gemini_models(api_key: str, gemma: bool = False) -> list[str]:
     """Gemini chat models available for the key."""
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(f"{GEMINI_API}/models", params={"pageSize": 200}, headers={"x-goog-api-key": api_key})
@@ -285,7 +368,8 @@ async def gemini_models(api_key: str) -> list[str]:
     out = []
     for m in resp.json().get("models", []):
         name = m.get("name", "").removeprefix("models/")
-        if "generateContent" in (m.get("supportedGenerationMethods") or []) and name.startswith("gemini") \
+        if "generateContent" in (m.get("supportedGenerationMethods") or []) \
+                and (name.startswith("gemini") or gemma and name.startswith("gemma")) \
                 and not any(t in name for t in _GEMINI_NON_CHAT):
             out.append(name)
     return sorted(out)

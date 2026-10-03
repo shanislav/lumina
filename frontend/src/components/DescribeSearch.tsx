@@ -17,8 +17,9 @@ function aiText(q: AiQuotas): string {
       + (g.tokens_left == null ? "" : ` · ${k(g.tokens_left)}/${k(g.tokens_limit ?? 0)} tokenů za minutu`));
   }
   const m = q.gemini;
-  if (m) out.push(m.exhausted ? "Gemini: dnešní limit vyčerpaný (zítra zase)"
+  if (m) out.push(m.exhausted ? "Gemini: všechny modely mají dnešní limit vyčerpaný — odpovídá Groq (zítra zase)"
     : `Gemini: dnes ${m.calls} dotazů${m.searches ? ` (${m.searches}× hledal na Googlu)` : ""}`
+      + (m.out?.length && m.model ? ` · teď odpovídá ${m.model} (${m.out.length} model${m.out.length > 1 ? "y" : ""} má limit vyčerpaný)` : "")
       + (m.no_search ? " · hledání na Googlu klíč nemá (odpovídá z paměti)" : ""));
   return out.join(" · ");
 }
