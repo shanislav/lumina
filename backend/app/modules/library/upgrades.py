@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 
 from app.config import get_effective_settings
-from app.core import quality
+from app.core import events, quality
 from app.core.offers.search import find_offers, upgrade_block, verify_offers
 from app.core.profiles import block, get_profile, reached_cutoff, row_from_media
 from app.db import get_db
@@ -149,6 +149,12 @@ async def check_movie(tmdb_id: int) -> dict | None:
     status_ = "better" if better else "none"
     note = f"profil {profile.name}" + (" · oblíbená verze se nenahradí" if owned["preferred"] else "")
     await _save(tmdb_id, owned, owned["quality_score"], status_, better, note=note)
+    if better:
+        b = better[0]
+        await events.emit("offers.found", {
+            "kind": "upgrade", "tmdb_id": tmdb_id, "title": owned["title"], "year": owned["year"] or "",
+            "profile": profile.name, "matches": len(better),
+            "best": {k: b.get(k) for k in ("name", "ident", "quality_score", "quality_summary", "resolution", "audio_langs")}})
     return {"status": status_, "upgrades": len(better)}
 
 
@@ -175,7 +181,6 @@ async def _save(tmdb_id: int, owned: dict | None, owned_score: int, status_: str
 async def request_download(tmdb_id: int, mode: str, requested_by: str = "upgrade (plánovač)") -> bool:
     """Scheduler with automatic upgrades: download the best better version as a new version or as a
     replacement of the compared one (the import deletes the old one only when the lengths agree)."""
-    from app.core import events
 
     check = (await results()).get(str(tmdb_id)) or {}
     best = check.get("best") or {}

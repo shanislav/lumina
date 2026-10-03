@@ -275,6 +275,7 @@ async def check_show(tmdb_id: int) -> dict:
         todo.setdefault(season, []).append((episode, kind))
 
     profile = pick_profile(await load_profiles(), eff["profile_id"], "tv")
+    news: dict[str, list] = {"found": [], "downloading": []}       # for the notification
     first = True
     for season, items in sorted(todo.items()):
         if not first:
@@ -300,11 +301,16 @@ async def check_show(tmdb_id: int) -> dict:
                     await _save(tmdb_id, season, episode, kind, "downloading", row)
                     result["downloading"] += 1
                     _state["downloading"] += 1
+                    news["downloading"].append([season, episode, kind])
                     continue
                 logger.warning("Series automation: %s S%02dE%02d download failed: %s", tmdb_id, season, episode, error)
+            if not (rec and rec["status"] == "found" and rec["row"].get("ident") == row.get("ident")):
+                news["found"].append([season, episode, kind])           # new to the user
             await _save(tmdb_id, season, episode, kind, "found", row)
             result["found"] += 1
             _state["found"] += 1
+    if news["found"] or news["downloading"]:
+        await events.emit("series.found", {"tmdb_id": tmdb_id, "title": detail["show"].get("title") or "", **news})
     logger.info("Series automation '%s': %s", detail["show"].get("title"), result)
     return result
 

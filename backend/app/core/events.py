@@ -18,8 +18,12 @@ Known events:
                            files came into film folders besides an import (subtitles) — Plex rescans
     library.files_removed  {folders: [path, ...]}
                            files of the library were deleted (a version, a whole movie folder) — Plex rescans
-    offers.found           {kind: "wanted", wanted_id, tmdb_id, title, year, profile, matches, best}
+    offers.found           {kind: "wanted" | "upgrade", wanted_id, tmdb_id, title, year, profile, matches, best}
                            a check found offers the profile allows (for a future notification module)
+    download.failed        {download_id, tmdb_id, title, year, content_type, library_action, reason} — a download
+                           ended with an error (not a cancel)
+    series.found           {tmdb_id, title, found: [[season, episode, kind]], downloading: [...]} — the TV
+                           automation found episodes (waiting for the user) or started them
     download.request       {file_ident, source, source_id, magnet_url, tmdb_id, title, year, content_type,
                             library_action, requested_by} — start a download (the downloads module does it,
                            sets "started" or "error")

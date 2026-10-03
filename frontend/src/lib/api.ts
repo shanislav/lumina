@@ -2045,3 +2045,22 @@ export async function describeTitle(talk: DescribeTurn[]): Promise<DescribeAnswe
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
   return res.json();
 }
+
+// ── notifications (backend modules/notify) ──
+
+export interface NotificationItem {
+  id: number; created_at: string; kind: string; level: "info" | "ok" | "warn" | "error";
+  title: string; body: string; link: string; new: boolean;
+}
+
+export async function getNotifications(): Promise<{ items: NotificationItem[]; unread: number }> {
+  const res = await apiFetch(`${API_BASE}/api/notifications`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function markNotificationsSeen(lastId: number): Promise<void> {
+  await apiFetch(`${API_BASE}/api/notifications/seen`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ last_id: lastId }),
+  });
+}

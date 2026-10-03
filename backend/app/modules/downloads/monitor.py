@@ -83,6 +83,11 @@ async def _monitor_loop():
                                     logger.warning("Download %s ended as %s", title, s.get("status"))
                                     cur.execute("UPDATE download_tracker SET processed = 1, status = ? WHERE id = ?", (s.get("status"), did))
                                     conn.commit()
+                                    if s.get("status") == "error":         # "removed" = the user cancelled it
+                                        await events.emit("download.failed", {
+                                            "download_id": did, "tmdb_id": tmdb_id, "title": title, "year": year,
+                                            "content_type": content_type, "library_action": intent,
+                                            "reason": s.get("errorMessage") or ""})
                                     continue
                             except Exception as ae:
                                 if "not found" in str(ae):
