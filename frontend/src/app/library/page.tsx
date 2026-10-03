@@ -1,5 +1,6 @@
 "use client";
 
+import ClearInput from "@/components/ClearInput";
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import BulkFilmSettings from "@/components/BulkFilmSettings";
 import SubtitlesPanel from "@/components/SubtitlesPanel";
@@ -570,9 +571,11 @@ export default function LibraryPage() {
           Serialy ({shows.length})
         </button>
       </div>
-      <input type="search" value={librarySearch} onChange={(e) => setLibrarySearch(e.target.value)}
+      <ClearInput type="search" value={librarySearch} onChange={(e) => setLibrarySearch(e.target.value)} onClear={() => setLibrarySearch("")}
+        onKeyDown={(e) => { if (e.key === "Escape") setLibrarySearch(""); }}
         placeholder={tab === "filmy" ? "Hledat v knihovně — název, rok, soubor…" : "Hledat seriál…"}
-        className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-600" />
+        wrapperClassName="w-full max-w-md"
+        className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-600" />
       {tab === "serialy" && <SeriesAutomation canEdit={canEdit} canDownload={can("download")} query={librarySearch} />}
       {tab === "serialy" && <TvInventory />}
 

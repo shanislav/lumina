@@ -5,3 +5,7 @@
 body {
   @apply bg-zinc-950 text-zinc-100;
 }
+
+/* the browser's own tiny "x" of search fields — ClearInput shows a big one */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }

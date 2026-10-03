@@ -1,5 +1,6 @@
 "use client";
 
+import ClearInput from "@/components/ClearInput";
 import { useState, useEffect, useRef, FormEvent, KeyboardEvent } from "react";
 import { Suggestion, TMDBMovie, suggest } from "@/lib/api";
 
@@ -69,15 +70,17 @@ export default function SearchBar({ onSearch, onPick, loading, initialQuery }: P
 
   return (
     <form ref={box} onSubmit={handleSubmit} className="relative flex gap-2 sm:gap-3 w-full max-w-2xl items-center">
-      <input
+      <ClearInput
         type="text"
         value={query}
+        onClear={() => { setQuery(""); setOpen(false); }}
+        wrapperClassName="flex-1 min-w-0"
         onChange={(e) => { typed.current = true; setQuery(e.target.value); }}
         onFocus={() => typed.current && items.length && setOpen(true)}
         onKeyDown={onKey}
         placeholder="Film, seriál nebo herec…"
         autoComplete="off"
-        className="flex-1 min-w-0 rounded-lg bg-zinc-800 border border-zinc-700 px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+        className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
       />
       <button
         type="submit"
