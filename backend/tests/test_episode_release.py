@@ -138,3 +138,34 @@ def test_release_groups_and_longer_show_names():
     ctx = MovieContext(titles=["Dark"], runtime=50, episode={"season": 2, "episode": 3,
                                                            "by_name": {"Dark Winds S03E03 Chiidii Ghosts.mkv": hit}})
     assert evaluate("Dark Winds S03E03 Chiidii Ghosts.mkv", 1, ctx, prefs_from_settings({}))["film"] == "unsure"
+
+
+def test_packs_of_more_seasons_are_read():
+    from app.core.episode_match import parse_episode
+    assert parse_episode("South Park 1-26. série + speciály + film (1997-2024)(CZ/EN)[2160p]").seasons == list(range(1, 27))
+    assert parse_episode("Dr. House 1.-8. serie CZ").seasons == list(range(1, 9))
+    assert parse_episode("Breaking Bad Season 1-5 1080p").seasons == [1, 2, 3, 4, 5]
+    assert parse_episode("Pratele 3. serie CZ").season == 3
+    assert parse_episode("Městečko South Park S01E02-13 1997 CZ dab 1080p - Sopka.mkv").episodes == [2]
+
+
+async def test_a_whole_show_pack_brings_what_is_missing(tmp_path, monkeypatch):
+    """"South Park komplet": episodes by their folders ("Season 02/05 - …") and names, the owned one stays
+    (no replacing asked), the film in the pack stays in the downloads."""
+    season, owned, dl = await _setup(tmp_path, monkeypatch)
+    pack = dl / "South Park komplet"
+    files = [pack / "Season 01" / "South Park S01E02 - Sopka.avi",          # owned already
+             pack / "Season 01" / "South Park S01E03 - Posilovač 4000.avi",
+             pack / "Season 02" / "05 - Ikeova obřízka.avi",
+             pack / "South Park - Peklo na zemi (1999).mkv"]
+    for i, f in enumerate(files):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(b"x" * (10 + i))
+    await events.emit("download.completed", {
+        "download_id": "p", "tmdb_id": 2190, "title": "South Park", "year": "1997", "content_type": "tv",
+        "path": str(files[0]), "extra_paths": [str(f) for f in files[1:]],
+        "library_action": {"mode": "pack", "replace_owned": False}})
+    assert owned.exists() and files[0].exists()                    # not replaced, left in the downloads
+    assert files[3].exists()                                       # the film is no episode
+    assert [r[:2] for r in _episodes()] == [(1, 2), (1, 3), (2, 5)]
+    assert (season.parent / "Season 02" / "05 - Ikeova obřízka.avi").exists()

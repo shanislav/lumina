@@ -22,6 +22,9 @@ _SE_MORE = re.compile(r"\d{1,3}")
 _X = re.compile(r"(?<![a-z0-9])(\d{1,2})x(\d{2,3})(?:-(\d{2,3}))?(?![0-9])")
 _SEASON_LIST = re.compile(r"(?<![a-z0-9])s\d{1,2}(?:(?: ?[/,+&] ?| )s\d{1,2}(?![0-9e]))+")
 _SEASON_RANGE = re.compile(r"(?<![a-z0-9])(?:s(\d{1,2}) ?- ?s?|(\d{1,2}) ?\.? ?- ?s)(\d{1,2})(?![0-9e])")   # S01-S03, "1. - S03"
+# "1-26. série", "1.-8. serie", "Season 1-5", "série 1-3" (dots are spaces by then; years have 4 digits)
+_SEASON_SPAN = re.compile(r"(?<![a-z0-9])(?:(?:seasons?|serie|serije|sezona|rada) ?(\d{1,2}) ?- ?(\d{1,2})(?![0-9])"
+                          r"|(\d{1,2}) ?- ?(\d{1,2}) ?(?:serie|serija|sezona|sezon|rada|seasons?)(?![a-z]))")
 _SEASON = re.compile(
     r"(?<![a-z0-9])(?:s(\d{1,2})(?![0-9e])"                         # S01 (not S01E…)
     r"|season ?(\d{1,2})(?![0-9])"                                   # Season 1
@@ -86,6 +89,11 @@ def parse_episode(name: str) -> EpisodeInfo:
     if m:                                               # "S01/S02/S03", "S01 S02"
         seasons = sorted({int(x) for x in re.findall(r"s(\d{1,2})", m.group(0))})
         return EpisodeInfo(seasons=seasons, prefix=text[:m.start()], complete=complete)
+    m = _SEASON_SPAN.search(text)
+    if m:
+        a, b = [int(g) for g in m.groups() if g]
+        if a < b:
+            return EpisodeInfo(seasons=list(range(a, b + 1)), prefix=text[:m.start()], complete=complete)
     m = _SEASON_RANGE.search(text)
     first, last = (int(m.group(1) or m.group(2)), int(m.group(3))) if m else (0, 0)
     if m and first < last:

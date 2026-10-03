@@ -321,6 +321,28 @@ def _which_episode(name: str, season: int | None, episodes: list[int], cat: dict
     return season, episodes, ""
 
 
+_FOLDER_SEASON = re.compile(r"(?i)(?<![a-z0-9])(?:season|s[ée]rie|serija|sezona|s)[ ._-]?(\d{1,2})(?!\d)|(?<!\d)(\d{1,2})\.?[ ._-]?(?:s[ée]rie|serija|sezona|season)")
+_LEADING = re.compile(r"^\s*(?:e|ep|díl|dil)?\s*(\d{1,3})(?!\d)[ ._-]")
+
+
+def _in_pack(path: str, season: int | None, episodes: list[int]) -> tuple[int | None, list[int]]:
+    """A file of a whole-show pack: the season also from its folders ("South Park/Season 03/05 - Name.avi",
+    "Série 3/"), the episode also from a leading number."""
+    if season is None:
+        from app.modules.downloads.monitor import SEEDING_DIR
+        parts = [p for p in os.path.dirname(path).split(os.sep)
+                 if p and p != SEEDING_DIR and not re.fullmatch(r"[0-9a-f]{16}", p)]   # the seeding copy's folder
+        for part in reversed(parts[-4:]):
+            m = _FOLDER_SEASON.search(part)
+            if m:
+                season = int(m.group(1) or m.group(2))
+                break
+    if season is not None and not episodes:
+        m = _LEADING.match(os.path.splitext(os.path.basename(path))[0])
+        episodes = [int(m.group(1))] if m else []
+    return season, episodes
+
+
 def _int(value) -> int | None:
     try:
         return int(value)
@@ -382,10 +404,16 @@ async def import_episode(payload: dict) -> None:
             if season is None:
                 m = _SEASON.search(os.path.basename(path))
                 season = int(m.group(1) or m.group(2)) if m else None
+            pack = action.get("mode") == "pack"
+            if pack:
+                season, episodes = _in_pack(path, season, episodes)
+                if season is None or not episodes:
+                    logger.info("%s: no episode (a film, an extra) — left in downloads", path)
+                    continue
             file_numbers = (season, list(episodes))
             season, episodes, why = _which_episode(os.path.basename(path), season, episodes, cat,
                                                    action if path == src and not extras else {})
-            if path != src and season and episodes and not action.get("replace_owned", True)                     and all((season, ep) in owned for ep in episodes):
+            if (path != src or pack) and season and episodes and not action.get("replace_owned", True)                     and all((season, ep) in owned for ep in episodes):
                 logger.info("%s: S%02dE%02d is owned already — left in downloads", path, season, episodes[0])
                 continue
             name, media = os.path.basename(path), None

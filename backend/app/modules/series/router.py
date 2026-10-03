@@ -133,6 +133,43 @@ async def season_offers(tmdb_id: int, season: int, episodes: str = "") -> dict:
             "plan": offers.plan, "movie": offers.ctx.as_dict()}
 
 
+@router.get("/{tmdb_id}/packs", dependencies=[Depends(require("search"))])
+async def show_packs(tmdb_id: int) -> dict:
+    """Torrents of the whole show ("komplet", "1-26. série", "S01-S10") — beside the season search."""
+    from app.core.offers.season import find_show_packs
+
+    try:
+        return await find_show_packs(await get_effective_settings(), tmdb_id)
+    except Exception as e:
+        logger.warning("Show packs of %s failed: %s", tmdb_id, e)
+        raise HTTPException(502, f"Hledání selhalo: {e}")
+
+
+class PackDownload(BaseModel):
+    row: dict                    # the pack (a row of /packs)
+    replace_owned: bool = False  # episodes the user has go for the pack's (else the pack's copies stay out)
+
+
+@router.post("/{tmdb_id}/pack/download", dependencies=[Depends(require("download"))])
+async def pack_download(tmdb_id: int, body: PackDownload) -> dict:
+    """Download a pack of the whole show: every episode goes to its season; what the user has stays, unless
+    ``replace_owned``; files that are no episode (a film, extras) stay in the downloads."""
+    show, _ = await show_with_seasons(tmdb_id)
+    row = body.row
+    if not row.get("ident"):
+        raise HTTPException(400, "Chybí soubor")
+    payload = await events.emit("download.request", {
+        "file_ident": row["ident"], "source": row["source"], "source_id": row.get("source_id") or 0,
+        "magnet_url": row.get("magnet_url"), "content_type": "tv", "tmdb_id": tmdb_id,
+        "title": show.get("title") or "", "year": show.get("year") or 0, "file_name": row.get("name") or "",
+        "library_action": {"mode": "pack", "replace_owned": body.replace_owned},
+        "requested_by": "series",
+    })
+    if payload.get("error"):
+        raise HTTPException(502, payload["error"])
+    return {"started": bool(payload.get("started"))}
+
+
 class SeasonDownload(BaseModel):
     items: list[dict]          # [{"episode": 3, "row": <offer row>}] — a pack: any episode of it
     replace_owned: bool = True # owned episodes (EN waiting for the dub) are replaced by the new files

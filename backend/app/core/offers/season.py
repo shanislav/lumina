@@ -254,3 +254,47 @@ async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[
     logger.info("Season %s S%02d: %d files, %d sets, %d packs, plan %d/%d", show.get("title"), season, len(out.rows),
                 len(out.sets), len(out.packs), len(out.plan), len(wanted))
     return out
+
+
+async def find_show_packs(cfg: dict, tmdb_id: int) -> dict:
+    """Torrents of the whole show (or several seasons) — uploaders put a show up "komplet", "1-26. série",
+    "S01-S10": searched by the show's names alone and with "komplet" / "complete", every pack of it judged
+    (the show's name, the seasons it holds against TMDB's, language, quality). Packs of more seasons first,
+    then the dub, then seeders. {"seasons": TMDB's seasons, "packs": [row + "seasons", "complete"]}"""
+    prefs = prefs_from_settings(cfg)
+    client = TMDBClient(cfg["tmdb_api_key"])
+    try:
+        show = await client.get_tv_full(tmdb_id)
+    finally:
+        await client.close()
+    tmdb_seasons = sorted(s["season_number"] for s in show.get("seasons", []) if s.get("season_number"))
+    by_lang = show.get("titles_by_lang") or {}
+    titles = _unique_names([show.get("title", ""), *(by_lang.get(l, "") for l in prefs.local_langs),
+                            by_lang.get("en", ""), show.get("original_title", ""), *show.get("alternative_titles", [])])
+    names = [n for n in (_clean_title(t) for t in titles) if len(_norm(n)) >= 2]
+    if not names:
+        return {"seasons": tmdb_seasons, "packs": []}
+    latin = next((n for n in names if n.isascii() and re.search(r"[A-Za-z]", n)), names[0])
+    queries = _unique_names([latin, f"{latin} komplet", f"{latin} complete", names[0]])
+    sources = [s for s in SourceRegistry.get().sources if s.source_type.value in TORRENT_SOURCES]
+    results = await search_sources(sources, [], queries)
+    runtime = show.get("episode_runtime") or 0
+    packs = []
+    for r in results:
+        info = parse_episode(r.name)
+        if not info.is_pack:
+            continue
+        held = info.seasons or ([info.season] if info.season is not None else [])
+        first = held[0] if held else (tmdb_seasons[0] if tmdb_seasons else 1)
+        ctx = MovieContext(titles=titles, runtime=runtime, episode={"season": first, "episode": 1})
+        ev = evaluate(r.name, r.size, ctx, prefs, None, r.duration_s, r.width, r.height)
+        if ev["film"] == "no":
+            continue                                       # another show
+        covered = [s for s in tmdb_seasons if s in held] if held else list(tmdb_seasons)
+        packs.append({"ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
+                      "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders,
+                      "quality": ev["resolution"] or "unknown", "relevance_score": 0, **ev,
+                      "seasons": held, "complete": info.complete or not held, "covers": len(covered)})
+    packs.sort(key=lambda p: (-p["covers"], -(p.get("lang_tier", 0) >= 2), -(p.get("seeders") or 0), -p["quality_score"]))
+    logger.info("Show packs %s: %d torrents, %d packs", show.get("title"), len(results), len(packs))
+    return {"seasons": tmdb_seasons, "packs": packs[:20], "movie": MovieContext(titles=titles, runtime=runtime).as_dict()}

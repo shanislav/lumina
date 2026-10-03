@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
+import ShowPacks from "@/components/ShowPacks";
 import EpisodeWindow from "@/components/EpisodeWindow";
 import { useAuth } from "@/components/AuthGate";
 import {
@@ -129,6 +130,10 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
       </header>
 
       <SettingsPanel data={data} onSaved={() => load()} editable={can("library.edit")} />
+
+      {can("search") && data.settings.effective.torrent && (
+        <ShowPacks tmdbId={tmdbId} onStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }} />
+      )}
 
       <div className="space-y-2">
         {data.seasons.map((s) => (

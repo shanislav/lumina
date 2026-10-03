@@ -1705,6 +1705,38 @@ export async function downloadSeason(tmdbId: number, season: number, items: { ep
   return res.json();
 }
 
+export interface ShowPack extends ScoredFile {
+  seasons: number[];        // the seasons the name says it holds ([] = the whole show)
+  complete: boolean;        // "komplet" / "complete", or no seasons named
+  covers: number;           // how many of TMDB's seasons it holds
+}
+
+export interface ShowPacks {
+  seasons: number[];        // TMDB's seasons (no specials)
+  packs: ShowPack[];
+}
+
+export async function getShowPacks(tmdbId: number): Promise<ShowPacks> {
+  const res = await apiFetch(`${API_BASE}/api/series/${tmdbId}/packs`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Hledání selhalo: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function downloadShowPack(tmdbId: number, row: ShowPack, replaceOwned: boolean): Promise<{ started: boolean }> {
+  const res = await apiFetch(`${API_BASE}/api/series/${tmdbId}/pack/download`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ row, replace_owned: replaceOwned }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Stažení selhalo: ${res.status}`);
+  }
+  return res.json();
+}
+
 // ── TV library inventory (backend modules/library/tv_inventory) ──
 
 export interface TvInventoryProblem {
