@@ -1924,11 +1924,11 @@ export async function getTvFolder(folder: string): Promise<TvFolderDetail> {
 }
 
 /** The user's word on which episode a file is (season/episode null = no word, the scan decides). */
-export async function setAudioLanguage(ids: number[], lang: string, track?: number):
-    Promise<{ done: { id: number; written: boolean; languages: string; tracks: number }[]; errors: string[] }> {
+export async function setAudioLanguage(ids: number[], lang: string, track?: number, paths: string[] = []):
+    Promise<{ done: { id: number | null; written: boolean; languages: string; tracks: number }[]; errors: string[] }> {
   const res = await apiFetch(`${API_BASE}/api/library/tv/audio-language`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ids, lang, track: track ?? null }),
+    body: JSON.stringify({ ids, paths, lang, track: track ?? null }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

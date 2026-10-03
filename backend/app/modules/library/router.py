@@ -899,7 +899,8 @@ async def tv_ai_map(body: TvAiMap) -> dict:
 
 
 class AudioLanguage(BaseModel):
-    ids: list[int]                 # library_episodes ids
+    ids: list[int] = []            # library_episodes ids
+    paths: list[str] = []          # or files of the TV library (another version of an episode)
     lang: str                      # cs | sk | en …
     track: int | None = None       # an audio track (0-based); None = every track without a language
 
@@ -907,17 +908,24 @@ class AudioLanguage(BaseModel):
 @router.post("/tv/audio-language", dependencies=[Depends(require("library.edit"))])
 async def tv_audio_language(body: AudioLanguage) -> dict:
     """The user's word on episodes' sound language — into the files (MKV, MP4) and Lumina."""
+    from app.config import tv_library_dir
     from app.modules.library import audio_lang
+    root = os.path.realpath(tv_library_dir(await get_effective_settings()) or "/nonexistent")
     db = await get_db()
     done, errors = [], []
     try:
+        targets: list[tuple[int | None, str]] = []
         for ep_id in body.ids[:200]:
             row = await (await db.execute("SELECT file_path FROM library_episodes WHERE id = ? AND has_file = 1",
                                           (ep_id,))).fetchone()
-            if not row or not os.path.exists(row[0]):
-                errors.append(f"{ep_id}: soubor nenalezen")
+            targets.append((ep_id, row[0] if row else ""))
+        for p in body.paths[:50]:
+            real = os.path.realpath(p)
+            targets.append((None, real if real.startswith(root + os.sep) else ""))   # the TV library only
+        for ep_id, path in targets:
+            if not path or not os.path.exists(path):
+                errors.append(f"{ep_id or 'soubor'}: soubor nenalezen")
                 continue
-            path = row[0]
             cached = await (await db.execute("SELECT media FROM tv_media WHERE file_path = ?", (path,))).fetchone()
             try:
                 out = await audio_lang.set_language(path, body.lang, body.track,

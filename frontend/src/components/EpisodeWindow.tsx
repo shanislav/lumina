@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthGate";
 import SubtitlesPanel from "@/components/SubtitlesPanel";
-import { EpisodeDetail, EpisodeVersion, deleteEpisodeFile, getEpisodeDetail } from "@/lib/api";
+import { EpisodeDetail, EpisodeVersion, deleteEpisodeFile, getEpisodeDetail, setAudioLanguage } from "@/lib/api";
 
 /**
  * The window of an owned episode (show page): its files with sound and subtitles, the player, subtitles from
@@ -18,6 +18,13 @@ function videoLabel(m: EpisodeVersion["media"]): string {
     .filter(Boolean).join(" · ");
 }
 
+const LANGS: [string, string][] = [["cs", "CZ"], ["sk", "SK"], ["en", "EN"], ["de", "DE"], ["pl", "PL"], ["hu", "HU"], ["fr", "FR"], ["ja", "JA"]];
+
+function trackLabel(a: { codec?: string; channels?: number }): string {
+  const ch = a.channels ? (a.channels > 2 ? `${a.channels - 1}.1` : `${a.channels}.0`) : "";
+  return [ch, a.codec].filter(Boolean).join(" ");
+}
+
 function audioLabel(a: { lang?: string; codec?: string; channels?: number }): string {
   const ch = a.channels ? (a.channels > 2 ? `${a.channels - 1}.1` : `${a.channels}.0`) : "";
   return [(a.lang || "?").toUpperCase(), ch, a.codec].filter(Boolean).join(" ");
@@ -29,6 +36,20 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [langMsg, setLangMsg] = useState<string | null>(null);
+
+  // the user heard it: the track's language into the file (MKV, MP4) and Lumina (AVI)
+  async function setLang(path: string, track: number, lang: string) {
+    setLangMsg("zapisuji…");
+    try {
+      const r = await setAudioLanguage([], lang, track, [path]);
+      setLangMsg(r.errors.length ? r.errors[0] : r.done[0]?.written ? "uloženo do souboru" : "uloženo v Lumině (AVI jazyk neukládá)");
+      await load();
+      onChanged();
+    } catch (e) {
+      setLangMsg(e instanceof Error ? e.message : "Chyba");
+    }
+  }
 
   const load = () => getEpisodeDetail(id).then(setData).catch((e) => setError(e instanceof Error ? e.message : "Chyba"));
   useEffect(() => { setData(null); setError(null); load(); /* eslint-disable-next-line */ }, [id]);
@@ -75,9 +96,26 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
                       v.media.duration_s ? `${Math.round(v.media.duration_s / 60)} min` : ""].filter(Boolean).join(" · ")}
                     {v.current && data.versions.length > 1 && <span className="ml-2 text-violet-300">v knihovně</span>}
                   </p>
-                  {!!v.media.audio?.length && (
+                  {!!v.media.audio?.length && (can("library.edit") ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-zinc-400">
+                      <span>🔊</span>
+                      {v.media.audio.map((a, i) => (
+                        <span key={i} className="flex items-center gap-1">
+                          <select value={a.lang || ""} title="Jazyk stopy — když nesedí, vyber správný (zapíše se do souboru)"
+                            onChange={(e) => e.target.value && setLang(v.file_path, i, e.target.value)}
+                            className={`rounded border bg-zinc-950 px-1 py-0.5 text-[11px] uppercase ${a.lang ? "border-zinc-700 text-zinc-200" : "border-sky-700 text-sky-300"}`}>
+                            {!a.lang && <option value="">?</option>}
+                            {a.lang && !LANGS.some(([c]) => c === a.lang) && <option value={a.lang}>{a.lang}</option>}
+                            {LANGS.map(([c, l]) => <option key={c} value={c}>{l}</option>)}
+                          </select>
+                          <span>{trackLabel(a)}</span>
+                        </span>
+                      ))}
+                      {langMsg && <span className="text-[11px] text-violet-300">{langMsg}</span>}
+                    </div>
+                  ) : (
                     <p className="mt-0.5 text-zinc-400">🔊 {v.media.audio.map(audioLabel).join(" · ")}</p>
-                  )}
+                  ))}
                   {!!v.media.subtitles?.length && (
                     <p className="mt-0.5 text-zinc-500">💬 v souboru: {v.media.subtitles.map((l) => l.toUpperCase()).join(", ")}</p>
                   )}
