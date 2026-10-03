@@ -60,9 +60,9 @@ async def on_series_found(p: dict) -> None:
     found = [f"{_se(s, e)}{' dabing' if k == 'dub' else ''}" for s, e, k in p.get("found") or []]
     started = [f"{_se(s, e)}{' dabing' if k == 'dub' else ''}" for s, e, k in p.get("downloading") or []]
     if found:
-        await store.add("series", f"Automatika našla: {p.get('title') or '?'}", ", ".join(found) + " — čeká na tebe",
+        await store.add("series", f"Automatika našla: {p.get('title') or '?'}", store._body(found, "čeká na tebe"),
                         level="ok", link=link, permission="search",
                         dedup=f"series:{p.get('tmdb_id')}:{','.join(found)}")
     if started:
-        await store.add("series", f"Automatika stahuje: {p.get('title') or '?'}", ", ".join(started),
+        await store.add("series", f"Automatika stahuje: {p.get('title') or '?'}", store._body(started, ""),
                         link=link, permission="download")

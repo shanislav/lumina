@@ -39,4 +39,4 @@ async def test_the_same_find_is_not_repeated(db):
     assert len((await store.listing(ADMIN))["items"]) == 2
     await handlers.on_series_found({"tmdb_id": 5, "title": "Seriál", "found": [[1, 3, "new"]], "downloading": []})
     items = (await store.listing(VIEWER))["items"]
-    assert items[0]["title"] == "Automatika našla: Seriál" and items[0]["body"] == "S01E03 — čeká na tebe"
+    assert items[0]["title"] == "Automatika našla: Seriál" and items[0]["body"] == "S01E03 · čeká na tebe"
