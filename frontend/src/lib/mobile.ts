@@ -22,7 +22,11 @@ export function useMobile(): { narrow: boolean; pro: boolean; mobile: boolean } 
   const [state, setState] = useState<{ narrow: boolean; pro: boolean; mobile: boolean } | null>(null);
   useEffect(() => {
     const read = () => {
-      const narrow = window.innerWidth < MOBILE_MAX;
+      // a phone also when Chrome shows it the "desktop site" (a 980 px wide page): its real screen is narrow
+      // and touch-only — a small window on a computer is no phone
+      const screenSide = Math.min(window.screen.width, window.screen.height);
+      const touch = window.matchMedia?.("(pointer: coarse)").matches && !window.matchMedia?.("(any-pointer: fine)").matches;
+      const narrow = window.innerWidth < MOBILE_MAX || (touch && screenSide < MOBILE_MAX);
       const pro = readPro();
       setState({ narrow, pro, mobile: narrow && !pro });
     };
