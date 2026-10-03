@@ -27,6 +27,10 @@ async def on_download_completed(p: dict) -> None:
         await store.add("download", f"Staženo, ale není v knihovně: {_name(p)}", "soubor zůstal ve stažených",
                         level="warn", link="/downloads", permission="download")
         return
+    if p.get("review"):
+        await store.add("download", f"Na kontrolu: {_name(p)}", f"stažený soubor sedí jen napůl — {p['review']}",
+                        level="warn", link="/library", permission="download")
+        return
     if tv:
         item = _se(action.get("season"), action.get("episode")) or ("celý balík" if action.get("mode") == "pack" else "")
         await store.add("download", f"V knihovně: {_name(p)}", level="ok", link=link, permission="download",

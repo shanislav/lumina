@@ -605,6 +605,7 @@ async def import_movie(payload: dict) -> None:
         mismatch = length_verdict(media.get("duration_s") or 0, details.get("runtime") or 0)
         if mismatch:
             logger.warning("Imported %s for review: %s", target, mismatch)
+            payload["review"] = mismatch          # the notification tells the user
         candidates = [{
             "tmdb_id": tmdb_id, "title": details["title"], "original_title": details["original_title"],
             "year": details.get("year"), "runtime": details.get("runtime"), "poster_url": details.get("poster_url"),

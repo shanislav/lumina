@@ -40,3 +40,10 @@ async def test_the_same_find_is_not_repeated(db):
     await handlers.on_series_found({"tmdb_id": 5, "title": "Seriál", "found": [[1, 3, "new"]], "downloading": []})
     items = (await store.listing(VIEWER))["items"]
     assert items[0]["title"] == "Automatika našla: Seriál" and items[0]["body"] == "S01E03 · čeká na tebe"
+
+
+async def test_an_import_for_review_warns(db):
+    await handlers.on_download_completed({"tmdb_id": 9, "title": "Film", "year": 2001, "content_type": "movie",
+                                          "imported": True, "review": "délka 33 min, film má 112 min"})
+    item = (await store.listing(ADMIN))["items"][0]
+    assert item["title"] == "Na kontrolu: Film (2001)" and item["level"] == "warn"

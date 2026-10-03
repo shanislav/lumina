@@ -7,7 +7,8 @@ A failing handler is logged and skipped — it must never break other modules.
 Known events:
     download.completed     {download_id, tmdb_id, title, year, content_type, path, library_action}
                            handlers may change "path" (e.g. after renaming/moving the file);
-                           the library sets "imported": True once it took the file over
+                           the library sets "imported": True once it took the file over (and "review": why,
+                           when the file went to the review queue — its length does not fit)
                            (later handlers then leave it alone); "held_by": <module> = that module
                            took the file for more work and emits the event again later
     library.collect_hints  {path, hints: [(tmdb_id, source), ...]}
