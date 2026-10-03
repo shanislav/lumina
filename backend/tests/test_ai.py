@@ -167,3 +167,16 @@ async def test_google_search_not_allowed_asks_without_it_for_the_day(monkeypatch
     await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}], search=True)
     assert len(calls) == 3 and "tools" not in calls[2][1]          # not tried again today
     assert ai.quotas(BOTH)["gemini"]["no_search"]
+
+
+async def test_a_bad_question_does_not_cross_out_the_models(monkeypatch):
+    fake_http(monkeypatch, lambda url, body: Resp(400, text='{"error": {"message": "contents is not specified"}}'))
+    with pytest.raises(ai.AIError):
+        await ai._gemini_ask(BOTH, "sys", [{"role": "user", "content": "q"}], 100, 0.3, False, "gemini-3.7-flash")
+    assert ai.gemini_usage()["out"] == []
+    fake_http(monkeypatch, lambda url, body: Resp(404, text='{"error": {"message": "models/x is not found"}}'))
+    with pytest.raises(ai.AIError):
+        await ai._gemini_ask(BOTH, "sys", [{"role": "user", "content": "q"}], 100, 0.3, False, "gemini-x")
+    assert ai.gemini_usage()["out"] == ["gemini-x"]
+    with pytest.raises(ai.AIError):
+        await ai._gemini_ask(BOTH, "sys", [], 100, 0.3, False, "gemini-3.7-flash")

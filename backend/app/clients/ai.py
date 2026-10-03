@@ -253,6 +253,8 @@ async def _gemini_ask(cfg: dict, system: str, messages: list[dict], max_tokens: 
                       search: bool, model: str = "") -> tuple[str, bool]:
     model = model or cfg.get("gemini_model") or DEFAULT_GEMINI_MODEL
     contents = _gemini_contents(messages)
+    if not contents:
+        raise AIError("Gemini: prázdná otázka")
     body: dict = {"contents": contents,
                   "systemInstruction": {"parts": [{"text": system}]},
                   # thinking models count their thoughts in the output: room for both
@@ -282,7 +284,10 @@ async def _gemini_ask(cfg: dict, system: str, messages: list[dict], max_tokens: 
                         _gemini_note(out=counted)         # the alias and the model behind it share the limit
                 raise LimitError(f"Gemini {model}: překročený limit")
             await asyncio.sleep(retry_after(resp))
-    if resp.status_code in (400, 403, 404):  # "no longer available to new users", not for this key: skip it today
+    # the model is not for this key ("no longer available to new users", not found): skip it today —
+    # never for a bad question (400 without that), it would cross out every model
+    if resp.status_code == 404 or resp.status_code in (400, 403) and re.search(
+            r"(?i)no longer available|not (?:found|supported|available)|permission", resp.text or ""):
         _gemini_note(out=model)
     if resp.status_code >= 400:
         raise AIError(f"Gemini {model} HTTP {resp.status_code}: {(resp.text or '')[:200]}")
