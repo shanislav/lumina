@@ -198,7 +198,7 @@ def season_queries(titles: list[str], season: int) -> tuple[list[str], list[str]
 
 
 async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[int] | None = None,
-                             torrent: bool = True, by_name=None) -> SeasonOffers:
+                             torrent: bool = True, by_name=None, alt: dict | None = None) -> SeasonOffers:
     """``by_name``: file name → the TMDB episode its own episode name is (see ``find_offers``) — a file of
     another uploader's order goes to the episode its name says."""
     prefs = prefs_from_settings(cfg)
@@ -223,11 +223,25 @@ async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[
     if not torrent:
         sources = [s for s in sources if s.source_type.value not in TORRENT_SOURCES]
     ddl, torrent_queries = season_queries(titles, season)
+    # ``alt``: (season, episode) elsewhere → TMDB's episode of this season (a season split elsewhere: S02E01 = E13)
+    alt = alt or {}
+    for other in sorted({k[0] for k in alt}):
+        more_ddl, more_torrent = season_queries(titles, other)
+        ddl += [q for q in more_ddl[:2] if q not in ddl]
+        torrent_queries += [q for q in more_torrent[:1] if q not in torrent_queries]
     results = await search_sources(sources, ddl, torrent_queries)
     known = await cached_details([(r.source_type.value, r.ident) for r in results])
     for r in results:
         info = parse_episode(r.name)
         mine = [e for e in info.episodes if e in numbers] if info.season == season else []
+        other_numbers = None
+        if not mine and info.season != season and info.episodes and alt:
+            mine = [alt[(info.season, e)] for e in info.episodes if (info.season, e) in alt]
+            if not mine:
+                continue
+            other_numbers = {"alt": [[info.season, info.episodes[0]]], "absolute": None}
+        elif info.is_pack and info.season is not None and info.season != season and (info.season, 1) in alt:
+            continue                                   # a pack of the other numbering: its files would land wrong
         hit = by_name(r.name) if by_name and not info.is_pack and len(info.episodes) <= 1 else None
         if hit and hit[1]:
             mine = [hit[0][1]] if hit[0][0] == season and hit[0][1] in numbers else []
@@ -237,6 +251,8 @@ async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[
         episode = {"season": season, "episode": next((e for e in mine if e in wanted), mine[0] if mine else wanted[0])}
         if hit:
             episode["by_name"] = {r.name: [list(hit[0]), hit[1], hit[2]]}
+        if other_numbers:
+            episode["other"] = other_numbers
         ep_ctx = MovieContext(titles=titles, runtime=runtime, episode=episode)
         details = known.get((r.source_type.value, r.ident))
         ev = evaluate(r.name, r.size, ep_ctx, prefs, details, r.duration_s, r.width, r.height)

@@ -122,9 +122,10 @@ async def season_offers(tmdb_id: int, season: int, episodes: str = "") -> dict:
             return {"season": season, "wanted": [], "sets": [], "packs": [], "plan": [], "movie": None}
     try:
         cfg = await get_effective_settings()
-        by_name, _cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, season)
+        by_name, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, season)
+        alt = {tuple(o): e for e in wanted for o in episode_names.other_numbers(cat, season, e)["alt"]} if cat else {}
         offers = await find_season_offers(cfg, tmdb_id, season, wanted, torrent=settings["effective"]["torrent"],
-                                          by_name=by_name)
+                                          by_name=by_name, alt=alt)
     except Exception as e:
         logger.warning("Season offers of %s S%s failed: %s", tmdb_id, season, e)
         raise HTTPException(502, f"Hledání selhalo: {e}")

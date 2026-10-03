@@ -165,7 +165,7 @@ _JUNK = {"cz", "sk", "en", "eng", "cze", "czech", "dab", "dabing", "dabbing", "t
          "hdr", "dv", "upscale", "aiupscale", "proper", "repack", "internal", "komplet", "mkv", "mp4", "avi", "ddp5",
          "dd5", "atmos", "amzn", "nf", "cr", "a", "by", "web-dl", "vostfr", "dub", "subs", "multisubs", "multiaudios",
          "bdrip", "10bit", "8bit"}
-_TOKEN_JUNK = re.compile(r"(?i)^(?:\d{3,4}p|\d{1,2}bit|(?:19|20)\d{2}|5 ?1|[a-z]{2}\+[a-z]{2}(?:\+[a-z]{2})?)$")
+_TOKEN_JUNK = re.compile(r"(?i)^(?:-\S+|repack\d*|proper\d*|\d{3,4}p|\d{1,2}bit|(?:19|20)\d{2}|5 ?1|[a-z]{2}\+[a-z]{2}(?:\+[a-z]{2})?)$")
 
 
 def release_titles(name: str) -> list[str]:
