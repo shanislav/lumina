@@ -85,19 +85,31 @@ async def series_detail(tmdb_id: int, fresh: bool = False) -> dict:
                 ep["name"] = en
     today = date.today()
     mode = settings["effective"]["lang_mode"]
-    seasons = [store.season_view(s, episodes.get(s["season_number"], []), owned, mode, local, today)
+    never = await store.no_dub(tmdb_id)
+    seasons = [store.season_view(s, episodes.get(s["season_number"], []), owned, mode, local, today, never)
                for s in show["seasons"]]
     totals = {k: sum(s["counts"][k] for s in seasons) for k in ("owned", "temp", "unknown", "missing", "upcoming")}
     if episodes.get(0):
         # the specials last, out of the totals (Top Gear has 120 of them — "missing" would mean nothing)
         seasons.append(store.season_view({"season_number": 0, "name": "Speciály", "episode_count": len(episodes[0]),
                                           "air_date": "", "poster_url": None, "specials": True},
-                                         episodes[0], owned, mode, local, today))
+                                         episodes[0], owned, mode, local, today, never))
     profiles = await load_profiles()
     profile = pick_profile(profiles, settings["effective"]["profile_id"], "tv")
     return {"show": show, "settings": settings, "profile": {"id": profile.id, "name": profile.name},
             "seasons": seasons, "totals": totals, "local_langs": local,
             "in_library": bool(owned)}
+
+
+class NoDub(BaseModel):
+    on: bool = True
+
+
+@router.put("/{tmdb_id}/episode/{season}/{episode}/no-dub", dependencies=[Depends(require("library.edit"))])
+async def episode_no_dub(tmdb_id: int, season: int, episode: int, body: NoDub) -> dict:
+    """The user knows the episode never got a dub (South Park S14E05–06): it waits for none."""
+    await store.set_no_dub(tmdb_id, season, episode, body.on)
+    return {"ok": True}
 
 
 class SettingsBody(BaseModel):

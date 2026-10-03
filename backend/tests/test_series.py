@@ -76,3 +76,12 @@ def test_show_is_its_folder_and_tmdb_must_really_match(tmp_path):
     assert _best_show([sgauth], "SGA", None) is None
     atlantis = S(tmdb_id=2290, title="Hvězdná brána: Atlantida", original_title="Stargate Atlantis", year="2004")
     assert _best_show([atlantis], "StarGate Atlantis", None).tmdb_id == 2290
+
+
+def test_an_episode_that_never_got_a_dub_waits_for_none():
+    """South Park S14E05–06: the user marks them — owned, not "waiting for the dub", not in a season plan."""
+    season = {"season_number": 14, "episode_count": 2}
+    eps = [{"episode_number": n, "air_date": "2010-04-14"} for n in (5, 6)]
+    owned = {(14, 5): {"languages": ["en"]}, (14, 6): {"languages": ["en"]}}
+    view = store.season_view(season, eps, owned, "local_or_temp", ["cs", "sk"], TODAY, {(14, 5)})
+    assert [(e["state"], e["no_dub"]) for e in view["episodes"]] == [("owned", True), ("temp", False)]

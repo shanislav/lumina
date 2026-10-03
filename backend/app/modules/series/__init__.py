@@ -8,12 +8,12 @@ owned episodes (library_episodes), which this module reads.
 
 from app.core.module import Module
 from app.modules.series.router import router
-from app.modules.series.store import SERIES_SETTINGS
+from app.modules.series.store import SERIES_NO_DUB, SERIES_SETTINGS
 
 module = Module(
     name="series",
     title="Seriály",
     order=27,
     routers=[router],
-    migrations=[SERIES_SETTINGS],
+    migrations=[SERIES_SETTINGS, SERIES_NO_DUB],
 )

@@ -29,6 +29,17 @@ CREATE TABLE IF NOT EXISTS series_settings (
 );
 """
 
+# episodes the user knows never got a dub (South Park S14E05–06): not "waiting for the dub", not searched
+SERIES_NO_DUB = """
+CREATE TABLE IF NOT EXISTS series_no_dub (
+    tmdb_id INTEGER NOT NULL,
+    season INTEGER NOT NULL,
+    episode INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (tmdb_id, season, episode)
+);
+"""
+
 LANG_MODES = ("local_or_temp", "local_only", "original")
 DEFAULTS = {"profile_id": None, "lang_mode": "local_or_temp", "torrent": True, "monitor": False}
 FIELDS = ("profile_id", "lang_mode", "torrent", "monitor")
@@ -128,9 +139,38 @@ async def owned_episodes(tmdb_id: int) -> dict[tuple[int, int], dict]:
                                           "languages": languages_of(r["language"])} for r in rows}
 
 
-def episode_state(ep: dict, owned: dict | None, lang_mode: str, local_langs: list[str], today: date) -> str:
+async def no_dub(tmdb_id: int) -> set[tuple[int, int]]:
+    db = await get_db()
+    try:
+        rows = await (await db.execute("SELECT season, episode FROM series_no_dub WHERE tmdb_id = ?", (tmdb_id,))).fetchall()
+    except Exception:  # noqa: BLE001 — before the migration
+        rows = []
+    finally:
+        await db.close()
+    return {(r[0], r[1]) for r in rows}
+
+
+async def set_no_dub(tmdb_id: int, season: int, episode: int, on: bool) -> None:
+    db = await get_db()
+    try:
+        if on:
+            await db.execute("INSERT OR IGNORE INTO series_no_dub (tmdb_id, season, episode) VALUES (?, ?, ?)",
+                             (tmdb_id, season, episode))
+        else:
+            await db.execute("DELETE FROM series_no_dub WHERE tmdb_id = ? AND season = ? AND episode = ?",
+                             (tmdb_id, season, episode))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+def episode_state(ep: dict, owned: dict | None, lang_mode: str, local_langs: list[str], today: date,
+                  dub_never: bool = False) -> str:
     """owned | temp (owned, but not in CZ/SK — waits for the dub) | unknown (owned, its sound's language not
-    known — the tracks say nothing) | missing | upcoming."""
+    known — the tracks say nothing) | missing | upcoming. ``dub_never``: the user knows it never got a dub —
+    what is owned is all there is."""
+    if owned and dub_never:
+        return "owned"
     if owned:
         langs = owned.get("languages") or []
         if lang_mode != "original" and not langs:
@@ -145,16 +185,17 @@ def episode_state(ep: dict, owned: dict | None, lang_mode: str, local_langs: lis
 
 
 def season_view(season: dict, episodes: list[dict], owned: dict, lang_mode: str, local_langs: list[str],
-                today: date) -> dict:
+                today: date, never: set[tuple[int, int]] = frozenset()) -> dict:
     n = season["season_number"]
     out, counts = [], {"owned": 0, "temp": 0, "unknown": 0, "missing": 0, "upcoming": 0}
     for ep in episodes:
         have = owned.get((n, ep["episode_number"]))
-        state = episode_state(ep, have, lang_mode, local_langs, today)
+        dub_never = (n, ep["episode_number"]) in never
+        state = episode_state(ep, have, lang_mode, local_langs, today, dub_never)
         counts[state] += 1
         out.append({"episode": ep["episode_number"], "name": ep.get("name") or "", "air_date": ep.get("air_date") or "",
                     "runtime": ep.get("runtime") or 0, "overview": ep.get("overview") or "",
-                    "state": state, "file": have})
+                    "state": state, "file": have, "no_dub": dub_never})
     # files of episodes TMDB does not list (specials numbered differently, a different order)
     known = {e["episode_number"] for e in episodes}
     extra = [{"episode": e, "name": "", "air_date": "", "runtime": 0, "overview": "", "state": "owned", "file": f}

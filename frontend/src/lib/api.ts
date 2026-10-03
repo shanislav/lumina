@@ -1602,6 +1602,7 @@ export interface SeriesEpisode {
   air_date: string;
   runtime: number;
   overview: string;
+  no_dub?: boolean;         // the user marked it: a dub was never made
   state: "owned" | "temp" | "unknown" | "missing" | "upcoming";
   file: SeriesEpisodeFile | null;
 }
@@ -1935,6 +1936,13 @@ export async function setAudioLanguage(ids: number[], lang: string, track?: numb
     throw new Error(body.detail || `Uložení selhalo: ${res.status}`);
   }
   return res.json();
+}
+
+export async function setNoDub(tmdbId: number, season: number, episode: number, on: boolean): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/series/${tmdbId}/episode/${season}/${episode}/no-dub`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }),
+  });
+  if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
 }
 
 export async function setEpisodeOverride(file: string, season: number | null, episode: number | null, note = ""): Promise<void> {
