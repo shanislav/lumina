@@ -294,3 +294,11 @@ def test_a_name_that_fits_many_episodes_decides_nothing():
     by_name = {name: [list(hit[0]), hit[1], hit[2]]} if hit else {}
     ctx = MovieContext(titles=["Top Gear"], runtime=60, episode={"season": 0, "episode": 12, "by_name": by_name})
     assert evaluate(name, 1, ctx, prefs_from_settings({}))["film"] == "no"
+
+
+def test_a_one_season_pack_without_seasons_in_its_files():
+    """"Chalupáři S01 (1975)(CZ)" holds "Chalupari/01 - Chudak dedecek.avi": the pack's season."""
+    files = [{"index": 0, "name": "Chalupari/01 - Chudak dedecek.avi"}, {"index": 1, "name": "Chalupari/02 - Kapr.avi"},
+             {"index": 2, "name": "Chalupari/03 - Operace.avi"}]
+    assert imports.pack_skip(files, {(1, 1), (1, 2)}) == []             # no season known: nothing skipped
+    assert imports.pack_skip(files, {(1, 1), (1, 2)}, pack_season=1) == [0, 1]

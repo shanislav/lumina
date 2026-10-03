@@ -164,11 +164,15 @@ async def pack_download(tmdb_id: int, body: PackDownload) -> dict:
     row = body.row
     if not row.get("ident"):
         raise HTTPException(400, "Chybí soubor")
+    held = row.get("seasons") or []
+    numbers = [s["season_number"] for s in show.get("seasons", [])]
+    pack_season = held[0] if len(held) == 1 else numbers[0] if len(numbers) == 1 else None
     payload = await events.emit("download.request", {
         "file_ident": row["ident"], "source": row["source"], "source_id": row.get("source_id") or 0,
         "magnet_url": row.get("magnet_url"), "content_type": "tv", "tmdb_id": tmdb_id,
         "title": show.get("title") or "", "year": show.get("year") or 0, "file_name": row.get("name") or "",
-        "library_action": {"mode": "pack", "replace_owned": body.replace_owned},
+        # the pack's one season: files named only "01 - Name" inside it ("Chalupáři S01")
+        "library_action": {"mode": "pack", "replace_owned": body.replace_owned, "pack_season": pack_season},
         "requested_by": "series",
     })
     if payload.get("error"):

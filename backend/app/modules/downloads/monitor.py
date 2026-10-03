@@ -117,7 +117,7 @@ async def _monitor_loop():
                                         owned = {(r[0], r[1]) for r in cur.execute(
                                             "SELECT season, episode FROM library_episodes WHERE show_tmdb_id = ? AND has_file = 1",
                                             (tmdb_id,)).fetchall()}
-                                        skip = pack_skip(files, owned)
+                                        skip = pack_skip(files, owned, intent.get("pack_season"))
                                         await qbt.set_file_priority(did, skip, 0)
                                         intent.update(files_chosen=True, skipped=len(skip))
                                         cur.execute("UPDATE download_tracker SET intent = ? WHERE id = ?", (json.dumps(intent), did))

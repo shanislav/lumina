@@ -326,9 +326,11 @@ _FOLDER_SEASON = re.compile(r"(?i)(?<![a-z0-9])(?:season|s[ée]rie|serija|sezona
 _LEADING = re.compile(r"^\s*(?:e|ep|díl|dil)?\s*(\d{1,3})(?!\d)[ ._-]")
 
 
-def _in_pack(path: str, season: int | None, episodes: list[int]) -> tuple[int | None, list[int]]:
+def _in_pack(path: str, season: int | None, episodes: list[int], pack_season: int | None = None
+             ) -> tuple[int | None, list[int]]:
     """A file of a whole-show pack: the season also from its folders ("South Park/Season 03/05 - Name.avi",
-    "Série 3/"), the episode also from a leading number."""
+    "Série 3/"), else the pack's one season ("Chalupáři S01" holding "Chalupari/01 - Chudak dedecek.avi");
+    the episode also from a leading number."""
     if season is None:
         from app.modules.downloads.monitor import SEEDING_DIR
         parts = [p for p in os.path.dirname(path).split(os.sep)
@@ -338,13 +340,15 @@ def _in_pack(path: str, season: int | None, episodes: list[int]) -> tuple[int | 
             if m:
                 season = int(m.group(1) or m.group(2))
                 break
+    if season is None:
+        season = pack_season
     if season is not None and not episodes:
         m = _LEADING.match(os.path.splitext(os.path.basename(path))[0])
         episodes = [int(m.group(1))] if m else []
     return season, episodes
 
 
-def pack_episodes(path: str) -> tuple[int | None, list[int]]:
+def pack_episodes(path: str, pack_season: int | None = None) -> tuple[int | None, list[int]]:
     """(season, episodes) of a file of a whole-show pack — its name, else its folders and a leading number."""
     from app.core.episode_match import parse_episode
 
@@ -353,10 +357,10 @@ def pack_episodes(path: str) -> tuple[int | None, list[int]]:
     if season is None:
         m = _SEASON.search(os.path.basename(path))
         season = int(m.group(1) or m.group(2)) if m else None
-    return _in_pack(path, season, list(info.episodes))
+    return _in_pack(path, season, list(info.episodes), pack_season)
 
 
-def pack_skip(files: list[dict], owned: set[tuple[int, int]]) -> list[int]:
+def pack_skip(files: list[dict], owned: set[tuple[int, int]], pack_season: int | None = None) -> list[int]:
     """Indexes of a pack's files not to download: videos of episodes the user has (all of the file's episodes),
     with their subtitles. files: qBittorrent's [{index, name}]."""
     skip, stems = [], set()
@@ -364,7 +368,7 @@ def pack_skip(files: list[dict], owned: set[tuple[int, int]]) -> list[int]:
         name = f["name"].replace("\\", "/")
         if os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
             continue
-        season, episodes = pack_episodes(name.replace("/", os.sep))
+        season, episodes = pack_episodes(name.replace("/", os.sep), pack_season)
         if season is not None and episodes and all((season, e) in owned for e in episodes):
             skip.append(f["index"])
             stems.add(os.path.splitext(name)[0])
@@ -446,7 +450,7 @@ async def import_episode(payload: dict) -> None:
                 season = int(m.group(1) or m.group(2)) if m else None
             pack = action.get("mode") == "pack"
             if pack:
-                season, episodes = _in_pack(path, season, episodes)
+                season, episodes = _in_pack(path, season, episodes, _int(action.get("pack_season")))
                 if season is None or not episodes:
                     logger.info("%s: no episode (a film, an extra) — left in downloads", path)
                     continue
