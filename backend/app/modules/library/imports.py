@@ -37,6 +37,7 @@ from app.core.mediainfo import probe_async
 from app.db import get_automation, get_db
 from app.core.release_name import SUBTITLE_EXTS, VIDEO_EXTS
 from app.core import events
+from app.modules.library import episode_names, tv_inventory
 from app.modules.library.notify import emit_movie_updated
 from app.modules.library.organize import _ensure_dir, naming_settings
 
@@ -303,6 +304,30 @@ async def _tv_names(db, tmdb_id: int, title: str, year: str) -> dict | None:
             "titles": titles}
 
 
+def _which_episode(name: str, season: int | None, episodes: list[int], cat: dict, action: dict
+                   ) -> tuple[int | None, list[int], str]:
+    """(season, episodes, why) of a downloaded file: its own episode name when it surely is a TMDB episode
+    (uploaders number by another order — "S01E02 - Sopka" is TMDB's S01E03), else the episode the user
+    picked it for (a single download, ``action``), else its numbers."""
+    if len(episodes) <= 1 and cat:
+        hit = episode_names.release_episode(name, cat, season if season is not None else _int(action.get("season")))
+        if hit and hit[1]:
+            (s, e), _sure, title = hit
+            return s, [e], f"staženo jako „{name}“ — podle názvu dílu „{title}“"
+    if action.get("mode") == "episode" and action.get("episode") and len(episodes) <= 1:
+        want = (int(action["season"]), [int(action["episode"])])
+        if want != (season, episodes):
+            return *want, f"staženo jako „{name}“ pro S{want[0]:02d}E{want[1][0]:02d}"
+    return season, episodes, ""
+
+
+def _int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 async def import_episode(payload: dict) -> None:
     """Episodes into the show's folder (the one it has in the library, else "{show} ({year})"), each
     season into its folder (the existing one, else "Season NN"), names kept (Plex reads SxxEyy).
@@ -342,8 +367,12 @@ async def import_episode(payload: dict) -> None:
             show_root = os.path.join(root, *folder_rel.split("/"))
         show_root = show_root or os.path.join(root, naming.sanitize(f"{title} ({year})" if year else title))
         owned = {(r["season"], r["episode"]): r["file_path"] for r in rows}
+        cat = {}
+        if tmdb_id:
+            _check, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, None)
+        extras = payload.get("extra_paths") or []
         targets = []
-        for path in [src, *(payload.get("extra_paths") or [])]:
+        for path in [src, *extras]:
             info = parse_episode(os.path.basename(path))
             season = info.season
             episodes = list(info.episodes)
@@ -353,6 +382,9 @@ async def import_episode(payload: dict) -> None:
             if season is None:
                 m = _SEASON.search(os.path.basename(path))
                 season = int(m.group(1) or m.group(2)) if m else None
+            file_numbers = (season, list(episodes))
+            season, episodes, why = _which_episode(os.path.basename(path), season, episodes, cat,
+                                                   action if path == src and not extras else {})
             if path != src and season and episodes and not action.get("replace_owned", True)                     and all((season, ep) in owned for ep in episodes):
                 logger.info("%s: S%02dE%02d is owned already — left in downloads", path, season, episodes[0])
                 continue
@@ -374,12 +406,18 @@ async def import_episode(payload: dict) -> None:
             if not (tmdb_id and season and episodes):
                 logger.info("Imported %s (episode unknown — not in the library list)", target)
                 continue
-            if action.get("replace") or (path != src and action.get("replace_owned")):
+            picked = (_int(action.get("season")), [_int(action.get("episode"))]) if action.get("episode") else None
+            # "replace" was for the episode the user picked: a file that turned out another one replaces nothing
+            if (action.get("replace") and path == src and picked in (None, (season, episodes)))                     or (path != src and action.get("replace_owned")):
                 for ep in episodes:
                     old = owned.get((season, ep))
                     if old and old != target and os.path.exists(old):
                         deleted = _delete_version(old, target)
                         logger.info("Replaced S%02dE%02d: deleted %s", season, ep, deleted)
+            if (season, episodes) != file_numbers and len(episodes) == 1:
+                # the file's name keeps saying another number: the user's word (as the TV renamer's) holds it
+                await tv_inventory.set_episode_override(db, target, season, episodes[0], why)
+                logger.info("%s: S%02dE%02d — %s", os.path.basename(path), season, episodes[0], why)
             media = media if media is not None else await probe_async(target)
             stat = os.stat(target)
             # the TV renamer reads MediaInfo from here (no second probe on the next scan)

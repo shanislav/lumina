@@ -439,6 +439,16 @@ export default function FileTable({
                         ✓ tento soubor už máš
                       </span>
                     )}
+                    {file.name_ok === true && (
+                      <span title={(file.film_reasons ?? []).join(", ")} className="rounded bg-emerald-900/50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                        ✓ název dílu sedí
+                      </span>
+                    )}
+                    {file.name_ok === false && (
+                      <span title="Uploader čísluje jinak — název dílu v souboru patří jinému dílu" className="rounded bg-red-950/70 px-1.5 py-0.5 text-[10px] font-medium text-red-300">
+                        {(file.film_reasons ?? [])[0] ?? "jiný díl podle názvu"}
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td className="py-2 px-3 whitespace-nowrap">

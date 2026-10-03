@@ -96,7 +96,8 @@ def torrent_query_list(query: str, en_title: str = "", original_title: str = "")
     return out[:2]
 
 
-def episode_queries(titles: list[str], season: int, episode: int) -> tuple[list[str], list[str]]:
+def episode_queries(titles: list[str], season: int, episode: int, episode_names: list[str] = ()
+                    ) -> tuple[list[str], list[str]]:
     """(DDL queries, torrent queries) for one episode. Uploaders name episodes "Show S01E03" (sometimes
     "Show 1x03") after the local or the English name; torrent trackers also have the whole season
     ("Show S01") — a pack holds the episode too."""
@@ -106,6 +107,8 @@ def episode_queries(titles: list[str], season: int, episode: int) -> tuple[list[
         return [], []
     se = f"S{season:02d}E{episode:02d}"
     ddl = [f"{n} {se}" for n in names] + [f"{names[0]} {season}x{episode:02d}"]
+    # by the episode's name too: an uploader of another order numbers it otherwise ("S01E02 - Sopka" is S01E03)
+    ddl[2:2] = [f"{names[0]} {t}" for t in list(dict.fromkeys(episode_names))[:2]]
     latin = next((n for n in names if n.isascii() and re.search(r"[A-Za-z]", n)), names[0])
     # Czech trackers name packs "Show (komplet,720p,CZ)", "Show 1. - S03" — "Show S02" finds nothing there
     return ddl[:MAX_DDL_QUERIES], [f"{latin} {se}", f"{latin} S{season:02d}", latin]
@@ -193,9 +196,12 @@ async def search_sources(sources, ddl: list[str], torrent_queries: list[str]) ->
 
 async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_id: int | None = None,
                       media_type: str = "movie", use_ai: bool = True, wikidata_id: str | None = None,
-                      season: int | None = None, episode: int | None = None, torrent: bool = True) -> Offers:
+                      season: int | None = None, episode: int | None = None, torrent: bool = True,
+                      by_name=None, episode_names: list[str] | None = None) -> Offers:
     """All files of a film on all sources, judged by rules (+ AI for unclear ones).
-    A TV show with season + episode: the files of that episode (and packs that hold it)."""
+    A TV show with season + episode: the files of that episode (and packs that hold it); ``by_name`` checks
+    a file's own episode name against TMDB's (``evaluate.judge_episode_name``), ``episode_names`` (the
+    episode's names) are searched for too — a file of another number with the episode's name."""
     sources = SourceRegistry.get().sources
     if media_type == "movie" and cfg.get("movies_torrent") == "false":
         torrent = False      # switched off for films in Settings
@@ -275,7 +281,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     # torrent indexers at most two: Prowlarr asks its trackers one query after another (~1.5 s each),
     # a year in the query only narrows what the plain title finds, the film check sorts the rest out
     if ctx.episode:
-        ddl, torrent_queries = episode_queries(ctx.titles, season, episode)
+        ddl, torrent_queries = episode_queries(ctx.titles, season, episode, episode_names or [])
     else:
         ddl = ddl_queries(query, original_title, en_title, local_titles, ctx.year)
         torrent_queries = torrent_query_list(query, en_title, original_title)
@@ -286,6 +292,9 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
 
     # Rules first (names, years, durations, quality, languages) — with details already cached
     # for these files, so a repeated search is verified straight away.
+    if ctx.episode and by_name:
+        hits = {r.name: by_name(r.name) for r in all_results}
+        ctx.episode["by_name"] = {n: [list(h[0]), h[1], h[2]] for n, h in hits.items() if h}
     known = await cached_details([(r.source_type.value, r.ident) for r in all_results])
     rows: list[dict] = []
     for r in all_results:

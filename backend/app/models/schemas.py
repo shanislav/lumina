@@ -66,6 +66,7 @@ class ScoredFile(BaseModel):
     # evaluation (app/core/offers/evaluate.py)
     film: str = "unsure"                 # yes | unsure | length | no
     film_reasons: list[str] = []
+    name_ok: bool | None = None          # TV: the file's own episode name is (not) the wanted episode's
     quality_score: int = 0
     quality_summary: str = ""
     quality_parts: list[list] = []

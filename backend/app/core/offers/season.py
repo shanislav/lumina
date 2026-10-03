@@ -172,8 +172,10 @@ async def _verify_samples(out: SeasonOffers, titles: list[str], runtime: int) ->
             continue
         for f in st["episodes"].values():
             mine = details if f is sample else {**details, "bitrate": 0, "duration_s": 0}   # sizes differ
-            ctx = MovieContext(titles=titles, runtime=runtime, episode={"season": out.season,
-                               "episode": (f.get("episodes") or out.episodes)[0]})
+            episode = {"season": out.season, "episode": (f.get("episodes") or out.episodes)[0]}
+            if f.get("name_hit"):
+                episode["by_name"] = {f["name"]: f["name_hit"]}
+            ctx = MovieContext(titles=titles, runtime=runtime, episode=episode)
             ev = evaluate(f["name"], f["size"], ctx, out.prefs, mine)
             f.update({**ev, "verified": f is sample, "sampled": True,
                       "quality": ev["resolution"] or f.get("quality") or "unknown"})
@@ -196,7 +198,9 @@ def season_queries(titles: list[str], season: int) -> tuple[list[str], list[str]
 
 
 async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[int] | None = None,
-                             torrent: bool = True) -> SeasonOffers:
+                             torrent: bool = True, by_name=None) -> SeasonOffers:
+    """``by_name``: file name → the TMDB episode its own episode name is (see ``find_offers``) — a file of
+    another uploader's order goes to the episode its name says."""
     prefs = prefs_from_settings(cfg)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
@@ -224,18 +228,24 @@ async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[
     for r in results:
         info = parse_episode(r.name)
         mine = [e for e in info.episodes if e in numbers] if info.season == season else []
+        hit = by_name(r.name) if by_name and not info.is_pack and len(info.episodes) <= 1 else None
+        if hit and hit[1]:
+            mine = [hit[0][1]] if hit[0][0] == season and hit[0][1] in numbers else []
         if not mine and not info.is_pack:
             continue
         # judged as the first wanted episode it holds (a pack: as the first wanted one)
-        ep_ctx = MovieContext(titles=titles, runtime=runtime,
-                              episode={"season": season, "episode": next((e for e in mine if e in wanted), mine[0] if mine else wanted[0])})
+        episode = {"season": season, "episode": next((e for e in mine if e in wanted), mine[0] if mine else wanted[0])}
+        if hit:
+            episode["by_name"] = {r.name: [list(hit[0]), hit[1], hit[2]]}
+        ep_ctx = MovieContext(titles=titles, runtime=runtime, episode=episode)
         details = known.get((r.source_type.value, r.ident))
         ev = evaluate(r.name, r.size, ep_ctx, prefs, details, r.duration_s, r.width, r.height)
         if ev["film"] == "no":
             continue
         out.rows.append({"ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
                          "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders,
-                         "quality": ev["resolution"] or "unknown", "relevance_score": 0, "episodes": mine, **ev})
+                         "quality": ev["resolution"] or "unknown", "relevance_score": 0, "episodes": mine, **ev,
+                         **({"name_hit": episode["by_name"][r.name]} if hit else {})})
     out.sets = group_sets(out.rows, season, wanted, runtime)
     if await _verify_samples(out, titles, runtime):
         out.sets = group_sets(out.rows, season, wanted, runtime)

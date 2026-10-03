@@ -14,6 +14,7 @@ from app.core.profiles import block, get_profile, suitable
 from app.core.quality import prefs_from_settings
 from app.models.schemas import TMDBMovie, ScoredFile
 from pydantic import BaseModel
+from app.core import naming
 from app.core.auth import require
 
 logger = logging.getLogger(__name__)
@@ -205,6 +206,18 @@ async def discover_popular(language: str | None = None) -> list[TMDBMovie]:
         await client.close()
 
 
+async def episode_name_check(cfg: dict, tmdb_id: int | None, season: int | None, episode: int | None):
+    """(file name → the TMDB episode its own episode name is, the wanted episode's names) for an episode
+    search — uploaders number by another order, the name tells (library/episode_names)."""
+    if not (tmdb_id and season is not None and episode):
+        return None, []
+    from app.modules.library import episode_names
+
+    by_name, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, season)
+    entry = cat.get((season, episode)) or {}
+    return by_name, [t for t in (entry.get("cs"), entry.get("en")) if t and naming.episode_title(t)]
+
+
 class SearchFilesResponse(BaseModel):
     movie: dict
     prefer_local_audio: bool
@@ -226,9 +239,10 @@ async def search_files(
     """All files of a film on all sources, judged (app/core/offers). A TV show with season + episode:
     the files of that episode."""
     cfg = await get_effective_settings()
+    by_name, names = await episode_name_check(cfg, tmdb_id, season, episode) if media_type == "tv" else (None, [])
     offers = await find_offers(cfg, query, original_title=original_title or "", tmdb_id=tmdb_id,
                                media_type=media_type or "movie", wikidata_id=wikidata_id,
-                               season=season, episode=episode, torrent=torrent)
+                               season=season, episode=episode, torrent=torrent, by_name=by_name, episode_names=names)
     return SearchFilesResponse(movie=offers.movie.as_dict(), prefer_local_audio=offers.prefs.prefer_local_audio,
                                files=[ScoredFile(**row) for row in offers.rows])
 

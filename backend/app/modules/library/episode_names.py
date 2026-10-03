@@ -157,5 +157,83 @@ def own_titles(files: list[tuple[str, str]], title_of) -> dict[str, str]:
     return out
 
 
+_SE_AT = re.compile(r"(?i)\bs\d{1,2}\s?e\d{1,3}(?:\s?-?\s?e\d{1,3})*|\b\d{1,2}x\d{2,3}\b")
+_TAGS = re.compile(r"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}")
+_JUNK = {"cz", "sk", "en", "eng", "cze", "czech", "dab", "dabing", "dabbing", "tit", "titulky", "multi", "aac", "ac3",
+         "dts", "xvid", "divx", "dvd", "dvdrip", "bdrip", "brrip", "bluray", "webrip", "web", "dl", "webdl", "hdtv",
+         "hevc", "avc", "x264", "x265", "h264", "h265", "fullhd", "full", "hd", "fhd", "uhd", "sd", "sdtv", "remux",
+         "hdr", "dv", "upscale", "aiupscale", "proper", "repack", "internal", "komplet", "mkv", "mp4", "avi", "ddp5",
+         "dd5", "atmos", "amzn", "nf", "cr", "a", "by", "web-dl", "vostfr", "dub", "subs", "multisubs", "multiaudios",
+         "bdrip", "10bit", "8bit"}
+_TOKEN_JUNK = re.compile(r"(?i)^(?:\d{3,4}p|\d{1,2}bit|(?:19|20)\d{2}|5 ?1|[a-z]{2}\+[a-z]{2}(?:\+[a-z]{2})?)$")
+
+
+def release_titles(name: str) -> list[str]:
+    """Episode names a release's file name may carry after its number, cleanest first: "Městečko South Park
+    S01E02-13 1997 CZ dab 1080p - Posilovač 4000.mkv" → ["Posilovač 4000"], "South.Park.S01E02.Posilovac.4000
+    .DVDRip.XviD.CZ.ENG.mkv" → ["Posilovac 4000"]; none for "South Park S01E02 CZ Dabing FullHD+ by lfiq"."""
+    stem = re.sub(r"(?i)\.(mkv|mp4|avi|m4v|ts|wmv)$", "", name or "")
+    stem = _TAGS.sub(" ", stem).replace("_", " ").replace("+", " + ")
+    stem = re.sub(r"(?<=\w)\.(?=\w)", " ", stem)
+    m = _SE_AT.search(stem)
+    if not m:
+        return []
+    after = re.sub(r"^\s*-\s*\d{1,3}\b", "", stem[m.end():])          # "S01E02-13": the 2nd of 13
+    after = re.sub(r"(?<=\S)-[A-Za-z0-9]+\s*$", "", after)             # "x264-AMB3R": the release group
+    out = []
+    for seg in re.split(r"\s+-\s+|\s*\.\s+|^\s*[-.]\s*", after):
+        words, skip = [], False
+        for w in seg.split():
+            if skip:
+                skip = False
+                continue
+            low = w.lower().strip(".,;:!?")
+            if low == "by":
+                skip = True                                            # "by lfiq": the uploader
+                continue
+            if low in _JUNK or _TOKEN_JUNK.match(low) or w == "+":
+                if words:
+                    break                                              # the name ends where the tags begin
+                continue
+            words.append(w)
+        title = " ".join(words).strip(" -.")
+        if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 and title not in out:
+            out.append(title)
+    return out
+
+
+def release_episode(name: str, cat: dict[tuple[int, int], dict], season: int | None
+                    ) -> tuple[tuple[int, int], bool, str] | None:
+    """(the TMDB episode a release's own episode name is, sure, the name) — None without a name TMDB knows."""
+    for title in release_titles(name):
+        key, sure = best(title, cat, season)
+        if key:
+            return key, sure, title
+    return None
+
+
 def czech(text: str) -> bool:
     return bool(re.search(r"[ěščřžýáíéůúťďňĚŠČŘŽÝÁÍÉŮÚŤĎŇ]", text or ""))
+
+
+async def release_checker(tmdb_key: str, tmdb_id: int, season: int | None):
+    """(file name → ``release_episode`` of the show, the catalog) for a search; (None, {}) when TMDB has
+    nothing (the numbers decide alone)."""
+    from app.db import get_db
+
+    client, db = _client(tmdb_key), await get_db()
+    try:
+        cat = await catalog(client, db, tmdb_id)
+    except Exception:  # noqa: BLE001 — TMDB down, no catalog yet
+        cat = {}
+    finally:
+        await client.close()
+        await db.close()
+    if not cat:
+        return None, {}
+    return (lambda name: release_episode(name, cat, season)), cat
+
+
+def _client(tmdb_key: str):
+    from app.clients.tmdb import TMDBClient
+    return TMDBClient(tmdb_key)

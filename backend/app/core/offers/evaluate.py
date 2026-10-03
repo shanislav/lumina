@@ -70,7 +70,7 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
                         ctx.namesakes)
         film, reasons = verdict.status, verdict.reasons
     tier = language_tier(facts, prefs)
-    return {
+    ev = {
         "film": film,
         "film_reasons": reasons,
         "quality_score": q.score,
@@ -90,13 +90,42 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
         "is_dubbed": tier >= 2,
         "pack": pack,               # a TV season / show pack holding the episode, not the episode alone
     }
+    if ctx.episode and ctx.episode.get("by_name"):
+        want = (int(ctx.episode.get("season") or 0), int(ctx.episode.get("episode") or 0))
+        ev = judge_episode_name(ev, want, ctx.episode["by_name"].get(name))
+    return ev
+
+
+def judge_episode_name(ev: dict, want: tuple[int, int], hit) -> dict:
+    """The episode's own name in a release against TMDB's names — ``hit`` [[season, episode], sure, the
+    name] (the library's ``episode_names.release_episode``, kept in ``MovieContext.episode["by_name"]`` per
+    file name, so a re-evaluation with verified details judges the same): uploaders number by another order
+    ("Městečko South Park - S01E02 - Sopka" is TMDB's S01E03), the name is mostly right. A name of the wanted
+    episode makes a file of another number right; a name surely of another episode makes it wrong.
+    Packs and other shows stay as judged."""
+    if not hit or ev.get("pack") or "jiný seriál" in (ev.get("film_reasons") or []):
+        return ev
+    (s, e), sure, title = hit
+    key = (int(s), int(e))
+    if key == want:
+        ev["name_ok"] = True
+        if ev["film"] == "no":
+            ev["film"], ev["film_reasons"] = "yes", [f"podle názvu dílu „{title}“ (číslo v souboru je jiné)"]
+        else:
+            ev["film_reasons"] = [*ev["film_reasons"], f"název dílu sedí („{title}“)"]
+    elif sure:
+        ev["name_ok"] = False
+        ev["film"], ev["film_reasons"] = "no", [f"podle názvu jiný díl: „{title}“ = S{key[0]:02d}E{key[1]:02d}"]
+    return ev
 
 
 def recommended_key(row: dict, prefs: Prefs) -> tuple:
-    """Right film first → wanted language (if preferred) → quality → smaller file."""
+    """Right film first → wanted language (if preferred) → an episode whose own name says it is the one →
+    quality → smaller file."""
     return (
         FILM_ORDER.get(row.get("film"), 1),
         -(row.get("lang_tier", 0) if prefs.prefer_local_audio else 0),
+        -int(bool(row.get("name_ok"))),
         -row.get("quality_score", 0),
         row.get("size", 0),
     )

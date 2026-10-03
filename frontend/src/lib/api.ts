@@ -117,6 +117,7 @@ export interface ScoredFile {
   // evaluation (backend app/modules/search/evaluate.py)
   film: "yes" | "unsure" | "length" | "no";
   film_reasons: string[];
+  name_ok?: boolean;        // TV: the episode's own name in the file is (true) / is not (false) the wanted one
   quality_score: number;
   quality_summary: string;
   quality_parts: [string, number][];
