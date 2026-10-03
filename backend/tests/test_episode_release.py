@@ -213,3 +213,49 @@ def test_a_season_split_elsewhere_and_anime_numbers():
     ctx = MovieContext(titles=["Naruto"], runtime=23, episode={"season": 3, "episode": 120,
                                                                "other": {"alt": [], "absolute": 120}})
     assert evaluate("Naruto 120 CZ dabing.avi", 1, ctx, prefs_from_settings({}))["film"] in ("yes", "unsure")
+
+
+async def test_whole_show_packs_by_seasons_or_by_years(monkeypatch):
+    """"Hra o trůny / Game of Thrones (2011–2019)[WebRip][1080p](HEVC)(CZ)" holds the whole show (its years,
+    no seasons); "House of the Dragon" is no pack of "House"; a single episode is no pack."""
+    from types import SimpleNamespace
+    from app.core.offers import season as season_mod
+    from app.sources.base import SearchResult, SourceType
+
+    class FakeTMDB:
+        def __init__(self, key):
+            pass
+
+        async def get_tv_full(self, tmdb_id):
+            return {"title": "Hra o trůny", "original_title": "Game of Thrones", "first_air_date": "2011-04-17",
+                    "titles_by_lang": {"cs": "Hra o trůny", "en": "Game of Thrones"}, "alternative_titles": [],
+                    "episode_runtime": 57, "seasons": [{"season_number": n} for n in range(1, 9)]}
+
+        async def close(self):
+            pass
+
+    names = ["Hra o trůny / Game of Thrones (2011–2019)[WebRip][1080p](HEVC)(CZ)",
+             "Game of Thrones S01-S08 1080p CZ", "House of the Dragon S01-S02 CZ", "Game of Thrones S03E05 CZ",
+             "Hra o trůny 3. série CZ"]
+
+    async def fake_search(sources, ddl, torrent):
+        return [SearchResult(source_id=1, source_type=SourceType("prowlarr"), ident=str(i), name=n, size=10**10,
+                             seeders=5) for i, n in enumerate(names)]
+    monkeypatch.setattr(season_mod, "TMDBClient", FakeTMDB)
+    monkeypatch.setattr(season_mod, "search_sources", fake_search)
+    monkeypatch.setattr(season_mod.SourceRegistry, "get",
+                        classmethod(lambda cls: SimpleNamespace(sources=[SimpleNamespace(source_type=SourceType("prowlarr"))])))
+    out = await season_mod.find_show_packs({"tmdb_api_key": "x"}, 1399)
+    got = {p["name"]: (p["covers"], p["complete"]) for p in out["packs"]}
+    assert got == {names[0]: (8, True), names[1]: (8, False), names[4]: (1, False)}
+
+
+def test_the_season_plan_places_files_by_their_episode():
+    """A file placed on another episode (its episode name, another numbering) is that episode in the plan."""
+    from app.core.offers.season import group_sets
+    rows = [{"name": "Solo.Leveling.S02E01.1080p.WEB.mkv", "size": 1, "source": "webshare", "film": "yes",
+             "episodes": [13], "quality_score": 50},
+            {"name": "Solo.Leveling.S02E02.1080p.WEB.mkv", "size": 1, "source": "webshare", "film": "yes",
+             "episodes": [14], "quality_score": 50}]
+    sets = group_sets(rows, 1, [13, 14], 24)
+    assert sets[0]["covered"] == [13, 14]

@@ -91,7 +91,8 @@ def group_sets(rows: list[dict], season: int, wanted: list[int], runtime: int) -
         for sub, files in parts.items():
             by_episode: dict[int, dict] = {}
             for r in files:
-                for ep in parse_episode(r["name"]).episodes:
+                # the episodes the file was placed on (its name's episode name, another numbering), else its numbers
+                for ep in r.get("episodes") or parse_episode(r["name"]).episodes:
                     have = by_episode.get(ep)
                     # copies of one file on two sources: WebShare first (verified details, one API call)
                     if not have or (r.get("verified"), r["source"] == "webshare", r.get("quality_score", 0)) > \
@@ -295,9 +296,15 @@ async def find_show_packs(cfg: dict, tmdb_id: int) -> dict:
     sources = [s for s in SourceRegistry.get().sources if s.source_type.value in TORRENT_SOURCES]
     results = await search_sources(sources, [], queries)
     runtime = show.get("episode_runtime") or 0
+    first_year = int(str(show.get("first_air_date") or show.get("year") or "0")[:4] or 0)
     packs = []
     for r in results:
         info = parse_episode(r.name)
+        if not info.is_pack and not info.episodes and first_year:
+            # "Hra o trůny / Game of Thrones (2011–2019)[WebRip][1080p]": the show's years, no seasons — all of it
+            years = re.search(r"(?<!\d)((?:19|20)\d{2}) ?[-–] ?((?:19|20)\d{2})(?!\d)", r.name)
+            if years and int(years.group(1)) == first_year and int(years.group(2)) > first_year:
+                info.complete = True
         if not info.is_pack:
             continue
         held = info.seasons or ([info.season] if info.season is not None else [])
