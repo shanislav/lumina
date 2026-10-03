@@ -1973,7 +1973,7 @@ export interface DescribeHit extends TMDBMovie { why: string }
 /** what is left of the Groq key's own limits (admin only): requests today, tokens this minute */
 export interface GroqLeft { requests_left: number | null; requests_limit: number | null; tokens_left: number | null; tokens_limit: number | null }
 /** Gemini sends no "what is left": Lumina counts its calls of Google's day */
-export interface GeminiUsed { calls: number; searches: number; exhausted: boolean }
+export interface GeminiUsed { calls: number; searches: number; exhausted: boolean; no_search?: boolean }
 export interface AiQuotas { groq?: Partial<GroqLeft>; gemini?: GeminiUsed }
 /** left: questions left today, null = not limited (admin); ai: the AIs' own limits (admin only) */
 export interface DescribeStatus { enabled: boolean; left: number | null; daily: number; ai: AiQuotas }

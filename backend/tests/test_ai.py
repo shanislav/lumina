@@ -124,3 +124,16 @@ async def test_describe_gemini_first_groq_when_gemini_fails(monkeypatch):
     monkeypatch.setattr(describe, "ask_groq", groq)
     got = await describe.ask(BOTH, [{"role": "user", "content": "q"}])
     assert got["by"] == "Groq" and got["guesses"][0]["title"] == "Phenomenon"
+
+
+async def test_google_search_not_allowed_asks_without_it_for_the_day(monkeypatch):
+    def answer(url, body):
+        if body.get("tools"):
+            return Resp(429, text='{"error": {"message": "You exceeded your current quota"}}')
+        return gemini_ok("from memory")
+    calls = fake_http(monkeypatch, answer)
+    got = await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}], search=True)
+    assert (got.text, got.provider, got.searched) == ("from memory", "gemini", False) and len(calls) == 2
+    await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}], search=True)
+    assert len(calls) == 3 and "tools" not in calls[2][1]          # not tried again today
+    assert ai.quotas(BOTH)["gemini"]["no_search"]

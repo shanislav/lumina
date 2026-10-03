@@ -4,8 +4,9 @@ Every AI feature asks through ``chat(cfg, feature, …)``: the AIs with a key, i
 (the setting ``ai_<feature>``: auto | groq | gemini). When one fails (a limit, an error) the next one answers.
 
 - Groq (OpenAI-like API): fast, a big daily limit, knows famous titles only.
-- Gemini (Google AI Studio key, a free tier): can search Google while answering (``search=True``) — finds
-  lesser-known films by a scene. Google sends no "what is left" with an answer: Lumina counts its own calls
+- Gemini (Google AI Studio key, a free tier): remembers far more titles than Groq's model; can search Google
+  while answering (``search=True``) where the key allows it (the free tier of newer models does not — then it
+  answers from its memory, and Lumina does not try the search again that day). Google sends no "what is left" with an answer: Lumina counts its own calls
   per Google's day (midnight Pacific time) and stops asking for the day after Google says the limit is out.
 """
 
@@ -55,6 +56,10 @@ class AIError(Exception):
 
 class LimitError(AIError):
     pass
+
+
+class SearchLimitError(LimitError):
+    """Google search is not allowed to the key (the free tier of newer models has none) — ask without it."""
 
 
 @dataclass
@@ -129,7 +134,8 @@ def quotas(cfg: dict) -> dict:
         out["groq"] = {k: q.get(k) for k in keep} if q else {}
     if cfg.get("gemini_api_key"):
         u = gemini_usage()
-        out["gemini"] = {"calls": u["calls"], "searches": u["searches"], "exhausted": u["exhausted"]}
+        out["gemini"] = {"calls": u["calls"], "searches": u["searches"], "exhausted": u["exhausted"],
+                         "no_search": bool(u.get("no_search"))}
     return out
 
 
@@ -203,8 +209,13 @@ async def _gemini_ask(cfg: dict, system: str, messages: list[dict], max_tokens: 
         for attempt in range(2):
             resp = await client.post(url, json=body, headers={"x-goog-api-key": cfg["gemini_api_key"],
                                                               "Content-Type": "application/json"})
+            if resp.status_code == 503 and attempt == 0:      # "high demand" — usually gone in a moment
+                await asyncio.sleep(2)
+                continue
             if resp.status_code != 429:
                 break
+            if search and "PerDay" not in (resp.text or ""):
+                raise SearchLimitError("Gemini: hledání na Googlu není s tímto klíčem dostupné")
             if "PerDay" in (resp.text or "") or attempt == 1 or retry_after(resp) > MAX_WAIT:
                 if "PerDay" in (resp.text or ""):
                     _gemini_note(exhausted=True)          # out for today: the other AI answers until tomorrow
@@ -228,7 +239,14 @@ async def ask(cfg: dict, provider: str, system: str, messages: list[dict], *, ma
               temperature: float = 0.3, search: bool = False) -> Answer:
     """One question to one AI."""
     if provider == "gemini":
-        text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, search)
+        if search and gemini_usage().get("no_search"):
+            search = False                       # Google said no today: do not ask (and wait) again
+        try:
+            text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, search)
+        except SearchLimitError as e:
+            logger.info("%s — asking without it until tomorrow", e)
+            gemini_usage()["no_search"] = True
+            text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, False)
         return Answer(text, "gemini", searched)
     return Answer(await _groq(cfg, system, messages, max_tokens, temperature), "groq")
 

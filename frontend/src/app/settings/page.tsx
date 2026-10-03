@@ -149,10 +149,10 @@ const GENERAL_SECTIONS = [
       { key: "groq_api_key", label: "Groq API Key", type: "password", hint: "Zdarma na console.groq.com — rychlá, velký denní limit" },
       { key: "groq_model", label: "Groq Model", type: "groq_model", hint: "Seznam se načítá z Groq (modely se občas ruší)" },
       { key: "gemini_api_key", label: "Gemini API Key", type: "password",
-        hint: "Zdarma na aistudio.google.com → Get API key (předplatné Gemini Pro klíč nedává). Umí hledat na Googlu — najde i méně známé filmy" },
+        hint: "Zdarma na aistudio.google.com → Get API key (předplatné Gemini Pro klíč nedává). Pamatuje si mnohem víc filmů než Groq — najde i méně známé" },
       { key: "gemini_model", label: "Gemini Model", type: "gemini_model", hint: "Seznam se načítá z Google; „flash“ je rychlý a s větším denním limitem" },
       ...([
-        ["ai_describe", "Hledání podle popisu", "Gemini hledá scénu na Googlu, Groq vybírá z titulů TMDB podle klíčových slov"],
+        ["ai_describe", "Hledání podle popisu", "Gemini zná i méně známé filmy (s placeným klíčem hledá i na Googlu), Groq vybírá z titulů TMDB podle klíčových slov"],
         ["ai_episodes", "Návrh dílů seriálů", "Ptá se dvakrát — s oběma AI jednou každé, shoda dvou AI je jistější"],
         ["ai_scoring", "Hodnocení souborů při hledání", "Mnoho krátkých otázek — Groq je rychlejší"],
       ] as const).map(([key, label, hint]) => ({
