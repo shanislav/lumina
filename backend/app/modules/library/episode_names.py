@@ -183,6 +183,9 @@ def release_titles(name: str) -> list[str]:
     out = []
     for seg in re.split(r"\s+-\s+|\s*\.\s+|^\s*[-.]\s*", after):
         words, skip = [], False
+        first = (seg.split() or [""])[0].lower().strip(".,;:!?")
+        if first in _JUNK or _TOKEN_JUNK.match(first) or re.match(r"(?i)^[xh]\.?26[45]-", first):
+            continue                                                   # a segment of tags ("WEB H264-GHOSTS")
         for w in seg.split():
             if skip:
                 skip = False

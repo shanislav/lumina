@@ -120,3 +120,15 @@ async def test_a_file_without_a_name_is_the_episode_the_user_picked(tmp_path, mo
     with sqlite3.connect(DB_PATH) as conn:
         note = conn.execute("SELECT season, episode, note FROM tv_episode_overrides").fetchone()
     assert note[:2] == (1, 3) and "pro S01E03" in note[2]
+
+
+def test_release_groups_and_longer_show_names():
+    """"Dark.S03E08.1080p.WEB.H264-GHOSTS" is no episode named "Ghosts"; a one-word show ("Dark") inside a
+    longer name is another show — unsure, not yes."""
+    from app.core.episode_match import judge_episode
+    assert episode_names.release_titles("Dark.S03E08.1080p.WEB.H264-GHOSTS CZ Titulky.mkv") == []
+    for other in ("Dark Matter S02E03 (2026) 1080p_cz.tit.mkv", "Into.The.Dark.02x03.DVB-C.CZ.avi",
+                  "Dark Winds S02E03 CzTit.mp4"):
+        assert judge_episode(other, ["Dark"], 2, 3).status == "unsure", other
+    assert judge_episode("Dark (2017) S02E03 CZ dabing 1080p.mkv", ["Dark"], 2, 3).status == "yes"
+    assert judge_episode("Městečko South Park 720p CZ S01E02.mkv", ["Městečko South Park", "South Park"], 1, 2).status == "yes"
