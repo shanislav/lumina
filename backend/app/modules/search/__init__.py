@@ -2,7 +2,8 @@
 
 from app.core.module import Module, Permission
 from app.core.offers.details import SOURCE_FILE_DETAILS
+from app.modules.search.describe import AI_USAGE
 from app.modules.search.router import router
 
-module = Module(name="search", title="Hledání", order=10, routers=[router], migrations=[SOURCE_FILE_DETAILS],
+module = Module(name="search", title="Hledání", order=10, routers=[router], migrations=[SOURCE_FILE_DETAILS, AI_USAGE],
                 permissions=[Permission("search", "Hledat filmy a procházet Objevit", default=True)])

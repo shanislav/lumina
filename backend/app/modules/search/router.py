@@ -353,3 +353,57 @@ async def movie_info(tmdb_id: int = 0, wikidata_id: str = "", title: str = "", y
         out["csfd_url"] = "https://www.csfd.cz/hledat/?" + urlencode({"q": f"{title} {year}".strip()})
     _info_cache[key] = out
     return out
+
+
+class DescribeRequest(BaseModel):
+    talk: list[dict]          # [{role: user|assistant, content}], the newest last
+
+
+@router.get("/search/describe")
+async def describe_status(user=Depends(require("search"))) -> dict:
+    """Is „Neznám název" available (a Groq key), and how many questions are left today."""
+    from app.db import get_db
+    from app.modules.search import describe
+    cfg = await get_effective_settings()
+    if not cfg.get("groq_api_key"):
+        return {"enabled": False, "left": 0, "daily": describe.DAILY_PER_USER}
+    db = await get_db()
+    try:
+        mine, every = await describe.usage(db, user.id)
+    finally:
+        await db.close()
+    return {"enabled": True, "left": describe.left(mine, every), "daily": describe.DAILY_PER_USER}
+
+
+@router.post("/search/describe")
+async def describe_title(body: DescribeRequest, user=Depends(require("search"))) -> dict:
+    """The user's description → Groq's guesses → TMDB titles with why each fits (and a question to narrow
+    them down)."""
+    from fastapi import HTTPException
+    from app.db import get_db
+    from app.modules.search import describe
+    cfg = await get_effective_settings()
+    if not cfg.get("groq_api_key"):
+        raise HTTPException(400, "Groq není nastavený (Nastavení → AI)")
+    if not any(m.get("role") != "assistant" and str(m.get("content") or "").strip() for m in body.talk):
+        raise HTTPException(400, "Popiš film nebo seriál")
+    db = await get_db()
+    try:
+        mine, every = await describe.usage(db, user.id)
+        if describe.left(mine, every) <= 0:
+            raise HTTPException(429, "Dnešní limit AI otázek je vyčerpaný — zítra zase")
+        try:
+            guesses, ask = await describe.ask_groq(cfg, body.talk)
+        except ValueError as e:
+            raise HTTPException(502, str(e))
+        except Exception as e:
+            logger.warning("Describe: Groq failed: %s", e)
+            raise HTTPException(502, "Groq neodpověděl — zkus to za chvíli")
+        await describe.count(db, user.id)
+        left = describe.left(mine + 1, every + 1)
+    finally:
+        await db.close()
+    _, locale = _locale(cfg, None)
+    results = await describe.resolve(cfg, locale, guesses)
+    return {"results": results, "ask": ask, "left": left,
+            "guessed": [f"{g['title']} ({g['year']})" if g["year"] else g["title"] for g in guesses]}

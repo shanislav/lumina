@@ -1960,3 +1960,22 @@ export async function suggestEpisodesAi(folder: string, season: number | null, f
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
   return res.json();
 }
+
+// „Neznám název“ — the user describes a film / show, Groq guesses, TMDB finds them
+export interface DescribeTurn { role: "user" | "assistant"; content: string }
+export interface DescribeHit extends TMDBMovie { why: string }
+export interface DescribeAnswer { results: DescribeHit[]; ask: string; left: number; guessed: string[] }
+
+export async function getDescribeStatus(): Promise<{ enabled: boolean; left: number; daily: number }> {
+  const res = await apiFetch(`${API_BASE}/api/search/describe`);
+  if (!res.ok) return { enabled: false, left: 0, daily: 0 };
+  return res.json();
+}
+
+export async function describeTitle(talk: DescribeTurn[]): Promise<DescribeAnswer> {
+  const res = await apiFetch(`${API_BASE}/api/search/describe`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ talk }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
+}

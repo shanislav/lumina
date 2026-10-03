@@ -3,6 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import SearchBar from "@/components/SearchBar";
+import DescribeSearch from "@/components/DescribeSearch";
 import MovieGrid from "@/components/MovieGrid";
 import FileTable from "@/components/FileTable";
 import DownloadPanel from "@/components/DownloadPanel";
@@ -95,6 +96,7 @@ function HomeContent() {
 
   const [searchLang, setSearchLang] = useState<string | undefined>(undefined);
   const [lastQuery, setLastQuery] = useState("");
+  const [viaDescribe, setViaDescribe] = useState(false);   // picked in „Nevíš název?“: Zpět returns to the talk
 
   // Handle incoming movie from Discover page — go straight to file search
   const handleDiscoverMovie = useCallback(async (movie: TMDBMovie) => {
@@ -154,6 +156,7 @@ function HomeContent() {
   }, [searchParams, ready, handleDiscoverMovie]);
 
   async function handleSearch(query: string, language?: string) {
+    setViaDescribe(false);
     setError(null);
     setMovies([]);
     setFiles([]);
@@ -234,7 +237,12 @@ function HomeContent() {
       </div>
 
       <SearchBar onSearch={handleSearch} loading={moviesLoading}
-        onPick={(m) => { setMovies([]); setLastQuery(m.title); handleSelectMovie(m); }} />
+        onPick={(m) => { setViaDescribe(false); setMovies([]); setLastQuery(m.title); handleSelectMovie(m); }} />
+
+      {/* kept mounted while a picked title is open: „Zpět“ returns to the talk */}
+      <div className={selectedMovie ? "hidden" : "contents"}>
+        <DescribeSearch onPick={(m) => { setViaDescribe(true); setLastQuery(""); handleSelectMovie(m); }} />
+      </div>
 
       {error && (
         <div className="rounded-lg bg-red-900/30 border border-red-800 px-4 py-3 text-red-300 text-sm w-full max-w-2xl">
@@ -264,7 +272,7 @@ function HomeContent() {
             <button
               onClick={() => {
                 // opened from Objevit / Knihovna / Chci (no search results here) → back there
-                if (movies.length === 0 && window.history.length > 1) {
+                if (movies.length === 0 && !viaDescribe && window.history.length > 1) {
                   router.back();
                   return;
                 }
