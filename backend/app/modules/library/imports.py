@@ -438,8 +438,8 @@ async def import_episode(payload: dict) -> None:
             info = parse_episode(os.path.basename(path))
             season = info.season
             episodes = list(info.episodes)
-            if path == src and action.get("season"):
-                season = season or int(action["season"])
+            if path == src and action.get("season") is not None:
+                season = season if season is not None else int(action["season"])
                 episodes = episodes or ([int(action["episode"])] if action.get("episode") else [])
             if season is None:
                 m = _SEASON.search(os.path.basename(path))
@@ -453,7 +453,7 @@ async def import_episode(payload: dict) -> None:
             file_numbers = (season, list(episodes))
             season, episodes, why = _which_episode(os.path.basename(path), season, episodes, cat,
                                                    action if path == src and not extras else {}, [title])
-            if (path != src or pack) and season and episodes and not action.get("replace_owned", True) \
+            if (path != src or pack) and season is not None and episodes and not action.get("replace_owned", True) \
                     and all((season, ep) in owned for ep in episodes):
                 logger.info("%s: S%02dE%02d is owned already — left in downloads", path, season, episodes[0])
                 continue
@@ -472,7 +472,7 @@ async def import_episode(payload: dict) -> None:
             target = _unique_path(os.path.join(folder, name))
             _move_with_subtitles(path, target)
             targets.append(target)
-            if not (tmdb_id and season and episodes):
+            if not (tmdb_id and season is not None and episodes):
                 logger.info("Imported %s (episode unknown — not in the library list)", target)
                 continue
             picked = (_int(action.get("season")), [_int(action.get("episode"))]) if action.get("episode") else None

@@ -77,7 +77,7 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
         if (!live) return;
         const mine: Record<string, EpisodeDownload> = {};
         for (const d of list.downloads) {
-          if (d.tmdb_id === tmdbId && d.content_type === "tv" && d.season && d.episode) mine[`${d.season}:${d.episode}`] = downloadOf(d);
+          if (d.tmdb_id === tmdbId && d.content_type === "tv" && d.season != null && d.episode) mine[`${d.season}:${d.episode}`] = downloadOf(d);
         }
         const now = Object.keys(mine).length;
         if (now < before) load();          // something finished — the episode is in the library now

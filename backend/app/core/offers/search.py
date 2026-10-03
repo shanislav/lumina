@@ -241,7 +241,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
                 ctx.people = full.get("people", [])
                 ctx.other_parts = full.get("other_parts", [])
                 ctx.namesakes = await _namesakes(client, full, ctx.titles)
-            elif season and episode:
+            elif season is not None and episode:
                 show = await client.get_tv_full(tmdb_id)
                 by_lang = show.get("titles_by_lang") or {}
                 en_title = by_lang.get("en", "")
@@ -279,7 +279,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
             local_titles = film["titles"][:2]
     ctx.titles = _unique_names([re.sub(r"\b(19|20)\d{2}\b", "", query).strip(), original_title,
                                 en_title, *ctx.titles])
-    if media_type == "tv" and season and episode:
+    if media_type == "tv" and season is not None and episode:
         ctx.episode = {"season": season, "episode": episode}
         if other_numbers and (other_numbers.get("alt") or other_numbers.get("absolute")):
             ctx.episode["other"] = other_numbers
