@@ -21,6 +21,14 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
   useEffect(() => { getDescribeStatus().then(setStatus).catch(() => {}); }, []);
   useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [entries, busy]);
   useEffect(() => { if (open) input.current?.focus(); }, [open]);
+  // a click outside folds the chat away (the talk stays — opening it again goes on with it)
+  const box = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const fold = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", fold);
+    return () => document.removeEventListener("mousedown", fold);
+  }, [open]);
 
   if (!status?.enabled) return null;
 
@@ -57,14 +65,14 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
     return (
       <button onClick={() => setOpen(true)}
         className="-mt-5 text-sm text-zinc-500 hover:text-violet-300 transition-colors">
-        ✨ Nevíš název? Popiš, o čem to bylo
+        {entries.length ? "✨ Pokračovat v hledání podle popisu" : "✨ Nevíš název? Popiš, o čem to bylo"}
       </button>
     );
   }
 
   const out = status.left <= 0;
   return (
-    <div className="-mt-4 w-full max-w-2xl rounded-xl border border-violet-900/60 bg-zinc-900/70 shadow-lg">
+    <div ref={box} className="-mt-4 w-full max-w-2xl rounded-xl border border-violet-900/60 bg-zinc-900/70 shadow-lg">
       <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2">
         <span className="text-sm font-medium text-violet-300">✨ Najdi podle popisu</span>
         <span className="ml-auto text-[11px] text-zinc-500" title="Groq má denní limity — Lumina hlídá, ať se jich neplýtvá">
