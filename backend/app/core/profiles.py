@@ -143,11 +143,13 @@ def block(row: dict, p: Profile) -> str | None:
 
 
 def suitable(rows: list[dict], p: Profile) -> list[dict]:
-    """Offers of the right film the profile allows, best first: verified ones first (an unverified
-    name can promise too much), then the score. For a TV episode, a whole season pack only when
+    """Offers of the right film the profile allows, best first: sure ones before unsure ones (an episode
+    of an uploader who numbers differently), an episode whose own name confirms it, verified ones (an
+    unverified name can promise too much), then the score. For a TV episode, a whole season pack only when
     there is nothing else."""
     ok = [r for r in rows if r.get("film") in ("yes", "unsure") and block(r, p) is None]
-    return sorted(ok, key=lambda r: (bool(r.get("pack")), not r.get("verified"), -(r.get("quality_score") or 0)))
+    return sorted(ok, key=lambda r: (bool(r.get("pack")), r.get("film") != "yes", not r.get("name_ok"),
+                                     not r.get("verified"), -(r.get("quality_score") or 0)))
 
 
 def reached_cutoff(owned: dict, p: Profile) -> bool:
