@@ -229,6 +229,9 @@ def release_episode(name: str, cat: dict[tuple[int, int], dict], season: int | N
     unsure = None
     for title in release_titles(name, show_names):
         key, sure = best(title, cat, season)
+        if key and sure and len(tv_inventory.normalized(title).split()) == 1 \
+                and tv_inventory.normalized(title) not in {tv_inventory.normalized(t) for t in _names(cat[key])}:
+            sure = False                 # one word ("speciál") inside a longer name ("Vietnamský speciál"): any
         if key and sure:
             return key, True, title
         if key and not unsure:

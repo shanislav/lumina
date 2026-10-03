@@ -302,3 +302,11 @@ def test_a_one_season_pack_without_seasons_in_its_files():
              {"index": 2, "name": "Chalupari/03 - Operace.avi"}]
     assert imports.pack_skip(files, {(1, 1), (1, 2)}) == []             # no season known: nothing skipped
     assert imports.pack_skip(files, {(1, 1), (1, 2)}, pack_season=1) == [0, 1]
+
+
+def test_one_word_of_a_longer_name_is_not_sure():
+    """"Top Gear speciál. Když se nedaří VII" for S12E08 "Vietnamský speciál" (the only special of S12)."""
+    cat = {(12, 8): {"cs": "Vietnamský speciál", "en": "Vietnam Special"}, (12, 1): {"cs": "1. epizoda", "en": "Episode 1"}}
+    hit = episode_names.release_episode("Top Gear speciál. Když se nedaří VII(CZ)[TvRip].mkv", cat, 12, ["Top Gear"])
+    assert hit is None or hit[1] is False
+    assert episode_names.release_episode("Městečko South Park - S01E03 - Sopka.avi", CAT, 1)[1] is True   # whole name
