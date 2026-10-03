@@ -7,7 +7,7 @@ import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
 import ShowPacks from "@/components/ShowPacks";
 import EpisodeWindow from "@/components/EpisodeWindow";
-import { AUTO_DUB, AUTO_NEW, AutoFields, ShowAutomation } from "@/components/SeriesAuto";
+import { AUTO_DUB, AUTO_NEW, AutoFields, ShowAutomation, WantShow } from "@/components/SeriesAuto";
 import { useAuth } from "@/components/AuthGate";
 import {
   DownloadItem, getDownloads, setAudioLanguage,
@@ -132,6 +132,9 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
         </div>
       </header>
 
+      {!data.in_library && can("library.edit") && data.settings.effective.auto_new === "off" && (
+        <WantShow tmdbId={tmdbId} aired={totals.missing} onDone={() => load()} />
+      )}
       <SettingsPanel data={data} onSaved={() => load()} editable={can("library.edit")} />
       <ShowAutomation tmdbId={tmdbId} canDownload={can("download")} canEdit={can("library.edit")}
         on={data.settings.effective.auto_new !== "off" || data.settings.effective.auto_dub !== "off"} />

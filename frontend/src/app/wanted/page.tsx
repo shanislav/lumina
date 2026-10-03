@@ -1,5 +1,6 @@
 "use client";
 
+import { WantedShows } from "@/components/SeriesAuto";
 import { useCallback, useEffect, useState } from "react";
 import WatchedList from "@/components/WatchedList";
 import Image from "next/image";
@@ -116,9 +117,10 @@ export default function WantedPage() {
         )}
       </div>
       <p className="text-xs text-zinc-500 -mt-3">
-        Film přidáš tlačítkem „+ Chci“ u hledaného filmu. Lumina hledá postupně (šetrně k WS/FS) a ukáže nejlepší soubor,
+        Film přidáš tlačítkem „+ Chci“ u hledaného filmu, seriál tlačítkem „Chci“ na jeho stránce. Lumina hledá postupně (šetrně k WS/FS) a ukáže nejlepší soubor,
         který splní profil. Až bude film v knihovně, přesune se do „hotovo“.
       </p>
+      <WantedShows />
 
       {loading ? (
         <p className="text-zinc-500 animate-pulse">Načítám…</p>

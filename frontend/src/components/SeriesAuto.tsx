@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  saveSeriesSettings,
   SeriesAutoFrom, SeriesAutoMode, SeriesAutoOverview, SeriesAutoRecord, SeriesAutoShow, SeriesSettingValues,
   dismissAutoFound, downloadAutoFound, getSeriesAutomation, getShowAutomation, runSeriesAutomation,
   saveSeriesAutomationBulk,
@@ -148,6 +149,60 @@ export function ShowAutomation({ tmdbId, on, canDownload, canEdit }: { tmdbId: n
       </div>
       <AutoFound tmdbId={tmdbId} records={data.records} onChanged={load} canDownload={canDownload} />
     </section>
+  );
+}
+
+/** The show page of a show not in the library: "I want it" = the automation looks for every aired episode. */
+export function WantShow({ tmdbId, aired, onDone }: { tmdbId: number; aired: number; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  async function want(mode: SeriesAutoMode) {
+    setBusy(true);
+    try {
+      await saveSeriesSettings(tmdbId, { auto_new: mode, auto_from: "all" });
+      await runSeriesAutomation([tmdbId]);          // checked right away, as "+ Chci" of a film
+      onDone();
+    } finally { setBusy(false); }
+  }
+  return (
+    <section className="rounded-xl border border-violet-800/50 bg-violet-950/20 px-4 py-3 space-y-2 text-sm">
+      <p className="text-zinc-200">Tenhle seriál zatím nemáš.</p>
+      <p className="text-xs text-zinc-400">
+        Chci = automatika najde všechny vydané díly ({aired}) podle profilu a jazyka seriálu, hned teď a pak každou noc
+        i ty nové. Celé série najednou z torrentů jsou níž („Celý seriál na torrentech“).
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button disabled={busy} onClick={() => want("download")}
+          className="rounded bg-violet-600 px-3 py-1.5 text-white hover:bg-violet-500 disabled:opacity-50">Chci — stahovat díly</button>
+        <button disabled={busy} onClick={() => want("notify")}
+          className="rounded bg-zinc-800 px-3 py-1.5 text-zinc-200 hover:bg-zinc-700 disabled:opacity-50">Jen najít a ukázat</button>
+      </div>
+    </section>
+  );
+}
+
+/** The wanted page: shows the automation looks for that are not in the library yet. */
+export function WantedShows() {
+  const [shows, setShows] = useState<SeriesAutoShow[] | null>(null);
+  useEffect(() => {
+    getSeriesAutomation().then((d) => setShows(d.shows.filter((s) => !s.in_library &&
+      (s.effective.auto_new !== "off" || s.effective.auto_dub !== "off")))).catch(() => setShows([]));
+  }, []);
+  if (!shows?.length) return null;
+  return (
+    <div className="space-y-2">
+      <h2 className="text-lg font-semibold text-zinc-100">Seriály</h2>
+      {shows.map((s) => (
+        <div key={s.tmdb_id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-sm">
+          <Link href={`/series?tmdb=${s.tmdb_id}`} className="text-zinc-100 hover:text-violet-300">{s.title || `TMDB ${s.tmdb_id}`}</Link>
+          {s.year && <span className="text-zinc-500">({s.year})</span>}
+          <span className="text-xs text-zinc-400">{label(AUTO_NEW, s.effective.auto_new)}</span>
+          <span className="ml-auto text-xs text-zinc-500">
+            {s.checked ? `kontrola ${s.checked.checked_at.slice(5, 16)} — ${s.checked.note || `nalezeno ${s.checked.found}, stahuje ${s.checked.downloading}`}` : "zatím nekontrolováno"}
+          </span>
+        </div>
+      ))}
+      <p className="text-xs text-zinc-500">Až bude díl v knihovně, seriál se přesune do Knihovna → Seriály (automatika běží dál).</p>
+    </div>
   );
 }
 
