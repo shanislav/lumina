@@ -130,7 +130,9 @@ def judge_episode_name(ev: dict, want: tuple[int, int], hit, name: str = "", tit
         if ev["film"] == "no":
             # the episode's name, not the show's: a show named only partly stays unsure
             status = "yes" if show_fit(name, titles) == "full" else "unsure"
-            ev["film"], ev["film_reasons"] = status, [f"podle názvu dílu „{title}“ (číslo v souboru je jiné)"]
+            numbered = bool(parse_episode(name).episodes)
+            ev["film"], ev["film_reasons"] = status, [f"podle názvu dílu „{title}“"
+                                                      + (" (číslo v souboru je jiné)" if numbered else "")]
         else:
             ev["film_reasons"] = [*ev["film_reasons"], f"název dílu sedí („{title}“)"]
     elif sure:
