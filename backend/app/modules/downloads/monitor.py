@@ -108,6 +108,21 @@ async def _monitor_loop():
                                     cur.execute("UPDATE download_tracker SET processed = 1, status = 'not_found' WHERE id = ?", (did,))
                                     conn.commit()
                                     continue
+                                if intent and intent.get("mode") == "pack" and not intent.get("replace_owned") \
+                                        and not intent.get("files_chosen") and tmdb_id:
+                                    # a whole-show pack: the episodes the user has are not downloaded at all
+                                    files = await qbt.files(did)
+                                    if files:          # a magnet's metadata is in
+                                        from app.modules.library.imports import pack_skip
+                                        owned = {(r[0], r[1]) for r in cur.execute(
+                                            "SELECT season, episode FROM library_episodes WHERE show_tmdb_id = ? AND has_file = 1",
+                                            (tmdb_id,)).fetchall()}
+                                        skip = pack_skip(files, owned)
+                                        await qbt.set_file_priority(did, skip, 0)
+                                        intent.update(files_chosen=True, skipped=len(skip))
+                                        cur.execute("UPDATE download_tracker SET intent = ? WHERE id = ?", (json.dumps(intent), did))
+                                        conn.commit()
+                                        logger.info("Pack %s: %d of %d files not downloaded (owned episodes)", title, len(skip), len(files))
                                 state = t.get("state", "")
                                 progress = t.get("progress", 0)
                                 # Completed states or progress == 1.0

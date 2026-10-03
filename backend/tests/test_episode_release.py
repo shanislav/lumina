@@ -259,3 +259,13 @@ def test_the_season_plan_places_files_by_their_episode():
              "episodes": [14], "quality_score": 50}]
     sets = group_sets(rows, 1, [13, 14], 24)
     assert sets[0]["covered"] == [13, 14]
+
+
+def test_a_whole_show_pack_skips_the_episodes_the_user_has():
+    files = [{"index": 0, "name": "South Park S01-S28/Season 01/South Park S01E02 - Sopka.mkv"},
+             {"index": 1, "name": "South Park S01-S28/Season 01/South Park S01E02 - Sopka.cs.srt"},
+             {"index": 2, "name": "South Park S01-S28/Season 01/South Park S01E03 - Posilovač 4000.mkv"},
+             {"index": 3, "name": "South Park S01-S28/Série 2/05 - Ikeova obřízka.avi"},
+             {"index": 4, "name": "South Park S01-S28/Film/South Park - Peklo na zemi.mkv"},
+             {"index": 5, "name": "South Park S01-S28/Season 02/South Park S02E06.mkv"}]
+    assert imports.pack_skip(files, {(1, 2), (2, 5)}) == [0, 1, 3]

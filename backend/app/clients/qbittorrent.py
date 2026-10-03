@@ -130,6 +130,25 @@ class QBittorrentClient:
             "downloaded": t.get("downloaded", 0),
         }
 
+    async def files(self, torrent_hash: str) -> list[dict]:
+        """The torrent's files ([] until a magnet's metadata is in): {index, name (path in the torrent), size,
+        priority, progress}."""
+        await self.login()
+        resp = await self._http.get(f"{self._base_url}/api/v2/torrents/files", params={"hash": torrent_hash})
+        if resp.status_code != 200:
+            return []
+        return [{**f, "index": f.get("index", i)} for i, f in enumerate(resp.json())]
+
+    async def set_file_priority(self, torrent_hash: str, indexes: list[int], priority: int) -> None:
+        """0 = do not download; 1 = normal."""
+        if not indexes:
+            return
+        await self.login()
+        resp = await self._http.post(f"{self._base_url}/api/v2/torrents/filePrio",
+                                     data={"hash": torrent_hash, "id": "|".join(str(i) for i in indexes),
+                                           "priority": str(priority)})
+        resp.raise_for_status()
+
     async def delete_torrent(self, torrent_hash: str, delete_files: bool = False) -> bool:
         """Remove a torrent from qBittorrent. Optionally delete downloaded files."""
         await self.login()

@@ -343,6 +343,37 @@ def _in_pack(path: str, season: int | None, episodes: list[int]) -> tuple[int | 
     return season, episodes
 
 
+def pack_episodes(path: str) -> tuple[int | None, list[int]]:
+    """(season, episodes) of a file of a whole-show pack — its name, else its folders and a leading number."""
+    from app.core.episode_match import parse_episode
+
+    info = parse_episode(os.path.basename(path))
+    season = info.season
+    if season is None:
+        m = _SEASON.search(os.path.basename(path))
+        season = int(m.group(1) or m.group(2)) if m else None
+    return _in_pack(path, season, list(info.episodes))
+
+
+def pack_skip(files: list[dict], owned: set[tuple[int, int]]) -> list[int]:
+    """Indexes of a pack's files not to download: videos of episodes the user has (all of the file's episodes),
+    with their subtitles. files: qBittorrent's [{index, name}]."""
+    skip, stems = [], set()
+    for f in files:
+        name = f["name"].replace("\\", "/")
+        if os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
+            continue
+        season, episodes = pack_episodes(name.replace("/", os.sep))
+        if season is not None and episodes and all((season, e) in owned for e in episodes):
+            skip.append(f["index"])
+            stems.add(os.path.splitext(name)[0])
+    for f in files:
+        name = f["name"].replace("\\", "/")
+        if f["index"] not in skip and os.path.splitext(name)[1].lower() in SUBTITLE_EXTS                 and any(name.startswith(stem + ".") for stem in stems):
+            skip.append(f["index"])
+    return sorted(skip)
+
+
 def _int(value) -> int | None:
     try:
         return int(value)
@@ -413,7 +444,8 @@ async def import_episode(payload: dict) -> None:
             file_numbers = (season, list(episodes))
             season, episodes, why = _which_episode(os.path.basename(path), season, episodes, cat,
                                                    action if path == src and not extras else {})
-            if (path != src or pack) and season and episodes and not action.get("replace_owned", True)                     and all((season, ep) in owned for ep in episodes):
+            if (path != src or pack) and season and episodes and not action.get("replace_owned", True) \
+                    and all((season, ep) in owned for ep in episodes):
                 logger.info("%s: S%02dE%02d is owned already — left in downloads", path, season, episodes[0])
                 continue
             name, media = os.path.basename(path), None
