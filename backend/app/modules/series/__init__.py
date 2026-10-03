@@ -22,7 +22,8 @@ module = Module(
                 add_column("series_settings", "auto_new", "TEXT"),
                 add_column("series_settings", "auto_from", "TEXT"),
                 add_column("series_settings", "auto_dub", "TEXT"),
-                auto.SERIES_AUTO],
+                auto.SERIES_AUTO,
+                add_column("series_settings", "auto_upgrade", "TEXT")],
     subscriptions=[Subscription("scheduler.run", auto.on_scheduler_run)],
     tasks=[TaskSource(auto.tasks, "library.edit")],
 )

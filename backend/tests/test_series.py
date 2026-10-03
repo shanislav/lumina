@@ -19,7 +19,7 @@ async def db():
 async def test_settings_fall_back_to_the_defaults(db):
     s = await store.get_settings(1399)
     assert s["effective"] == {"profile_id": None, "lang_mode": "local_or_temp", "torrent": True,
-                              "auto_new": "off", "auto_from": "next", "auto_dub": "off"}
+                              "auto_new": "off", "auto_from": "next", "auto_dub": "off", "auto_upgrade": "off"}
     await store.save_settings(1399, {"torrent": False, "lang_mode": "local_only"}, {"title": "Hra o trůny", "year": 2011})
     await store.save_defaults({"auto_new": "notify", "torrent": True, "auto_dub": "nonsense"})
     s = await store.get_settings(1399)

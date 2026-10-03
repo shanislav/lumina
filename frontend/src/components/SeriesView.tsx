@@ -7,7 +7,7 @@ import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
 import ShowPacks from "@/components/ShowPacks";
 import EpisodeWindow from "@/components/EpisodeWindow";
-import { AUTO_DUB, AUTO_NEW, AutoFields, ShowAutomation, WantShow } from "@/components/SeriesAuto";
+import { AUTO_DUB, AUTO_NEW, AUTO_UPGRADE, AutoFields, ShowAutomation, WantShow } from "@/components/SeriesAuto";
 import { useAuth } from "@/components/AuthGate";
 import {
   DownloadItem, getDownloads, setAudioLanguage,
@@ -137,7 +137,8 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
       )}
       <SettingsPanel data={data} onSaved={() => load()} editable={can("library.edit")} />
       <ShowAutomation tmdbId={tmdbId} canDownload={can("download")} canEdit={can("library.edit")}
-        on={data.settings.effective.auto_new !== "off" || data.settings.effective.auto_dub !== "off"} />
+        on={[data.settings.effective.auto_new, data.settings.effective.auto_dub, data.settings.effective.auto_upgrade]
+          .some((v) => v && v !== "off")} />
 
       {can("search") && data.settings.effective.torrent && (
         <ShowPacks tmdbId={tmdbId} onStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }} />
@@ -190,7 +191,8 @@ function SettingsPanel({ data, onSaved, editable }: { data: SeriesDetail; onSave
         <span className="text-xs text-zinc-500">
           {data.profile.name} · {mode?.[1]} · {effective.torrent ? "i torrenty" : "bez torrentů"}
           {effective.auto_new && effective.auto_new !== "off" ? ` · nové díly: ${AUTO_NEW.find(([m]) => m === effective.auto_new)?.[1]}` : ""}
-          {effective.auto_dub && effective.auto_dub !== "off" ? ` · dabing: ${AUTO_DUB.find(([m]) => m === effective.auto_dub)?.[1]}` : ""} {open ? "▲" : "▼"}
+          {effective.auto_dub && effective.auto_dub !== "off" ? ` · dabing: ${AUTO_DUB.find(([m]) => m === effective.auto_dub)?.[1]}` : ""}
+          {effective.auto_upgrade && effective.auto_upgrade !== "off" ? ` · kvalita: ${AUTO_UPGRADE.find(([m]) => m === effective.auto_upgrade)?.[1]}` : ""} {open ? "▲" : "▼"}
         </span>
       </button>
       {open && (

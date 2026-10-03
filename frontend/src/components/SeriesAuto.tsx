@@ -21,6 +21,14 @@ export const AUTO_FROM: [SeriesAutoFrom, string][] = [
 export const AUTO_DUB: [SeriesAutoMode, string][] = [
   ["off", "nehledat"], ["notify", "hledat, jen ukázat"], ["download", "hledat a nahradit EN díl"],
 ];
+export const AUTO_UPGRADE: [SeriesAutoMode, string][] = [
+  ["off", "nehledat"], ["notify", "hledat, jen ukázat"], ["download", "hledat a nahradit"],
+];
+const KIND: Record<string, [string, string]> = {
+  new: ["nový díl", "bg-emerald-900/60 text-emerald-200"],
+  dub: ["dabing", "bg-sky-900/60 text-sky-200"],
+  upgrade: ["lepší kvalita", "bg-violet-900/60 text-violet-200"],
+};
 
 const label = (list: [string, string][], v: string | null | undefined) => list.find(([k]) => k === v)?.[1] ?? "";
 const field = "rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-50";
@@ -40,8 +48,8 @@ export function AutoSelect<T extends string>({ value, options, fallback, disable
 
 /** The three automation settings as rows of a settings grid (show page, defaults). */
 export function AutoFields({ own, defaults, langMode, disabled, onChange }: {
-  own: Pick<SeriesSettingValues, "auto_new" | "auto_from" | "auto_dub">;
-  defaults?: Pick<SeriesSettingValues, "auto_new" | "auto_from" | "auto_dub">;  // none: the defaults themselves
+  own: Pick<SeriesSettingValues, "auto_new" | "auto_from" | "auto_dub" | "auto_upgrade">;
+  defaults?: Pick<SeriesSettingValues, "auto_new" | "auto_from" | "auto_dub" | "auto_upgrade">;  // none: the defaults themselves
   langMode: string; disabled?: boolean; onChange: (values: Partial<SeriesSettingValues>) => void;
 }) {
   const effNew = own.auto_new ?? defaults?.auto_new ?? "off";
@@ -64,6 +72,13 @@ export function AutoFields({ own, defaults, langMode, disabled, onChange }: {
             ? "U dílů, které máš jen anglicky, hledá český nebo slovenský zvuk."
             : "Platí jen pro jazyk „CZ/SK, jinak hned EN“."}
         </p>
+      </div>
+      <label className="text-zinc-400 self-start pt-1">Lepší kvalita</label>
+      <div className="space-y-1">
+        <AutoSelect value={own.auto_upgrade} options={AUTO_UPGRADE} fallback={defaults ? (defaults.auto_upgrade ?? "off") : undefined}
+          disabled={disabled} onChange={(v) => onChange({ auto_upgrade: v ?? (defaults ? null : "off") })} />
+        <p className="text-[11px] text-zinc-500">U dílů, které nesplní profil kvality seriálu (třeba 480p, když chce aspoň 720p, nebo pod cílovým skóre).
+          Jen s vyšším skóre a bez ztráty CZ/SK zvuku.</p>
       </div>
     </>
   );
@@ -93,9 +108,7 @@ export function AutoFound({ tmdbId, records, onChanged, canDownload }: {
       {found.map((r) => (
         <div key={`${r.season}-${r.episode}-${r.kind}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
           <span className="font-mono text-zinc-300">{se(r)}</span>
-          <span className={`rounded px-1.5 py-0.5 text-[10px] ${r.kind === "dub" ? "bg-sky-900/60 text-sky-200" : "bg-emerald-900/60 text-emerald-200"}`}>
-            {r.kind === "dub" ? "dabing" : "nový díl"}
-          </span>
+          <span className={`rounded px-1.5 py-0.5 text-[10px] ${(KIND[r.kind] ?? KIND.new)[1]}`}>{(KIND[r.kind] ?? KIND.new)[0]}</span>
           <span className="order-last min-w-0 basis-full truncate text-zinc-400 sm:order-none sm:basis-0 sm:flex-1" title={r.row.name}>{r.row.name}</span>
           <span className="text-zinc-500">{(r.row.audio_langs || []).join("+").toUpperCase()} · {r.row.resolution || ""} · {gb(r.row.size || 0)}</span>
           {canDownload && <button disabled={!!busy} onClick={() => act(() => downloadAutoFound(tmdbId, [key(r)]), "…")}
@@ -111,7 +124,7 @@ export function AutoFound({ tmdbId, records, onChanged, canDownload }: {
         </button>
       )}
       {going.length > 0 && (
-        <p className="text-[11px] text-zinc-500">Automatika stahuje: {going.map((r) => `${se(r)}${r.kind === "dub" ? " (dabing)" : ""}`).join(", ")}</p>
+        <p className="text-[11px] text-zinc-500">Automatika stahuje: {going.map((r) => `${se(r)}${r.kind !== "new" ? ` (${KIND[r.kind]?.[0]})` : ""}`).join(", ")}</p>
       )}
       {busy && busy !== "…" && <p className="text-[11px] text-red-400">{busy}</p>}
     </div>
@@ -185,7 +198,7 @@ export function WantedShows() {
   const [shows, setShows] = useState<SeriesAutoShow[] | null>(null);
   useEffect(() => {
     getSeriesAutomation().then((d) => setShows(d.shows.filter((s) => !s.in_library &&
-      (s.effective.auto_new !== "off" || s.effective.auto_dub !== "off")))).catch(() => setShows([]));
+      s.effective.auto_new !== "off"))).catch(() => setShows([]));
   }, []);
   if (!shows?.length) return null;
   return (
@@ -223,7 +236,7 @@ export default function SeriesAutomation({ canEdit, canDownload, query = "" }: {
     return () => clearTimeout(t);
   }, [data, load]);
 
-  const isOn = (s: SeriesAutoShow) => s.effective.auto_new !== "off" || s.effective.auto_dub !== "off";
+  const isOn = (s: SeriesAutoShow) => s.effective.auto_new !== "off" || s.effective.auto_dub !== "off" || s.effective.auto_upgrade !== "off";
   const shows = useMemo(() => {
     const q = query.trim().toLocaleLowerCase("cs");
     return (data?.shows ?? []).filter((s) => (!q || s.title.toLocaleLowerCase("cs").includes(q)) && (
@@ -267,9 +280,10 @@ export default function SeriesAutomation({ canEdit, canDownload, query = "" }: {
             )}
             <p className="text-zinc-500">
               Výchozí pro všechny seriály: nové díly — {label(AUTO_NEW, d.auto_new)}{d.auto_new !== "off" && ` (${label(AUTO_FROM, d.auto_from)})`},
-              dabing — {label(AUTO_DUB, d.auto_dub)}. Mění se v Nastavení → Seriály; seriál s vlastní volbou ho nepřebírá.
+              dabing — {label(AUTO_DUB, d.auto_dub)}, lepší kvalita — {label(AUTO_UPGRADE, d.auto_upgrade)}. Mění se v Nastavení → Seriály; seriál s vlastní volbou ho nepřebírá.
             </p>
-            <p className="text-zinc-500">Bere jen soubory, které jsou jistě daný díl a projdou profilem kvality seriálu; dabing jen s CZ/SK zvukem. AI nevolá.</p>
+            <p className="text-zinc-500">Bere jen soubory, které jsou jistě daný díl a projdou profilem kvality seriálu; dabing jen s CZ/SK zvukem;
+              lepší kvalitu jen s vyšším skóre bez ztráty CZ/SK zvuku. AI nevolá.</p>
             {canEdit && (
               <button disabled={data.job.running || !onCount} onClick={async () => { await runSeriesAutomation(); load(); }}
                 className="mt-1 rounded bg-zinc-700 px-3 py-1 text-zinc-200 hover:bg-zinc-600 disabled:opacity-50">
@@ -309,6 +323,8 @@ export default function SeriesAutomation({ canEdit, canDownload, query = "" }: {
               <BulkSelect options={AUTO_FROM} disabled={saving} onPick={(v) => save([...picked], { auto_from: v })} />
               <span className="text-zinc-500">dabing</span>
               <BulkSelect options={AUTO_DUB} disabled={saving} onPick={(v) => save([...picked], { auto_dub: v })} />
+              <span className="text-zinc-500">kvalita</span>
+              <BulkSelect options={AUTO_UPGRADE} disabled={saving} onPick={(v) => save([...picked], { auto_upgrade: v })} />
               <button onClick={() => setPicked(new Set())} className="ml-auto text-zinc-500 hover:text-zinc-300">zrušit výběr</button>
             </div>
           )}
@@ -343,6 +359,9 @@ export default function SeriesAutomation({ canEdit, canDownload, query = "" }: {
                   <span className="text-zinc-500">dabing</span>
                   <AutoSelect value={s.own.auto_dub} options={AUTO_DUB} fallback={d.auto_dub} disabled={!canEdit || saving}
                     onChange={(v) => save([s.tmdb_id], { auto_dub: v })} />
+                  <span className="text-zinc-500">kvalita</span>
+                  <AutoSelect value={s.own.auto_upgrade} options={AUTO_UPGRADE} fallback={d.auto_upgrade} disabled={!canEdit || saving}
+                    onChange={(v) => save([s.tmdb_id], { auto_upgrade: v })} />
                 </div>
               </div>
             ))}

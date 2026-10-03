@@ -1596,14 +1596,16 @@ export interface SeriesSettingValues {
   auto_new: SeriesAutoMode | null;    // new episodes: nothing / show what was found / download
   auto_from: SeriesAutoFrom | null;   // "new" = after the last owned episode / every missing one
   auto_dub: SeriesAutoMode | null;    // the CZ/SK dub of episodes owned in English
+  auto_upgrade: SeriesAutoMode | null; // a better version of episodes below the show's quality profile
 }
 
 export type SeriesEffectiveSettings = SeriesSettingValues & {
   lang_mode: SeriesLangMode; torrent: boolean; auto_new: SeriesAutoMode; auto_from: SeriesAutoFrom; auto_dub: SeriesAutoMode;
+  auto_upgrade: SeriesAutoMode;
 };
 
 export interface SeriesAutoRecord {
-  tmdb_id: number; season: number; episode: number; kind: "new" | "dub";
+  tmdb_id: number; season: number; episode: number; kind: "new" | "dub" | "upgrade";
   status: "found" | "downloading" | "dismissed"; updated_at: string;
   row: { name: string; source: string; size: number; resolution?: string; quality_summary?: string; audio_langs?: string[]; quality_score?: number };
 }

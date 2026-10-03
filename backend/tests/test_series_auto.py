@@ -109,3 +109,36 @@ async def test_check_downloads_or_keeps_what_it_found(db, monkeypatch):
 
 async def _false():
     return False
+
+
+def test_upgrade_only_episodes_below_the_profile_with_a_better_file():
+    eff = {"auto_new": "off", "auto_from": "next", "auto_dub": "off", "auto_upgrade": "notify", "lang_mode": "local_or_temp"}
+    seasons = [season(1, ["owned", "owned", "temp"])]
+    assert auto.wanted_episodes(seasons, eff, {(1, 1): {}}) == [(1, 1, "upgrade")]
+    assert auto.wanted_episodes(seasons, eff, {}) == []
+    profile = Profile(id=1, name="Seriály", kind="tv", min_resolution="720p")
+    from app.core.quality import Prefs
+    prefs = Prefs(local_langs=("cs", "sk"))
+    owned = {"quality_score": 30, "language": "CS", "file_size": 300_000_000}
+    sets = [{"episodes": {1: row("en-better", tier=0, score=90)}}, {"episodes": {1: row("cz-worse", score=20)}},
+            {"episodes": {1: row("cz-better", score=60)}}]
+    assert auto.pick(sets, 1, profile, False, owned=owned, prefs=prefs)["ident"] == "cz-better"   # keeps Czech
+    assert auto.pick(sets[:2], 1, profile, False, owned=owned, prefs=prefs) is None
+
+
+async def test_below_profile_reads_the_files_media(db):
+    from app.core.quality import Prefs
+    from app.db import get_db
+    db_ = await get_db()
+    await db_.execute("INSERT OR REPLACE INTO tv_media (file_path, size, mtime, media) VALUES (?, 1, 1, ?)",
+                      ("/s/e1.avi", '{"width": 640, "height": 480, "video_codec": "XviD", "duration_s": 1300, "audio": []}'))
+    await db_.execute("INSERT OR REPLACE INTO tv_media (file_path, size, mtime, media) VALUES (?, 1, 1, ?)",
+                      ("/s/e2.mkv", '{"width": 1920, "height": 1080, "video_codec": "HEVC", "duration_s": 1300, "audio": []}'))
+    await db_.commit()
+    await db_.close()
+    seasons = [{"season_number": 1, "episodes": [
+        {"episode": 1, "state": "owned", "file": {"file_path": "/s/e1.avi", "filename": "e1.avi", "size": 200_000_000, "languages": ["cs"]}},
+        {"episode": 2, "state": "owned", "file": {"file_path": "/s/e2.mkv", "filename": "e2.mkv", "size": 900_000_000, "languages": ["cs"]}},
+        {"episode": 3, "state": "owned", "file": {"file_path": "/s/none.mkv", "filename": "x", "size": 1, "languages": []}}]}]
+    got = await auto.below_profile(seasons, Profile(id=1, name="S", kind="tv", min_resolution="720p"), Prefs(local_langs=("cs",)))
+    assert list(got) == [(1, 1)] and got[(1, 1)]["language"] == "CS"

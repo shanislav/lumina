@@ -7,6 +7,9 @@ from app.modules.notify import store
 logger = logging.getLogger(__name__)
 
 
+KIND_LABEL = {"dub": " dabing", "upgrade": " lepší kvalita"}
+
+
 def _se(season, episode) -> str:
     return f"S{int(season):02d}E{int(episode):02d}" if season is not None and episode is not None else ""
 
@@ -61,8 +64,8 @@ async def on_offers_found(p: dict) -> None:
 async def on_series_found(p: dict) -> None:
     """The TV automation: found (waiting for the user's click) or started downloads, one show at a time."""
     link = f"/series?tmdb={p['tmdb_id']}"
-    found = [f"{_se(s, e)}{' dabing' if k == 'dub' else ''}" for s, e, k in p.get("found") or []]
-    started = [f"{_se(s, e)}{' dabing' if k == 'dub' else ''}" for s, e, k in p.get("downloading") or []]
+    found = [f"{_se(s, e)}{KIND_LABEL.get(k, '')}" for s, e, k in p.get("found") or []]
+    started = [f"{_se(s, e)}{KIND_LABEL.get(k, '')}" for s, e, k in p.get("downloading") or []]
     if found:
         await store.add("series", f"Automatika našla: {p.get('title') or '?'}", store._body(found, "čeká na tebe"),
                         level="ok", link=link, permission="search",

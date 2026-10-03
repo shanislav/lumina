@@ -5,6 +5,9 @@
                "all" — every missing episode that has aired
     auto_dub   episodes owned without Czech/Slovak sound (language "CZ/SK, else EN now"): off | notify |
                download the dubbed file and replace the English one
+    auto_upgrade  a better version of an owned episode that does not meet the show's quality profile (below
+               its minimums, or below its target score): off | notify | download and replace it — as films'
+               "Hlídat lepší verzi": a higher score, never losing the Czech/Slovak sound
 
 The scheduler's nightly run (event ``scheduler.run``, option "series") or "Zkontrolovat teď" checks the shows
 with anything on: one season search per season with a wanted episode (the season's releases — the same
@@ -20,7 +23,9 @@ import logging
 from datetime import datetime, timedelta
 
 from app.core import events
-from app.core.profiles import block, load_profiles, pick_profile
+from app.core.offers.search import upgrade_block
+from app.core.profiles import block, load_profiles, pick_profile, reached_cutoff, row_from_media
+from app.core.quality import prefs_from_settings
 from app.db import get_db
 from app.modules.series import store
 
@@ -31,7 +36,7 @@ CREATE TABLE IF NOT EXISTS series_auto (
     tmdb_id INTEGER NOT NULL,
     season INTEGER NOT NULL,
     episode INTEGER NOT NULL,
-    kind TEXT NOT NULL,                 -- new | dub
+    kind TEXT NOT NULL,                 -- new | dub | upgrade
     status TEXT NOT NULL,               -- found | downloading | dismissed
     row TEXT NOT NULL DEFAULT '{}',     -- the file (an offer row)
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -54,13 +59,14 @@ _state = {"running": False, "total": 0, "done": 0, "current": "", "found": 0, "d
 
 
 def is_on(effective: dict) -> bool:
-    return effective.get("auto_new", "off") != "off" or effective.get("auto_dub", "off") != "off"
+    return any(effective.get(k, "off") != "off" for k in ("auto_new", "auto_dub", "auto_upgrade"))
 
 
 # ── what the show wants ──
 
-def wanted_episodes(seasons: list[dict], effective: dict) -> list[tuple[int, int, str]]:
+def wanted_episodes(seasons: list[dict], effective: dict, below: dict | None = None) -> list[tuple[int, int, str]]:
     """(season, episode, kind) the automation looks for, from the show page's seasons (episode states).
+    ``below``: owned episodes that do not meet the quality profile {(season, episode): …} (for "upgrade").
     Specials stay out (Top Gear has 120 of them)."""
     regular = [s for s in seasons if s.get("season_number") and not s.get("specials")]
     out: list[tuple[int, int, str]] = []
@@ -75,13 +81,51 @@ def wanted_episodes(seasons: list[dict], effective: dict) -> list[tuple[int, int
                     out.append((*key, "new"))
     if effective.get("auto_dub", "off") != "off" and effective.get("lang_mode") == "local_or_temp":
         out += [(s["season_number"], e["episode"], "dub") for s in regular for e in s["episodes"] if e["state"] == "temp"]
+    if effective.get("auto_upgrade", "off") != "off" and below:
+        out += [(s["season_number"], e["episode"], "upgrade") for s in regular for e in s["episodes"]
+                if e["state"] == "owned" and (s["season_number"], e["episode"]) in below]
     return out
 
 
-def pick(sets: list[dict], episode: int, profile, need_local: bool, skip: set[str] = frozenset()) -> dict | None:
+async def below_profile(seasons: list[dict], profile, prefs) -> dict[tuple[int, int], dict]:
+    """Owned episodes whose file does not meet the profile (its minimums, or its target score when it has one),
+    by the file's MediaInfo from the library scan: {(season, episode): {quality_score, language, file_size}}.
+    A file without MediaInfo yet is left alone (the next scan reads it)."""
+    files = {(s["season_number"], e["episode"]): e["file"] for s in seasons if s.get("season_number")
+             for e in s["episodes"] if e["state"] == "owned" and e.get("file") and e["file"].get("file_path")}
+    if not files:
+        return {}
+    db = await get_db()
+    try:
+        paths = [f["file_path"] for f in files.values()]
+        media = {}
+        for i in range(0, len(paths), 500):
+            chunk = paths[i:i + 500]
+            for r in await (await db.execute(
+                    f"SELECT file_path, media FROM tv_media WHERE file_path IN ({','.join('?' * len(chunk))})", chunk)).fetchall():
+                media[r[0]] = json.loads(r[1] or "{}")
+    except Exception:  # noqa: BLE001 — the library module off
+        return {}
+    finally:
+        await db.close()
+    out = {}
+    for key, f in files.items():
+        m = media.get(f["file_path"])
+        if not m:
+            continue
+        row = row_from_media(m, f.get("filename") or "", f.get("size") or 0, prefs)
+        if block(row, profile) is None and (not profile.cutoff or reached_cutoff(row, profile)):
+            continue
+        out[key] = {"quality_score": row["quality_score"], "file_size": f.get("size") or 0,
+                    "language": ",".join(l.upper() for l in f.get("languages") or [])}
+    return out
+
+
+def pick(sets: list[dict], episode: int, profile, need_local: bool, skip: set[str] = frozenset(),
+         owned: dict | None = None, prefs=None) -> dict | None:
     """The file for an episode: sure to be it, allowed by the profile, not a pack, Czech/Slovak sound when
-    needed. Czech/Slovak first, then the release order (the most complete, best release — one uploader for the
-    season), then the score."""
+    needed; ``owned`` (an upgrade): better than it and keeping its Czech/Slovak sound. Czech/Slovak first, then
+    the release order (the most complete, best release — one uploader for the season), then the score."""
     candidates = []
     for i, st in enumerate(sets):
         row = st["episodes"].get(episode)
@@ -90,6 +134,8 @@ def pick(sets: list[dict], episode: int, profile, need_local: bool, skip: set[st
         if need_local and (row.get("lang_tier") or 0) < 2:
             continue
         if block(row, profile) is not None:
+            continue
+        if owned is not None and upgrade_block(row, owned, prefs) is not None:
             continue
         candidates.append(((-(row.get("lang_tier", 0) >= 2), i, -(row.get("quality_score") or 0)), row))
     return min(candidates, key=lambda c: c[0])[1] if candidates else None
@@ -184,9 +230,9 @@ async def _download(show: dict, tmdb_id: int, season: int, episode: int, kind: s
         "file_ident": row["ident"], "source": row["source"], "source_id": row.get("source_id") or 0,
         "magnet_url": row.get("magnet_url"), "content_type": "tv", "tmdb_id": tmdb_id,
         "title": show.get("title") or "", "year": show.get("year") or 0, "file_name": row.get("name") or "",
-        # a dub replaces the English episode
+        # a dub and a better version replace the owned episode
         "library_action": {"mode": "episode", "season": season, "episode": episode,
-                           "replace": kind == "dub", "replace_owned": kind == "dub"},
+                           "replace": kind in ("dub", "upgrade"), "replace_owned": kind in ("dub", "upgrade")},
         "requested_by": "automatika seriálů",
     })
     if payload.get("error"):
@@ -253,7 +299,11 @@ async def check_show(tmdb_id: int) -> dict:
         return {"wanted": 0, "found": 0, "downloading": 0, "note": "automatika vypnutá"}
     detail = await series_detail(tmdb_id)
     _state["current"] = detail["show"].get("title") or str(tmdb_id)
-    wanted = wanted_episodes(detail["seasons"], eff)
+    profile = pick_profile(await load_profiles(), eff["profile_id"], "tv")
+    from app.config import get_effective_settings
+    prefs = prefs_from_settings(await get_effective_settings())
+    below = await below_profile(detail["seasons"], profile, prefs) if eff.get("auto_upgrade", "off") != "off" else {}
+    wanted = wanted_episodes(detail["seasons"], eff, below)
     await _forget(tmdb_id, set(wanted))
     result = {"wanted": len(wanted), "found": 0, "downloading": 0, "note": ""}
     if not wanted:
@@ -274,7 +324,6 @@ async def check_show(tmdb_id: int) -> dict:
             continue
         todo.setdefault(season, []).append((episode, kind))
 
-    profile = pick_profile(await load_profiles(), eff["profile_id"], "tv")
     news: dict[str, list] = {"found": [], "downloading": []}       # for the notification
     first = True
     for season, items in sorted(todo.items()):
@@ -291,10 +340,11 @@ async def check_show(tmdb_id: int) -> dict:
             rec = known.get((season, episode, kind))
             skip = {rec["row"].get("ident")} if rec and rec["status"] == "dismissed" else set()
             need_local = kind == "dub" or eff["lang_mode"] == "local_only"
-            row = pick(offers.sets, episode, profile, need_local, skip)
+            row = pick(offers.sets, episode, profile, need_local, skip,
+                       owned=below.get((season, episode)) if kind == "upgrade" else None, prefs=prefs)
             if not row:
                 continue
-            mode = eff["auto_new"] if kind == "new" else eff["auto_dub"]
+            mode = {"new": eff["auto_new"], "dub": eff["auto_dub"], "upgrade": eff["auto_upgrade"]}[kind]
             if mode == "download":
                 error = await _download(detail["show"], tmdb_id, season, episode, kind, row)
                 if not error:

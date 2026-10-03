@@ -2,7 +2,8 @@
 
 Settings of a show: quality profile (kind tv), language mode, torrents yes/no, and the automation
 (modules/series/auto.py): new episodes off / show / download (from the last owned one on, or every missing
-one), the Czech/Slovak dub of English episodes off / show / download.
+one), the Czech/Slovak dub of English episodes off / show / download, a better version of episodes that do
+not meet the show's quality profile off / show / download.
 NULL in a column = the default (setting "series_defaults"), so changing a default changes every show
 that has no own value.
 
@@ -46,9 +47,10 @@ LANG_MODES = ("local_or_temp", "local_only", "original")
 AUTO_MODES = ("off", "notify", "download")          # nothing / show what was found / download it
 AUTO_FROM = ("next", "all")                         # after the last owned episode / every missing one
 DEFAULTS = {"profile_id": None, "lang_mode": "local_or_temp", "torrent": True,
-            "auto_new": "off", "auto_from": "next", "auto_dub": "off"}
-FIELDS = ("profile_id", "lang_mode", "torrent", "auto_new", "auto_from", "auto_dub")
-_CHOICES = {"lang_mode": LANG_MODES, "auto_new": AUTO_MODES, "auto_dub": AUTO_MODES, "auto_from": AUTO_FROM}
+            "auto_new": "off", "auto_from": "next", "auto_dub": "off", "auto_upgrade": "off"}
+FIELDS = ("profile_id", "lang_mode", "torrent", "auto_new", "auto_from", "auto_dub", "auto_upgrade")
+_CHOICES = {"lang_mode": LANG_MODES, "auto_new": AUTO_MODES, "auto_dub": AUTO_MODES, "auto_from": AUTO_FROM,
+            "auto_upgrade": AUTO_MODES}
 
 
 def _valid(values: dict, none_ok: bool) -> None:
@@ -118,18 +120,19 @@ async def save_settings(tmdb_id: int, values: dict, show: dict | None = None) ->
     try:
         await db.execute(
             "INSERT INTO series_settings (tmdb_id, title, year, poster_url, profile_id, lang_mode, torrent, "
-            "auto_new, auto_from, auto_dub, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(tmdb_id) DO UPDATE SET "
+            "auto_new, auto_from, auto_dub, auto_upgrade, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(tmdb_id) DO UPDATE SET "
             "title = CASE WHEN excluded.title != '' THEN excluded.title ELSE series_settings.title END, "
             "year = CASE WHEN excluded.year != '' THEN excluded.year ELSE series_settings.year END, "
             "poster_url = COALESCE(excluded.poster_url, series_settings.poster_url), "
             "profile_id = excluded.profile_id, lang_mode = excluded.lang_mode, torrent = excluded.torrent, "
             "auto_new = excluded.auto_new, auto_from = excluded.auto_from, auto_dub = excluded.auto_dub, "
+            "auto_upgrade = excluded.auto_upgrade, "
             "updated_at = excluded.updated_at",
             (tmdb_id, show.get("title") or "", str(show.get("year") or ""), show.get("poster_url"),
              current["profile_id"], current["lang_mode"],
              None if current["torrent"] is None else int(current["torrent"]),
-             current["auto_new"], current["auto_from"], current["auto_dub"]))
+             current["auto_new"], current["auto_from"], current["auto_dub"], current["auto_upgrade"]))
         await db.commit()
     finally:
         await db.close()
