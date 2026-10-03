@@ -2,8 +2,8 @@
 DeLoreanem"), Groq guesses the titles and TMDB finds them; the user can say more ("ne, novější, seriál") and
 the guesses follow the whole talk.
 
-Only with a Groq key. Groq's free tier has daily limits that the other AI features share — every user has
-``DAILY_PER_USER`` questions a day and everyone together ``DAILY_TOTAL``.
+Only with a Groq key. Groq's free tier has daily limits that the other AI features share — a user has
+``DAILY_PER_USER`` questions a day, an admin is not limited (and sees what is left of the key's own limits).
 """
 
 import asyncio
@@ -14,13 +14,13 @@ from datetime import date
 
 import httpx
 
+from app.clients import groq_quota
 from app.clients.groq_scorer import GROQ_API_URL, _REASONING_PARAMS
 from app.clients.tmdb import TMDBClient
 
 logger = logging.getLogger(__name__)
 
-DAILY_PER_USER = 20
-DAILY_TOTAL = 60
+DAILY_PER_USER = 10
 MAX_TURNS = 8                  # messages of the talk sent (the newest)
 MAX_CHARS = 600                # of one message
 MAX_GUESSES = 8
@@ -45,18 +45,16 @@ SYSTEM = (
 )
 
 
-async def usage(db, user_id: int) -> tuple[int, int]:
-    """(this user's questions today, everyone's)."""
-    day = date.today().isoformat()
-    mine = await (await db.execute("SELECT COALESCE(SUM(count), 0) FROM ai_usage WHERE day = ? AND user_id = ? "
-                                   "AND feature = 'describe'", (day, user_id))).fetchone()
-    every = await (await db.execute("SELECT COALESCE(SUM(count), 0) FROM ai_usage WHERE day = ? "
-                                    "AND feature = 'describe'", (day,))).fetchone()
-    return mine[0], every[0]
+async def usage(db, user_id: int) -> int:
+    """This user's questions today."""
+    row = await (await db.execute("SELECT COALESCE(SUM(count), 0) FROM ai_usage WHERE day = ? AND user_id = ? "
+                                  "AND feature = 'describe'", (date.today().isoformat(), user_id))).fetchone()
+    return row[0]
 
 
-def left(mine: int, every: int) -> int:
-    return max(0, min(DAILY_PER_USER - mine, DAILY_TOTAL - every))
+def left(mine: int, admin: bool = False) -> int | None:
+    """Questions left today; None = not limited (an admin)."""
+    return None if admin else max(0, DAILY_PER_USER - mine)
 
 
 async def count(db, user_id: int) -> None:
@@ -99,6 +97,7 @@ async def ask_groq(cfg: dict, talk: list[dict]) -> tuple[list[dict], str]:
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(GROQ_API_URL, json=body, headers={
             "Authorization": f"Bearer {cfg['groq_api_key']}", "Content-Type": "application/json"})
+    groq_quota.note(resp)
     if resp.status_code == 429:
         raise ValueError("Groq má teď plno (limit) — zkus to za chvíli")
     resp.raise_for_status()

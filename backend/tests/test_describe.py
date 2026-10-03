@@ -41,7 +41,27 @@ async def test_daily_limit():
         for _ in range(3):
             await describe.count(db, 1)
         await describe.count(db, 2)
-        mine, every = await describe.usage(db, 1)
-        assert (mine, every) == (3, 4)
-        assert describe.left(mine, every) == describe.DAILY_PER_USER - 3
-        assert describe.left(0, describe.DAILY_TOTAL) == 0
+        assert await describe.usage(db, 1) == 3
+        assert describe.left(3) == describe.DAILY_PER_USER - 3
+        assert describe.left(99) == 0
+        assert describe.left(99, admin=True) is None          # an admin is not limited
+
+
+class _Resp:
+    def __init__(self, headers):
+        self.headers = headers
+
+
+def test_groq_quota_from_headers(tmp_path, monkeypatch):
+    from app.clients import groq_quota
+    monkeypatch.setattr(groq_quota, "FILE", tmp_path / "q.json")
+    monkeypatch.setattr(groq_quota, "_last", {})
+    assert groq_quota.get() is None
+    groq_quota.note(_Resp({"x-ratelimit-limit-requests": "1000", "x-ratelimit-remaining-requests": "987",
+                           "x-ratelimit-reset-requests": "1m10.5s", "x-ratelimit-limit-tokens": "8000",
+                           "x-ratelimit-remaining-tokens": "6500", "x-ratelimit-reset-tokens": "11ms"}))
+    q = groq_quota.get()
+    assert (q["requests_left"], q["requests_limit"]) == (987, 1000)
+    assert groq_quota._seconds("1h2m3.5s") == 3723.5 and groq_quota._seconds("120ms") == 0.12
+    monkeypatch.setattr(groq_quota, "_last", {})              # a restart: read back from the file
+    assert groq_quota.get()["requests_left"] == 987

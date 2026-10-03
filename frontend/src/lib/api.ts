@@ -1964,11 +1964,15 @@ export async function suggestEpisodesAi(folder: string, season: number | null, f
 // „Neznám název“ — the user describes a film / show, Groq guesses, TMDB finds them
 export interface DescribeTurn { role: "user" | "assistant"; content: string }
 export interface DescribeHit extends TMDBMovie { why: string }
-export interface DescribeAnswer { results: DescribeHit[]; ask: string; left: number; guessed: string[] }
+/** what is left of the Groq key's own limits (admin only): requests today, tokens this minute */
+export interface GroqLeft { requests_left: number | null; requests_limit: number | null; tokens_left: number | null; tokens_limit: number | null }
+/** left: questions left today, null = not limited (admin) */
+export interface DescribeStatus { enabled: boolean; left: number | null; daily: number; groq: GroqLeft | null }
+export interface DescribeAnswer { results: DescribeHit[]; ask: string; left: number | null; groq: GroqLeft | null; guessed: string[] }
 
-export async function getDescribeStatus(): Promise<{ enabled: boolean; left: number; daily: number }> {
+export async function getDescribeStatus(): Promise<DescribeStatus> {
   const res = await apiFetch(`${API_BASE}/api/search/describe`);
-  if (!res.ok) return { enabled: false, left: 0, daily: 0 };
+  if (!res.ok) return { enabled: false, left: 0, daily: 0, groq: null };
   return res.json();
 }
 

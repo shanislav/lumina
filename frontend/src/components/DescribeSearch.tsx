@@ -1,16 +1,25 @@
 "use client";
 
 import { useEffect, useRef, useState, FormEvent, KeyboardEvent } from "react";
-import { DescribeHit, DescribeTurn, TMDBMovie, describeTitle, getDescribeStatus } from "@/lib/api";
+import { DescribeHit, DescribeStatus, DescribeTurn, GroqLeft, TMDBMovie, describeTitle, getDescribeStatus } from "@/lib/api";
 
 interface Entry { role: "user" | "assistant"; text: string; hits?: DescribeHit[]; ask?: string; error?: boolean }
+
+const k = (n: number) => (n >= 1000 ? `${String(Math.round(n / 100) / 10).replace(".", ",")}k` : String(n));
+
+/** "Groq: 987/1000 dotazů dnes · 6,5k/8k tokenů za minutu" — what the key itself has left */
+function groqText(g: GroqLeft | null): string {
+  if (!g || g.requests_left == null) return "Groq: zbytek limitu se ukáže po prvním dotazu";
+  const req = `Groq: ${g.requests_left}/${g.requests_limit} dotazů dnes`;
+  return g.tokens_left == null ? req : `${req} · ${k(g.tokens_left)}/${k(g.tokens_limit ?? 0)} tokenů za minutu`;
+}
 
 const QUICK = ["Nic z toho", "Je to seriál", "Je to film", "Novější", "Starší", "Český / slovenský"];
 
 /** „Neznáš název?“ under the search box (only with Groq): the user describes the film in their own words,
  *  the AI guesses titles, each one opens like a search result. Saying more narrows the guesses. */
 export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) => void }) {
-  const [status, setStatus] = useState<{ enabled: boolean; left: number; daily: number } | null>(null);
+  const [status, setStatus] = useState<DescribeStatus | null>(null);
   const [open, setOpen] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [text, setText] = useState("");
@@ -46,7 +55,7 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
     setBusy(true);
     try {
       const a = await describeTitle(talkOf(next));
-      setStatus({ ...status, left: a.left });
+      setStatus({ ...status, left: a.left, groq: a.groq ?? status.groq });
       const summary = (a.guessed.length ? `Tipy: ${a.guessed.join(", ")}.` : "Nic mě nenapadlo.") + (a.ask ? ` ${a.ask}` : "");
       setEntries([...next, { role: "assistant", text: summary, hits: a.results, ask: a.ask }]);
     } catch (e) {
@@ -70,13 +79,14 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
     );
   }
 
-  const out = status.left <= 0;
+  const out = status.left !== null && status.left <= 0;
   return (
     <div ref={box} className="-mt-4 w-full max-w-2xl rounded-xl border border-violet-900/60 bg-zinc-900/70 shadow-lg">
       <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2">
         <span className="text-sm font-medium text-violet-300">✨ Najdi podle popisu</span>
-        <span className="ml-auto text-[11px] text-zinc-500" title="Groq má denní limity — Lumina hlídá, ať se jich neplýtvá">
-          dnes zbývá {status.left}/{status.daily}
+        <span className="ml-auto text-[11px] text-zinc-500"
+          title={status.left == null ? groqText(status.groq) : "Groq má denní limity — Lumina hlídá, ať se jich neplýtvá"}>
+          {status.left == null ? "bez limitu" : `dnes zbývá ${status.left}/${status.daily}`}
         </span>
         {entries.length > 0 && (
           <button onClick={() => setEntries([])} className="text-[11px] text-zinc-500 hover:text-zinc-300">znovu</button>
@@ -84,6 +94,9 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
         <button onClick={() => setOpen(false)} className="text-zinc-500 hover:text-zinc-300" aria-label="Zavřít">✕</button>
       </div>
 
+      {status.left == null && (
+        <p className="border-b border-zinc-800 px-4 py-1 text-[11px] text-zinc-500">{groqText(status.groq)}</p>
+      )}
       <div className="max-h-[60vh] space-y-3 overflow-y-auto px-4 py-3">
         {entries.length === 0 && (
           <p className="text-sm text-zinc-500">

@@ -366,13 +366,21 @@ async def describe_status(user=Depends(require("search"))) -> dict:
     from app.modules.search import describe
     cfg = await get_effective_settings()
     if not cfg.get("groq_api_key"):
-        return {"enabled": False, "left": 0, "daily": describe.DAILY_PER_USER}
+        return {"enabled": False, "left": 0, "daily": describe.DAILY_PER_USER, "groq": None}
     db = await get_db()
     try:
-        mine, every = await describe.usage(db, user.id)
+        mine = await describe.usage(db, user.id)
     finally:
         await db.close()
-    return {"enabled": True, "left": describe.left(mine, every), "daily": describe.DAILY_PER_USER}
+    return {"enabled": True, "left": describe.left(mine, user.is_admin), "daily": describe.DAILY_PER_USER,
+            "groq": _groq_left(user)}
+
+
+def _groq_left(user) -> dict | None:
+    """What is left of the Groq key's own limits (for an admin): requests today, tokens this minute."""
+    from app.clients import groq_quota
+    q = groq_quota.get() if user.is_admin else None
+    return {k: q.get(k) for k in ("requests_left", "requests_limit", "tokens_left", "tokens_limit")} if q else None
 
 
 @router.post("/search/describe")
@@ -389,8 +397,8 @@ async def describe_title(body: DescribeRequest, user=Depends(require("search")))
         raise HTTPException(400, "Popiš film nebo seriál")
     db = await get_db()
     try:
-        mine, every = await describe.usage(db, user.id)
-        if describe.left(mine, every) <= 0:
+        mine = await describe.usage(db, user.id)
+        if describe.left(mine, user.is_admin) == 0:
             raise HTTPException(429, "Dnešní limit AI otázek je vyčerpaný — zítra zase")
         try:
             guesses, ask = await describe.ask_groq(cfg, body.talk)
@@ -400,10 +408,10 @@ async def describe_title(body: DescribeRequest, user=Depends(require("search")))
             logger.warning("Describe: Groq failed: %s", e)
             raise HTTPException(502, "Groq neodpověděl — zkus to za chvíli")
         await describe.count(db, user.id)
-        left = describe.left(mine + 1, every + 1)
+        left = describe.left(mine + 1, user.is_admin)
     finally:
         await db.close()
     _, locale = _locale(cfg, None)
     results = await describe.resolve(cfg, locale, guesses)
-    return {"results": results, "ask": ask, "left": left,
+    return {"results": results, "ask": ask, "left": left, "groq": _groq_left(user),
             "guessed": [f"{g['title']} ({g['year']})" if g["year"] else g["title"] for g in guesses]}

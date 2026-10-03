@@ -15,6 +15,7 @@ import re
 
 import httpx
 
+from app.clients import groq_quota
 from app.clients.groq_scorer import GROQ_API_URL, _REASONING_PARAMS
 from app.core import naming
 from app.modules.library import episode_names
@@ -94,6 +95,7 @@ async def _ask(cfg: dict, files: list[dict], cat: dict, seasons: set[int]) -> di
         for attempt in range(3):
             resp = await client.post(GROQ_API_URL, json=body,
                                      headers={"Authorization": f"Bearer {cfg['groq_api_key']}", "Content-Type": "application/json"})
+            groq_quota.note(resp)
             if resp.status_code != 429:
                 break
             wait = _retry_after(resp)               # the free tier's tokens per minute: the second question waits

@@ -3,6 +3,8 @@ import logging
 
 import httpx
 
+from app.clients import groq_quota
+
 from app.models.schemas import ScorableFile, ScoredFile
 from app.sources.base import TORRENT_SOURCES
 
@@ -270,6 +272,7 @@ async def score_results(
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json=body,
         )
+        groq_quota.note(resp)
         resp.raise_for_status()
 
     payload = resp.json()
