@@ -304,13 +304,14 @@ async def _tv_names(db, tmdb_id: int, title: str, year: str) -> dict | None:
             "titles": titles}
 
 
-def _which_episode(name: str, season: int | None, episodes: list[int], cat: dict, action: dict
-                   ) -> tuple[int | None, list[int], str]:
+def _which_episode(name: str, season: int | None, episodes: list[int], cat: dict, action: dict,
+                   show_names=()) -> tuple[int | None, list[int], str]:
     """(season, episodes, why) of a downloaded file: its own episode name when it surely is a TMDB episode
     (uploaders number by another order — "S01E02 - Sopka" is TMDB's S01E03), else the episode the user
     picked it for (a single download, ``action``), else its numbers."""
     if len(episodes) <= 1 and cat:
-        hit = episode_names.release_episode(name, cat, season if season is not None else _int(action.get("season")))
+        hit = episode_names.release_episode(name, cat, season if season is not None else _int(action.get("season")),
+                                            show_names)
         if hit and hit[1]:
             (s, e), _sure, title = hit
             return s, [e], f"staženo jako „{name}“ — podle názvu dílu „{title}“"
@@ -451,7 +452,7 @@ async def import_episode(payload: dict) -> None:
                     continue
             file_numbers = (season, list(episodes))
             season, episodes, why = _which_episode(os.path.basename(path), season, episodes, cat,
-                                                   action if path == src and not extras else {})
+                                                   action if path == src and not extras else {}, [title])
             if (path != src or pack) and season and episodes and not action.get("replace_owned", True) \
                     and all((season, ep) in owned for ep in episodes):
                 logger.info("%s: S%02dE%02d is owned already — left in downloads", path, season, episodes[0])

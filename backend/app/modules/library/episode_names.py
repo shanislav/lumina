@@ -168,7 +168,20 @@ _JUNK = {"cz", "sk", "en", "eng", "cze", "czech", "dab", "dabing", "dabbing", "t
 _TOKEN_JUNK = re.compile(r"(?i)^(?:-\S+|repack\d*|proper\d*|\d{3,4}p|\d{1,2}bit|(?:19|20)\d{2}|5 ?1|[a-z]{2}\+[a-z]{2}(?:\+[a-z]{2})?)$")
 
 
-def release_titles(name: str) -> list[str]:
+def _after_show(stem: str, show_names) -> str | None:
+    """The rest of a name without an episode number after the show's name ("Top Gear - Polární speciál
+    (2007)" → " - Polární speciál"), None when it does not start with the show's name."""
+    words = stem.split()
+    plain = [tv_inventory.normalized(w) for w in words]
+    got = [i for i, w in enumerate(plain) if w]
+    for show in sorted(show_names or [], key=len, reverse=True):
+        want = [w for w in (tv_inventory.normalized(x) for x in show.split()) if w]
+        if want and len(got) > len(want) and [plain[i] for i in got[:len(want)]] == want:
+            return " - " + " ".join(words[got[len(want)]:])
+    return None
+
+
+def release_titles(name: str, show_names=()) -> list[str]:
     """Episode names a release's file name may carry after its number, cleanest first: "Městečko South Park
     S01E02-13 1997 CZ dab 1080p - Posilovač 4000.mkv" → ["Posilovač 4000"], "South.Park.S01E02.Posilovac.4000
     .DVDRip.XviD.CZ.ENG.mkv" → ["Posilovac 4000"]; none for "South Park S01E02 CZ Dabing FullHD+ by lfiq"."""
@@ -176,9 +189,13 @@ def release_titles(name: str) -> list[str]:
     stem = _TAGS.sub(" ", stem).replace("_", " ").replace("+", " + ")
     stem = re.sub(r"(?<=\w)\.(?=\w)", " ", stem)
     m = _SE_AT.search(stem)
-    if not m:
-        return []
-    after = re.sub(r"^\s*-\s*\d{1,3}\b", "", stem[m.end():])          # "S01E02-13": the 2nd of 13
+    if m:
+        after = re.sub(r"^\s*-\s*\d{1,3}\b", "", stem[m.end():])      # "S01E02-13": the 2nd of 13
+    else:
+        # no number: a special named after the show's name ("Top Gear - Polární speciál")
+        after = _after_show(stem, show_names)
+        if after is None:
+            return []
     after = re.sub(r"(?<=\S)-[A-Za-z0-9]+\s*$", "", after)             # "x264-AMB3R": the release group
     out = []
     for seg in re.split(r"\s+-\s+|\s*\.\s+|^\s*[-.]\s*", after):
@@ -205,10 +222,11 @@ def release_titles(name: str) -> list[str]:
     return out
 
 
-def release_episode(name: str, cat: dict[tuple[int, int], dict], season: int | None
+def release_episode(name: str, cat: dict[tuple[int, int], dict], season: int | None, show_names=()
                     ) -> tuple[tuple[int, int], bool, str] | None:
-    """(the TMDB episode a release's own episode name is, sure, the name) — None without a name TMDB knows."""
-    for title in release_titles(name):
+    """(the TMDB episode a release's own episode name is, sure, the name) — None without a name TMDB knows.
+    ``show_names``: a name without an episode number is read after the show's name (specials)."""
+    for title in release_titles(name, show_names):
         key, sure = best(title, cat, season)
         if key:
             return key, sure, title
@@ -219,7 +237,7 @@ def czech(text: str) -> bool:
     return bool(re.search(r"[ěščřžýáíéůúťďňĚŠČŘŽÝÁÍÉŮÚŤĎŇ]", text or ""))
 
 
-async def release_checker(tmdb_key: str, tmdb_id: int, season: int | None):
+async def release_checker(tmdb_key: str, tmdb_id: int, season: int | None, show_names=()):
     """(file name → ``release_episode`` of the show, the catalog) for a search; (None, {}) when TMDB has
     nothing (the numbers decide alone)."""
     from app.db import get_db
@@ -234,7 +252,7 @@ async def release_checker(tmdb_key: str, tmdb_id: int, season: int | None):
         await db.close()
     if not cat:
         return None, {}
-    return (lambda name: release_episode(name, cat, season)), cat
+    return (lambda name: release_episode(name, cat, season, show_names)), cat
 
 
 def _client(tmdb_key: str):

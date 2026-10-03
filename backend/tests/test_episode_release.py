@@ -269,3 +269,16 @@ def test_a_whole_show_pack_skips_the_episodes_the_user_has():
              {"index": 4, "name": "South Park S01-S28/Film/South Park - Peklo na zemi.mkv"},
              {"index": 5, "name": "South Park S01-S28/Season 02/South Park S02E06.mkv"}]
     assert imports.pack_skip(files, {(1, 2), (2, 5)}) == [0, 1, 3]
+
+
+def test_a_special_without_a_number_is_found_by_its_name():
+    """"Top Gear - Polární speciál (2007) CZ.avi": no SxxEyy — the name after the show's name is TMDB's S00E12."""
+    cat = {(0, 12): {"cs": "Polární speciál", "en": "Polar Special", "runtime": 62},
+           (0, 33): {"cs": "Speciál USA", "en": "USA Road Trip", "runtime": 67},
+           (1, 1): {"cs": "1. epizoda", "en": "Episode 1", "runtime": 60}}
+    shows = ["Top Gear"]
+    assert episode_names.release_episode("Top Gear - Polární speciál (2007) CZ.avi", cat, 0, shows) == \
+        ((0, 12), True, "Polární speciál")
+    assert episode_names.release_episode("Top.Gear.Polar.Special.2007.720p.mkv", cat, 0, shows)[0] == (0, 12)
+    assert episode_names.release_episode("Top Gear 1080p CZ.mkv", cat, 0, shows) is None
+    assert episode_names.release_episode("Fifth Gear - Polar Special.mkv", cat, 0, shows) is None

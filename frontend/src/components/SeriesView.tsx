@@ -62,7 +62,7 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
       setError(null);
       // open the seasons with something missing (the first one when all is there)
       setOpen((prev) => Object.keys(prev).length ? prev : Object.fromEntries(
-        d.seasons.filter((s) => s.counts.missing || s.counts.temp).slice(0, 2).map((s) => [s.season_number, true])));
+        d.seasons.filter((s) => s.season_number > 0 && (s.counts.missing || s.counts.temp)).slice(0, 2).map((s) => [s.season_number, true])));
     }).catch((e) => setError(e instanceof Error ? e.message : "Chyba"));
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tmdbId]);
 
@@ -251,17 +251,24 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
             <span key={k} className={STATE[k].dot} style={{ width: `${(c[k] / total) * 100}%` }} />
           ))}
         </span>
+        {season.season_number === 0 ? (
+        <span className="w-44 text-right text-xs text-zinc-500" title="Speciály, bonusy a souhrny — nepočítají se do chybějících">
+          mám {c.owned + c.temp} z {season.episodes.length}
+          {going > 0 && <span className="text-violet-300"> · stahuje se {going}</span>}
+        </span>
+        ) : (
         <span className="w-44 text-right text-xs text-zinc-400">
           {c.owned + c.temp}/{season.episodes.length - c.upcoming}
           {c.temp > 0 && <span className="text-amber-300"> · {c.temp} EN</span>}
           {c.missing > 0 && <span className="text-red-300"> · chybí {c.missing}</span>}
           {going > 0 && <span className="text-violet-300"> · stahuje se {going}</span>}
         </span>
+        )}
         <span className="text-xs text-zinc-500">{open ? "▲" : "▼"}</span>
       </button>
       {open && (
         <div className="border-t border-zinc-800">
-          {canSearch && c.missing + c.temp > 0 && (
+          {canSearch && season.season_number > 0 && c.missing + c.temp > 0 && (
             <div className="flex items-center gap-3 px-4 py-1.5 text-xs">
               <button onClick={() => setWhole(!whole)} className="text-violet-300 hover:text-violet-200">
                 {whole ? "Zavřít celou sérii" : `Celá série — chybějící díly najednou (${c.missing + c.temp})`}

@@ -213,17 +213,19 @@ async def episode_name_check(cfg: dict, tmdb_id: int | None, season: int | None,
         return None, [], None
     from app.modules.library import episode_names
 
-    by_name, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, season)
-    entry = cat.get((season, episode)) or {}
-    anime = False
+    anime, show_names = False, []
     client = TMDBClient(cfg.get("tmdb_api_key", ""))
     try:
         show = await client.get_tv_full(tmdb_id)
         anime = show.get("original_language") == "ja" and any(g in ("Animation", "Animace") for g in show.get("genres", []))
-    except Exception as e:  # noqa: BLE001 — no anime numbers then
+        show_names = [t for t in (show.get("title"), show.get("original_title"), *(show.get("titles_by_lang") or {}).values(),
+                                  *show.get("alternative_titles", [])) if t]
+    except Exception as e:  # noqa: BLE001 — no anime numbers, no names of specials then
         logger.info("TMDB show %s: %s", tmdb_id, e)
     finally:
         await client.close()
+    by_name, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, season, show_names)
+    entry = cat.get((season, episode)) or {}
     other = episode_names.other_numbers(cat, season, episode, anime) if cat else None
     return by_name, [t for t in (entry.get("cs"), entry.get("en")) if t and naming.episode_title(t)], other
 

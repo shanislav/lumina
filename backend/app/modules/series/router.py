@@ -51,7 +51,7 @@ async def show_with_seasons(tmdb_id: int, fresh: bool = False) -> tuple[dict, di
                 logger.info("TMDB season %s of %s failed: %s", n, tmdb_id, e)
                 return []
 
-        numbers = [s["season_number"] for s in show["seasons"]]
+        numbers = [s["season_number"] for s in show["seasons"]] + [0]       # the specials too (if any)
         episodes = dict(zip(numbers, await asyncio.gather(*(season(n) for n in numbers))))
     finally:
         await client.close()
@@ -74,6 +74,11 @@ async def series_detail(tmdb_id: int, fresh: bool = False) -> dict:
     seasons = [store.season_view(s, episodes.get(s["season_number"], []), owned, mode, local, today)
                for s in show["seasons"]]
     totals = {k: sum(s["counts"][k] for s in seasons) for k in ("owned", "temp", "missing", "upcoming")}
+    if episodes.get(0):
+        # the specials last, out of the totals (Top Gear has 120 of them — "missing" would mean nothing)
+        seasons.append(store.season_view({"season_number": 0, "name": "Speciály", "episode_count": len(episodes[0]),
+                                          "air_date": "", "poster_url": None, "specials": True},
+                                         episodes[0], owned, mode, local, today))
     profiles = await load_profiles()
     profile = pick_profile(profiles, settings["effective"]["profile_id"], "tv")
     return {"show": show, "settings": settings, "profile": {"id": profile.id, "name": profile.name},
