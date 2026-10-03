@@ -83,16 +83,17 @@ def wanted_episodes(seasons: list[dict], effective: dict, below: dict | None = N
         out += [(s["season_number"], e["episode"], "dub") for s in regular for e in s["episodes"] if e["state"] == "temp"]
     if effective.get("auto_upgrade", "off") != "off" and below:
         out += [(s["season_number"], e["episode"], "upgrade") for s in regular for e in s["episodes"]
-                if e["state"] == "owned" and (s["season_number"], e["episode"]) in below]
+                if e["state"] in ("owned", "unknown") and (s["season_number"], e["episode"]) in below]
     return out
 
 
 async def below_profile(seasons: list[dict], profile, prefs) -> dict[tuple[int, int], dict]:
     """Owned episodes whose file does not meet the profile (its minimums, or its target score when it has one),
     by the file's MediaInfo from the library scan: {(season, episode): {quality_score, language, file_size}}.
-    A file without MediaInfo yet is left alone (the next scan reads it)."""
+    A file without MediaInfo yet is left alone (the next scan reads it). Its sound's language unknown ("zvuk
+    nezjištěn", an old AVI): ``language`` "?" — only a file with Czech/Slovak sound may replace it."""
     files = {(s["season_number"], e["episode"]): e["file"] for s in seasons if s.get("season_number")
-             for e in s["episodes"] if e["state"] == "owned" and e.get("file") and e["file"].get("file_path")}
+             for e in s["episodes"] if e["state"] in ("owned", "unknown") and e.get("file") and e["file"].get("file_path")}
     if not files:
         return {}
     db = await get_db()
@@ -117,7 +118,7 @@ async def below_profile(seasons: list[dict], profile, prefs) -> dict[tuple[int, 
         if block(row, profile) is None and (not profile.cutoff or reached_cutoff(row, profile)):
             continue
         out[key] = {"quality_score": row["quality_score"], "file_size": f.get("size") or 0,
-                    "language": ",".join(l.upper() for l in f.get("languages") or [])}
+                    "language": ",".join(l.upper() for l in f.get("languages") or []) or "?"}
     return out
 
 
@@ -339,7 +340,8 @@ async def check_show(tmdb_id: int) -> dict:
         for episode, kind in items:
             rec = known.get((season, episode, kind))
             skip = {rec["row"].get("ident")} if rec and rec["status"] == "dismissed" else set()
-            need_local = kind == "dub" or eff["lang_mode"] == "local_only"
+            need_local = kind == "dub" or eff["lang_mode"] == "local_only" or (
+                kind == "upgrade" and below.get((season, episode), {}).get("language") == "?" and eff["lang_mode"] != "original")
             row = pick(offers.sets, episode, profile, need_local, skip,
                        owned=below.get((season, episode)) if kind == "upgrade" else None, prefs=prefs)
             if not row:

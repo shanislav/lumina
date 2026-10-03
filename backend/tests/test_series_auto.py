@@ -142,3 +142,8 @@ async def test_below_profile_reads_the_files_media(db):
         {"episode": 3, "state": "owned", "file": {"file_path": "/s/none.mkv", "filename": "x", "size": 1, "languages": []}}]}]
     got = await auto.below_profile(seasons, Profile(id=1, name="S", kind="tv", min_resolution="720p"), Prefs(local_langs=("cs",)))
     assert list(got) == [(1, 1)] and got[(1, 1)]["language"] == "CS"
+
+
+def test_upgrade_of_an_episode_of_unknown_sound_wants_czech():
+    eff = {"auto_new": "off", "auto_from": "next", "auto_dub": "off", "auto_upgrade": "notify", "lang_mode": "local_or_temp"}
+    assert auto.wanted_episodes([season(1, ["unknown"])], eff, {(1, 1): {"language": "?"}}) == [(1, 1, "upgrade")]
