@@ -116,3 +116,12 @@ async def test_rate_limit_waits_and_asks_again(monkeypatch):
     monkeypatch.setattr(ai_episodes.asyncio, "sleep", fake_sleep)
     out = await ai_episodes._ask({"groq_api_key": "x"}, FILES, CAT, {8})
     assert out == {0: ((8, 9), 90)} and slept == [1.5]
+
+
+def test_files_without_a_name_come_with_their_dialogue_and_episodes_with_a_plot():
+    text = "1\n00:00:00,000 --> 00:00:10,000\nPřeklad---Iver.rs---\n\n2\n00:00:10,740 --> 00:00:12,160\nHej, <i>podívejte</i>!\n"
+    assert ai_episodes._clean_subtitles(text) == "Hej, podívejte!"
+    files = [{"path": "/s/x.mp4", "name": "S02E01.mp4", "own": "", "duration": 1420, "dialogue": "Hej, podívejte!"}]
+    cat = {(1, 13): {"cs": "", "en": "You Aren't E-Rank, Are You", "runtime": 24, "plot": "Jinwoo joins a raid."}}
+    prompt, _eps = ai_episodes._lines(files, cat, {1})
+    assert "   dialogue: Hej, podívejte!" in prompt and "— Jinwoo joins a raid." in prompt and "S02E01" not in prompt.split("TMDB")[1]

@@ -835,6 +835,35 @@ class TvAiMap(BaseModel):
     files: list[str] | None = None     # or these files (relative to the TV library)
 
 
+async def _dialogue_and_plots(client, tmdb_id: int, files: list[dict], cat: dict) -> None:
+    """Files whose name says nothing get a few lines of their subtitles, TMDB's episodes of their seasons a
+    short plot — the AI matches what is said to what happens (Solo Leveling "S02E01.mp4" ↔ S01E13)."""
+    import asyncio
+    from app.modules.library import ai_episodes
+
+    need = [f for f in files[:ai_episodes.MAX_FILES] if not f.get("own")]
+    if not need:
+        return
+    gate = asyncio.Semaphore(4)
+
+    async def one(f):
+        async with gate:
+            f["dialogue"] = await ai_episodes.dialogue(f["path"])
+    await asyncio.gather(*(one(f) for f in need))
+    if not any(f.get("dialogue") for f in need):
+        return
+    seasons = {f["season"] + d for f in need if f.get("season") is not None for d in (-1, 0, 1)} & {k[0] for k in cat}
+    for sn in sorted(seasons):
+        try:
+            cs = await client.get_season(tmdb_id, sn)
+            en = {e["episode_number"]: e.get("overview") or "" for e in await client.get_season(tmdb_id, sn, language="en-US")}
+        except Exception:  # noqa: BLE001 — no plots then
+            continue
+        for e in cs:
+            if (sn, e["episode_number"]) in cat:
+                cat[(sn, e["episode_number"])]["plot"] = e.get("overview") or en.get(e["episode_number"], "")
+
+
 @router.post("/tv/ai-map", dependencies=[Depends(require("library.edit"))])
 async def tv_ai_map(body: TvAiMap) -> dict:
     """AI (Groq) suggests which TMDB episode each file is — a suggestion the user accepts or not."""
@@ -854,6 +883,7 @@ async def tv_ai_map(body: TvAiMap) -> dict:
         if not files:
             raise HTTPException(400, "Žádné soubory k návrhu")
         cat = await episode_names.catalog(client, db, tmdb_id)
+        await _dialogue_and_plots(client, tmdb_id, files, cat)
         try:
             found = await ai_episodes.suggest(cfg, files, cat, body.season)
         except ValueError as e:

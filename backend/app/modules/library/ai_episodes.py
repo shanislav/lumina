@@ -23,13 +23,17 @@ logger = logging.getLogger(__name__)
 
 MAX_FILES = 60
 MAX_EPISODES = 160
+DIALOGUE_CHARS = 320           # a file without a name: this much of its subtitles' text
+PLOT_CHARS = 170               # TMDB's plot of an episode (when files come with dialogue)
 MAX_WAIT = 40                  # seconds a rate limit may hold the question (the UI waits for it)
 
 SYSTEM = (
     "You match video files of one TV show to TMDB episodes. File names are the user's (often Czech, a translation "
     "of the episode's name, an order of the uploader's own); TMDB names are given in Czech and English. Decide by "
     "the meaning of the names (translate), people or places named in them, the order, and the length in minutes. "
-    "Two files may be copies of one episode. Answer only JSON: an array of [file_index, season, episode, confidence] "
+    "Two files may be copies of one episode. Some files come with a few lines of their dialogue (subtitles) and "
+    "some episodes with a short plot: match who and what the dialogue is about to the plot. "
+    "Answer only JSON: an array of [file_index, season, episode, confidence] "
     "with confidence 0-100; use null for season and episode when you do not know. No explanation."
 )
 
@@ -40,11 +44,14 @@ def _lines(files: list[dict], cat: dict, seasons: set[int]) -> tuple[str, list[t
     out = ["Files (in the user's order):"]
     for i, f in enumerate(files[:MAX_FILES]):
         out.append(f"{i}. {f.get('own') or f['name']} ({round((f.get('duration') or 0) / 60)} min)")
+        if f.get("dialogue"):
+            out.append(f"   dialogue: {f['dialogue']}")
     out.append("TMDB episodes:")
     for s, e in eps:
         v = cat[(s, e)]
         names = " / ".join(dict.fromkeys(t for t in (v.get("cs"), v.get("en")) if t))
-        out.append(f"S{s:02d}E{e:02d} {names} ({v.get('runtime') or '?'} min)")
+        plot = (v.get("plot") or "")[:PLOT_CHARS]
+        out.append(f"S{s:02d}E{e:02d} {names} ({v.get('runtime') or '?'} min)" + (f" — {plot}" if plot else ""))
     return "\n".join(out), eps
 
 
@@ -160,3 +167,57 @@ async def suggest(cfg: dict, files: list[dict], cat: dict, season: int | None) -
 
 def _label(key: tuple[int, int]) -> str:
     return f"S{key[0]:02d}E{key[1]:02d}"
+
+
+_SUB_SIDE = (".srt", ".vtt", ".ass", ".ssa")
+
+
+def _clean_subtitles(text: str) -> str:
+    """The spoken lines of a subtitle file, without numbers, times, tags and the first credits."""
+    lines = []
+    for line in text.splitlines():
+        line = re.sub(r"<[^>]+>|\{[^}]*\}", "", line).strip()
+        if not line or line.isdigit() or "-->" in line or line.upper().startswith(("WEBVTT", "[", "DIALOGUE:", "STYLE:")):
+            if line.startswith("Dialogue:"):
+                line = line.split(",", 9)[-1]
+            else:
+                continue
+        if re.search(r"(?i)překlad|titulky|subtitles|časování|www\.|\.(cz|sk|com|net)", line):
+            continue                                     # the translator's credits
+        lines.append(line)
+    return " / ".join(lines)
+
+
+async def dialogue(path: str) -> str:
+    """A few lines of what is said in a video — its subtitles next to it, else the first text subtitle track
+    in it (ffmpeg) — for files whose name says nothing."""
+    import asyncio
+    import os
+
+    stem = os.path.splitext(path)[0]
+    folder = os.path.dirname(path)
+    try:
+        side = sorted(f for f in os.listdir(folder)
+                      if f.startswith(os.path.basename(stem) + ".") and f.lower().endswith(_SUB_SIDE))
+    except OSError:
+        side = []
+    text = ""
+    if side:
+        try:
+            with open(os.path.join(folder, side[0]), encoding="utf-8", errors="replace") as fh:
+                text = fh.read(60000)
+        except OSError:
+            text = ""
+    else:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-v", "error", "-i", path, "-map", "0:s:0", "-t", "900", "-f", "srt", "-",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+            text = out.decode("utf-8", errors="replace")
+        except (OSError, asyncio.TimeoutError):
+            text = ""
+    spoken = _clean_subtitles(text)
+    # past the opening (recaps, the intro song): from the middle of the first quarter
+    start = len(spoken) // 10
+    return spoken[start:start + DIALOGUE_CHARS].strip(" /")
