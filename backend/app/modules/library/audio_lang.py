@@ -66,11 +66,15 @@ async def set_language(path: str, lang: str, track: int | None = None, media: di
             args += [f"-metadata:s:a:{i}", f"language={LANGS[lang]}"]
         args += ["-movflags", "+faststart", tmp]
         code, out = await _run(*args, timeout=1800)
-        size = os.path.getsize(tmp) if os.path.exists(tmp) else 0
-        if code != 0 or size < 0.9 * os.path.getsize(path):
+        # the copy must hold the same: every video and audio track, the whole length (its size may be
+        # smaller — an MP4 often carries padding)
+        copy = await probe_async(tmp) if code == 0 and os.path.exists(tmp) else {}
+        same = bool(copy) and len(copy.get("audio") or []) == len(audio) \
+            and abs((copy.get("duration_s") or 0) - (media.get("duration_s") or 0)) <= 2
+        if not same:
             if os.path.exists(tmp):
                 os.remove(tmp)
-            raise RuntimeError(f"ffmpeg: {out.strip()[-200:] or 'soubor nevznikl'}")
+            raise RuntimeError(f"ffmpeg: {out.strip()[-200:] or 'kopie nesedí s originálem — soubor nechávám'}")
         os.replace(tmp, path)
         written = True
     if written:
