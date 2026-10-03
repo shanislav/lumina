@@ -296,6 +296,11 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
         ddl = ddl_queries(query, original_title, en_title, local_titles, ctx.year)
         torrent_queries = torrent_query_list(query, en_title, original_title)
     all_results = await search_sources(sources, ddl, torrent_queries)
+    if ctx.episode and not all_results and ddl:
+        # nothing by the number: the show's name alone ("Fotr na tripu 7. série 5. díl" — the rules judge them)
+        plain = _unique_names([q.rsplit(" ", 1)[0] for q in ddl[:1]])
+        all_results = await search_sources(sources, plain, [])
+        ddl = [*ddl, *plain]
     logger.info("Search '%s': %d unique results (DDL queries %s)", query, len(all_results), ddl)
     if not all_results:
         return Offers(ctx, prefs)
