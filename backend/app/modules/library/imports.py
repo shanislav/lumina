@@ -410,6 +410,18 @@ def _catalog_title(cat: dict, season: int, episode: int) -> str:
     return cs if naming.episode_title(cs) else (entry.get("en") or "") if naming.episode_title(entry.get("en") or "") else ""
 
 
+def _lang_from_release(media: dict, release: str) -> dict:
+    """A file whose one sound track has no language (AVI, untagged MKV), from a release that names exactly one
+    language ("Chalupáři S01 (1975)(CZ)"): that language — Lumina keeps it (the renamer writes "[CS]")."""
+    from app.modules.library.files import _detect_language
+    audio = (media or {}).get("audio") or []
+    langs = [l for l in (_detect_language(release or "") or "").split(",") if l]
+    if len(audio) != 1 or (audio[0].get("lang") or "").strip() or len(langs) != 1:
+        return media
+    code = {"CZ": "cs", "SK": "sk", "EN": "en", "JP": "ja"}.get(langs[0])
+    return {**media, "audio": [{**audio[0], "lang": code}]} if code else media
+
+
 def _int(value) -> int | None:
     try:
         return int(value)
@@ -486,7 +498,7 @@ async def import_episode(payload: dict) -> None:
                 continue
             name, media = os.path.basename(path), None
             if names and season is not None and episodes:
-                media = await probe_async(path)
+                media = _lang_from_release(await probe_async(path), action.get("release") or os.path.basename(path))
                 st = names["settings"]
                 _r, season_rel, name = naming.episode_paths(
                     names["info"], season, episodes, media, os.path.basename(path), names["title"],
@@ -514,7 +526,8 @@ async def import_episode(payload: dict) -> None:
                 # the file's name keeps saying another number: the user's word (as the TV renamer's) holds it
                 await tv_inventory.set_episode_override(db, target, season, episodes[0], why)
                 logger.info("%s: S%02dE%02d — %s", os.path.basename(path), season, episodes[0], why)
-            media = media if media is not None else await probe_async(target)
+            media = media if media is not None else _lang_from_release(await probe_async(target),
+                                                                       action.get("release") or os.path.basename(path))
             stat = os.stat(target)
             # the TV renamer reads MediaInfo from here (no second probe on the next scan)
             await db.execute("INSERT OR REPLACE INTO tv_media (file_path, size, mtime, media) VALUES (?, ?, ?, ?)",

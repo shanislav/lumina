@@ -59,6 +59,9 @@ async def start_download(req: DownloadRequest, requested_by: str = "", queued: b
 
     registry = SourceRegistry.get()
     source = registry.get_source_by_id(req.source_id) if req.source_id else None
+    action = dict(req.library_action or {})
+    if (req.content_type or "") == "tv" and req.file_name:
+        action.setdefault("release", req.file_name)      # what the uploader called it ("Chalupáři S01 (CZ)")
     source_label = SOURCE_LABELS.get(req.source, req.source)
 
     if source and source.download_backend == DownloadBackend.ARIA2:
@@ -72,7 +75,7 @@ async def start_download(req: DownloadRequest, requested_by: str = "", queued: b
                 headers=download_info.get("headers"),
             )
             from app.modules.downloads.store import track_download
-            await track_download(gid, req.tmdb_id, req.title, req.year, "aria2", target_dir, req.content_type or "movie", req.library_action, source_label, requested_by)
+            await track_download(gid, req.tmdb_id, req.title, req.year, "aria2", target_dir, req.content_type or "movie", action or req.library_action, source_label, requested_by)
             ensure_monitor_running()
             return {
                 "gid": gid,
@@ -99,7 +102,7 @@ async def start_download(req: DownloadRequest, requested_by: str = "", queued: b
             # the finished file is found by its path and imported from there
             torrent_hash = await qbt.add_torrent(req.magnet_url, save_path="")
             from app.modules.downloads.store import track_download
-            await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie", req.library_action, source_label, requested_by)
+            await track_download(torrent_hash, req.tmdb_id, req.title, req.year, "qbittorrent", target_dir, req.content_type or "movie", action or req.library_action, source_label, requested_by)
             ensure_monitor_running()
             return {
                 "hash": torrent_hash,

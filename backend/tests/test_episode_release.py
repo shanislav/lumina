@@ -317,3 +317,11 @@ async def test_a_new_episode_gets_the_name_tmdb_gave_it_since():
     names = {"titles": {(29, 2): "2. epizoda"}}
     cat = {(29, 2): {"cs": "2. epizoda", "en": "Billionaire Weenietown"}}
     assert await imports._episode_title(names, cat, 2190, 29, 2) == "Billionaire Weenietown"
+
+
+def test_an_untagged_track_takes_the_one_language_the_release_names():
+    f = imports._lang_from_release
+    assert f({"audio": [{"lang": ""}]}, "Chalupáři S01 (1975)(CZ)")["audio"][0]["lang"] == "cs"
+    assert f({"audio": [{"lang": ""}]}, "Friends S01-S10 (CZ/SK/EN)")["audio"][0]["lang"] == ""     # which one?
+    assert f({"audio": [{"lang": "en"}]}, "South Park CZ")["audio"][0]["lang"] == "en"               # the file knows
+    assert f({"audio": [{"lang": ""}, {"lang": ""}]}, "X CZ")["audio"][0]["lang"] == ""             # two tracks
