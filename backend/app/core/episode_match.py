@@ -123,7 +123,7 @@ def _title_fit(prefix: str, name: str, titles: list[str]) -> str:
         if want <= have:
             # a one-word name inside a longer one is another show ("Dark" in "Dark Matter", "Into the Dark")
             extra = {t for t in have - known - STOPWORDS if not _TAG_TOKEN.match(t)}
-            if len(want) > 1 or not extra or not prefix:
+            if len(want) > 1 or not extra:
                 return "full"
             best = "part"
         elif want & have and len(want & have) >= max(1, len(want) // 2):
@@ -131,10 +131,15 @@ def _title_fit(prefix: str, name: str, titles: list[str]) -> str:
     return best
 
 
-_TAG_TOKEN = re.compile(r"^(?:\d+p?|\d+bit|cz|sk|en|eng|cze|czech|dab|dabing|tit|titulky|cztit|sktit|web|dl|webdl|"
+_TAG_TOKEN = re.compile(r"^(?:s\d+e\d+|\d+x\d+|\d+p?|\d+bit|cz|sk|en|eng|cze|czech|dab|dabing|tit|titulky|cztit|sktit|web|dl|webdl|"
                         r"webrip|bluray|bdrip|dvdrip|hdtv|x26[45]|h26[45]|hevc|avc|xvid|divx|aac|ac3|dts|ddp5|multi|"
                         r"komplet|hd|fhd|fullhd|uhd|remux|hdr|dv|amzn|nf|cr|mkv|mp4|avi|sub|subs|tv|serie|serial|"
                         r"season|serija|by)$")
+
+
+def show_fit(name: str, titles: list[str]) -> str:
+    """full | part | none — the show's name in a file name."""
+    return _title_fit(parse_episode(name).prefix, name, titles)
 
 
 def judge_episode(name: str, titles: list[str], season: int, episode: int,

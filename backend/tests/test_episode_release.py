@@ -128,7 +128,13 @@ def test_release_groups_and_longer_show_names():
     from app.core.episode_match import judge_episode
     assert episode_names.release_titles("Dark.S03E08.1080p.WEB.H264-GHOSTS CZ Titulky.mkv") == []
     for other in ("Dark Matter S02E03 (2026) 1080p_cz.tit.mkv", "Into.The.Dark.02x03.DVB-C.CZ.avi",
-                  "Dark Winds S02E03 CzTit.mp4"):
+                  "Dark Winds S02E03 CzTit.mp4", "S02E03 His Dark Materials CZ titulky.mkv"):
         assert judge_episode(other, ["Dark"], 2, 3).status == "unsure", other
     assert judge_episode("Dark (2017) S02E03 CZ dabing 1080p.mkv", ["Dark"], 2, 3).status == "yes"
     assert judge_episode("Městečko South Park 720p CZ S01E02.mkv", ["Městečko South Park", "South Park"], 1, 2).status == "yes"
+
+    # the wanted episode's name in another show's file ("Dark Winds S03E03 Chiidii Ghosts" for Dark's "Ghosts")
+    hit = [[2, 3], True, "Chiidii Ghosts"]
+    ctx = MovieContext(titles=["Dark"], runtime=50, episode={"season": 2, "episode": 3,
+                                                           "by_name": {"Dark Winds S03E03 Chiidii Ghosts.mkv": hit}})
+    assert evaluate("Dark Winds S03E03 Chiidii Ghosts.mkv", 1, ctx, prefs_from_settings({}))["film"] == "unsure"

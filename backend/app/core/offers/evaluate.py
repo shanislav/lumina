@@ -7,7 +7,7 @@ when verified details arrive from the source — the same rules, one place.
 import re
 from dataclasses import dataclass, field
 
-from app.core.episode_match import judge_episode, parse_episode
+from app.core.episode_match import judge_episode, parse_episode, show_fit
 from app.core.film_match import judge
 from app.core.quality import Prefs, facts_from_media, facts_from_name, language_tier, prefs_from_settings, score, video_bitrate  # noqa: F401
 
@@ -93,14 +93,14 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
     if ctx.episode and ctx.episode.get("by_name") is not None:
         want = (int(ctx.episode.get("season") or 0), int(ctx.episode.get("episode") or 0))
         hit = ctx.episode["by_name"].get(name)
-        ev = judge_episode_name(ev, want, hit)
+        ev = judge_episode_name(ev, want, hit, name, ctx.titles)
         if not hit and ctx.episode.get("mixed") and ev["film"] == "yes" and not pack:
             # named files of this number are other episodes too: a file without a name may be either
             ev["film"], ev["film_reasons"] = "unsure", [*ev["film_reasons"], "bez názvu dílu — uploadeři tento díl číslují různě"]
     return ev
 
 
-def judge_episode_name(ev: dict, want: tuple[int, int], hit) -> dict:
+def judge_episode_name(ev: dict, want: tuple[int, int], hit, name: str = "", titles: list[str] = ()) -> dict:
     """The episode's own name in a release against TMDB's names — ``hit`` [[season, episode], sure, the
     name] (the library's ``episode_names.release_episode``, kept in ``MovieContext.episode["by_name"]`` per
     file name, so a re-evaluation with verified details judges the same): uploaders number by another order
@@ -114,7 +114,9 @@ def judge_episode_name(ev: dict, want: tuple[int, int], hit) -> dict:
     if key == want:
         ev["name_ok"] = True
         if ev["film"] == "no":
-            ev["film"], ev["film_reasons"] = "yes", [f"podle názvu dílu „{title}“ (číslo v souboru je jiné)"]
+            # the episode's name, not the show's: a show named only partly stays unsure
+            status = "yes" if show_fit(name, titles) == "full" else "unsure"
+            ev["film"], ev["film_reasons"] = status, [f"podle názvu dílu „{title}“ (číslo v souboru je jiné)"]
         else:
             ev["film_reasons"] = [*ev["film_reasons"], f"název dílu sedí („{title}“)"]
     elif sure:
