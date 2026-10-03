@@ -115,10 +115,11 @@ def group_sets(rows: list[dict], season: int, wanted: list[int], runtime: int) -
                 "resolution": statistics.mode([by_episode[e].get("resolution") or "?" for e in covered]),
                 "langs": langs,
                 "local": statistics.median(tiers) >= 2,
+                "local_subs": statistics.median(tiers) >= 1,      # Czech/Slovak subtitles at least
                 "size": sum(by_episode[e]["size"] for e in covered),
                 "sources": sorted({by_episode[e]["source"] for e in covered}),
             })
-    sets.sort(key=lambda s: (-s["local"], -s["coverage"], -s["score"]))
+    sets.sort(key=lambda s: (-s["local"], -s["local_subs"], -s["coverage"], -s["score"]))
     return sets
 
 
