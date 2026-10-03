@@ -65,3 +65,46 @@ def test_groq_quota_from_headers(tmp_path, monkeypatch):
     assert groq_quota._seconds("1h2m3.5s") == 3723.5 and groq_quota._seconds("120ms") == 0.12
     monkeypatch.setattr(groq_quota, "_last", {})              # a restart: read back from the file
     assert groq_quota.get()["requests_left"] == 987
+
+
+class _FakeTmdb:
+    def __init__(self, key):
+        pass
+
+    async def keyword(self, name):
+        return {"telekinesis": {"id": 1, "name": "telekinesis"}, "genius": {"id": 2, "name": "genius"}}.get(name)
+
+    async def by_keyword(self, kid, kind="movie", language=""):
+        if kind == "tv":
+            return []
+        films = {1: [{"id": 10, "title": "Phenomenon", "release_date": "1996-07-05", "overview": "A bright light"},
+                     {"id": 11, "title": "Carrie", "release_date": "1976-11-03", "overview": "Prom"}],
+                 2: [{"id": 10, "title": "Phenomenon", "release_date": "1996-07-05", "overview": "A bright light"}]}
+        return films[kid]
+
+    async def close(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_candidates_most_keywords_first(monkeypatch):
+    monkeypatch.setattr(describe, "TMDBClient", _FakeTmdb)
+    out = await describe.candidates({"tmdb_api_key": "x"}, ["telekinesis", "genius", "nonsense"])
+    assert out == ["Phenomenon (1996, film): A bright light", "Carrie (1976, film): Prom"]
+
+
+@pytest.mark.asyncio
+async def test_question_carries_the_candidates(monkeypatch):
+    asked = []
+
+    async def fake_groq(cfg, messages, max_tokens, temperature=0.3):
+        asked.append(messages)
+        if len(asked) == 1:
+            return '["telekinesis"]'
+        return '{"guesses": [{"title": "Phenomenon", "year": 1996, "type": "movie", "why": "světlo"}], "ask": ""}'
+
+    monkeypatch.setattr(describe, "_groq", fake_groq)
+    monkeypatch.setattr(describe, "TMDBClient", _FakeTmdb)
+    guesses, _ = await describe.ask_groq({"tmdb_api_key": "x"}, [{"role": "user", "content": "hýbe věcmi myšlenkou"}])
+    assert guesses[0]["title"] == "Phenomenon"
+    assert "Phenomenon (1996, film)" in asked[1][-1]["content"]

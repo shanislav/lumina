@@ -54,6 +54,21 @@ class TMDBClient:
         resp.raise_for_status()
         return resp.json().get("results", [])
 
+    async def keyword(self, name: str) -> dict | None:
+        """TMDB's plot keyword of this name ("telekinesis"), else its closest one."""
+        resp = await self._http.get(f"{API_BASE}/search/keyword", params={"api_key": self._api_key, "query": name})
+        resp.raise_for_status()
+        found = resp.json().get("results") or []
+        exact = [k for k in found if k["name"].lower() == name.lower()]
+        return (exact or found[:1] or [None])[0]
+
+    async def by_keyword(self, keyword_id: int, kind: str = "movie", language: str = "cs-CZ") -> list[dict]:
+        """The best-known films / shows (``kind`` movie|tv) with a plot keyword, raw TMDB items."""
+        resp = await self._http.get(f"{API_BASE}/discover/{kind}", params={
+            "api_key": self._api_key, "with_keywords": keyword_id, "sort_by": "vote_count.desc", "language": language})
+        resp.raise_for_status()
+        return resp.json().get("results") or []
+
     async def _parse_movies(self, items: list, limit: int = 20) -> list[TMDBMovie]:
         movies: list[TMDBMovie] = []
         for item in items[:limit]:

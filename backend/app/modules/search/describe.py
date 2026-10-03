@@ -2,6 +2,10 @@
 DeLoreanem"), Groq guesses the titles and TMDB finds them; the user can say more ("ne, novější, seriál") and
 the guesses follow the whole talk.
 
+The model alone remembers famous titles only (asked for "a man struck by a light becomes a genius and moves
+things by thought" it never says Phenomenon). So it first turns the description into plot keywords, TMDB gives
+the best-known titles tagged with them, and the model picks from those (with their plot) and its own memory.
+
 Only with a Groq key. Groq's free tier has daily limits that the other AI features share — a user has
 ``DAILY_PER_USER`` questions a day, an admin is not limited (and sees what is left of the key's own limits).
 """
@@ -17,6 +21,7 @@ import httpx
 from app.clients import groq_quota
 from app.clients.groq_scorer import GROQ_API_URL, _REASONING_PARAMS
 from app.clients.tmdb import TMDBClient
+from app.modules.library.ai_episodes import _retry_after
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +29,11 @@ DAILY_PER_USER = 10
 MAX_TURNS = 8                  # messages of the talk sent (the newest)
 MAX_CHARS = 600                # of one message
 MAX_GUESSES = 8
+MAX_KEYWORDS = 8
+PER_KEYWORD = 20               # best-known titles of one keyword (films and shows each)
+MAX_CANDIDATES = 35
+OVERVIEW_CHARS = 160
+MAX_WAIT = 20                  # seconds a rate limit may hold the question
 
 AI_USAGE = """
 CREATE TABLE IF NOT EXISTS ai_usage (
@@ -42,6 +52,12 @@ SYSTEM = (
     '"why": "one short sentence in Czech why it fits"}], "ask": "one short question in Czech that would tell the '
     'guesses apart, or empty"}. At most 8 guesses, only titles that really exist. When the viewer rejects a title, '
     "do not offer it again."
+)
+
+KEYWORDS = (
+    "Turn a viewer's vague description of a film or TV show (any language) into up to 8 TMDB-style plot keywords "
+    "in English: short tags such as 'telekinesis', 'time travel', 'genius', 'brain tumor', 'heist', 'small town'. "
+    "Only what the description says, no title guesses. Answer only a JSON array of strings."
 )
 
 
@@ -87,24 +103,84 @@ def _parse(content: str) -> tuple[list[dict], str]:
     return guesses[:MAX_GUESSES], str(data.get("ask") or "").strip()[:300]
 
 
-async def ask_groq(cfg: dict, talk: list[dict]) -> tuple[list[dict], str]:
+async def _groq(cfg: dict, messages: list[dict], max_tokens: int, temperature: float = 0.3) -> str:
+    """One question; a rate limit of a few seconds (tokens per minute — the second question of one search)
+    is waited out."""
     model = cfg.get("groq_model") or ""
-    body = {"model": model, "temperature": 0.3, "max_tokens": 1500,
-            "messages": [{"role": "system", "content": SYSTEM}, *_messages(talk)]}
+    body = {"model": model, "temperature": temperature, "max_tokens": max_tokens, "messages": messages}
     for prefix, params in _REASONING_PARAMS.items():
         if model.startswith(prefix):
             body.update(params)
     async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(GROQ_API_URL, json=body, headers={
-            "Authorization": f"Bearer {cfg['groq_api_key']}", "Content-Type": "application/json"})
-    groq_quota.note(resp)
-    if resp.status_code == 429:
-        raise ValueError("Groq má teď plno (limit) — zkus to za chvíli")
+        for attempt in range(2):
+            resp = await client.post(GROQ_API_URL, json=body, headers={
+                "Authorization": f"Bearer {cfg['groq_api_key']}", "Content-Type": "application/json"})
+            groq_quota.note(resp)
+            if resp.status_code != 429:
+                break
+            wait = _retry_after(resp)
+            if attempt or wait > MAX_WAIT:
+                raise ValueError("Groq má teď plno (limit) — zkus to za chvíli")
+            await asyncio.sleep(wait)
     resp.raise_for_status()
     payload = resp.json()
     logger.info("Groq %s describe, tokens=%s", model, (payload.get("usage") or {}).get("total_tokens"))
+    return payload["choices"][0]["message"]["content"] or ""
+
+
+async def plot_keywords(cfg: dict, talk: list[dict]) -> list[str]:
+    """TMDB-style plot keywords of everything the user said."""
+    said = "\n".join(m["content"] for m in _messages(talk) if m["role"] == "user")
+    content = await _groq(cfg, [{"role": "system", "content": KEYWORDS}, {"role": "user", "content": said}], 400, 0.2)
+    data = json.loads(content[content.find("["):content.rfind("]") + 1])
+    return [str(k).strip() for k in data if str(k).strip()][:MAX_KEYWORDS]
+
+
+async def candidates(cfg: dict, keywords: list[str]) -> list[str]:
+    """Films and shows TMDB tags with those keywords — the best-known of each, the most keywords in common
+    first: "Phenomenon (1996, film): An ordinary man sees a bright light…" for the model to choose from (it
+    does not remember lesser-known titles by itself)."""
+    client = TMDBClient(cfg["tmdb_api_key"])
     try:
-        return _parse(payload["choices"][0]["message"]["content"])
+        found = [k for k in await asyncio.gather(*(client.keyword(k) for k in keywords), return_exceptions=True)
+                 if isinstance(k, dict)]
+        lists = await asyncio.gather(*(client.by_keyword(k["id"], kind, "en-US") for k in found
+                                       for kind in ("movie", "tv")), return_exceptions=True)
+    finally:
+        await client.close()
+    hits: dict[tuple[str, int], int] = {}
+    info: dict[tuple[str, int], str] = {}
+    for i, items in enumerate(lists):
+        if not isinstance(items, list):
+            continue
+        kind = "movie" if i % 2 == 0 else "tv"
+        for item in items[:PER_KEYWORD]:
+            key = (kind, item["id"])
+            hits[key] = hits.get(key, 0) + 1
+            year = (item.get("release_date") or item.get("first_air_date") or "")[:4]
+            info[key] = (f"{item.get('title') or item.get('name')} ({year}, {'show' if kind == 'tv' else 'film'}): "
+                         f"{(item.get('overview') or '')[:OVERVIEW_CHARS]}")
+    best = sorted(hits, key=lambda k: -hits[k])[:MAX_CANDIDATES]
+    logger.info("Describe: keywords %s → %d candidates", [k["name"] for k in found], len(best))
+    return [info[k] for k in best]
+
+
+async def ask_groq(cfg: dict, talk: list[dict]) -> tuple[list[dict], str]:
+    """Plot keywords → TMDB's titles with them → the model picks from those and its own memory."""
+    messages = _messages(talk)
+    try:
+        cands = await candidates(cfg, await plot_keywords(cfg, talk))
+    except Exception as e:                  # the guesses go on without them
+        logger.info("Describe: no TMDB candidates: %s", e)
+        cands = []
+    if cands and messages:
+        last = messages[-1]
+        messages[-1] = {**last, "content": last["content"] + "\n\nTMDB titles tagged with plot keywords of the "
+                        "description (the right one may be among them, or not — then use your own):\n"
+                        + "\n".join(f"- {c}" for c in cands)}
+    content = await _groq(cfg, [{"role": "system", "content": SYSTEM}, *messages], 2000)
+    try:
+        return _parse(content)
     except (json.JSONDecodeError, ValueError, KeyError, IndexError) as e:
         raise ValueError("AI odpověděla nesrozumitelně — zkus to popsat jinak") from e
 
