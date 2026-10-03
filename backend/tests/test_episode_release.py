@@ -282,3 +282,15 @@ def test_a_special_without_a_number_is_found_by_its_name():
     assert episode_names.release_episode("Top.Gear.Polar.Special.2007.720p.mkv", cat, 0, shows)[0] == (0, 12)
     assert episode_names.release_episode("Top Gear 1080p CZ.mkv", cat, 0, shows) is None
     assert episode_names.release_episode("Fifth Gear - Polar Special.mkv", cat, 0, shows) is None
+
+
+def test_a_name_that_fits_many_episodes_decides_nothing():
+    """"Top Gear speciál. Když se nedaří III": "speciál" fits every "… speciál" — not the Polar Special."""
+    cat = {(0, 12): {"cs": "Polární speciál", "en": "Polar Special"}, (0, 34): {"cs": "Indický speciál", "en": "India Special"},
+           (0, 33): {"cs": "Speciál USA", "en": "USA Road Trip"}}
+    name = "Top Gear speciál. Když se nedaří III(CZ)[TvRip][1080pLQ].mkv"
+    hit = episode_names.release_episode(name, cat, 0, ["Top Gear"])
+    assert hit is None or hit[1] is False
+    by_name = {name: [list(hit[0]), hit[1], hit[2]]} if hit else {}
+    ctx = MovieContext(titles=["Top Gear"], runtime=60, episode={"season": 0, "episode": 12, "by_name": by_name})
+    assert evaluate(name, 1, ctx, prefs_from_settings({}))["film"] == "no"

@@ -123,6 +123,8 @@ def judge_episode_name(ev: dict, want: tuple[int, int], hit, name: str = "", tit
         return ev
     (s, e), sure, title = hit
     key = (int(s), int(e))
+    if not sure:
+        return ev                                    # a name that fits more episodes ("speciál") says nothing
     if key == want:
         ev["name_ok"] = True
         if ev["film"] == "no":

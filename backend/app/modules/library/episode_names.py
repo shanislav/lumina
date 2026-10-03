@@ -226,11 +226,14 @@ def release_episode(name: str, cat: dict[tuple[int, int], dict], season: int | N
                     ) -> tuple[tuple[int, int], bool, str] | None:
     """(the TMDB episode a release's own episode name is, sure, the name) — None without a name TMDB knows.
     ``show_names``: a name without an episode number is read after the show's name (specials)."""
+    unsure = None
     for title in release_titles(name, show_names):
         key, sure = best(title, cat, season)
-        if key:
-            return key, sure, title
-    return None
+        if key and sure:
+            return key, True, title
+        if key and not unsure:
+            unsure = (key, False, title)                    # "speciál" fits many — a surer name may follow
+    return unsure
 
 
 def czech(text: str) -> bool:
