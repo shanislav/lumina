@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from datetime import date
 
 from app.clients import ai
@@ -107,17 +108,23 @@ def _parse(content: str) -> tuple[list[dict], str]:
     return guesses[:MAX_GUESSES], str(data.get("ask") or "").strip()[:300]
 
 
-async def _groq(cfg: dict, messages: list[dict], max_tokens: int, temperature: float = 0.3) -> str:
+DEADLINE_S = 50          # the whole answer — the web server cuts a request at 60 s
+GROQ_RESERVE_S = 15      # Gemini stops trying models while Groq still has this much time to answer
+
+
+async def _groq(cfg: dict, messages: list[dict], max_tokens: int, temperature: float = 0.3,
+                deadline: float | None = None) -> str:
     """One question to Groq (the first message is the system one)."""
     answer = await ai.ask(cfg, "groq", messages[0]["content"], messages[1:], max_tokens=max_tokens,
-                          temperature=temperature)
+                          temperature=temperature, deadline=deadline)
     return answer.text
 
 
-async def plot_keywords(cfg: dict, talk: list[dict]) -> list[str]:
+async def plot_keywords(cfg: dict, talk: list[dict], deadline: float | None = None) -> list[str]:
     """TMDB-style plot keywords of everything the user said."""
     said = "\n".join(m["content"] for m in _messages(talk) if m["role"] == "user")
-    content = await _groq(cfg, [{"role": "system", "content": KEYWORDS}, {"role": "user", "content": said}], 400, 0.2)
+    content = await _groq(cfg, [{"role": "system", "content": KEYWORDS}, {"role": "user", "content": said}], 400, 0.2,
+                          deadline=deadline)
     data = json.loads(content[content.find("["):content.rfind("]") + 1])
     return [str(k).strip() for k in data if str(k).strip()][:MAX_KEYWORDS]
 
@@ -151,11 +158,11 @@ async def candidates(cfg: dict, keywords: list[str]) -> list[str]:
     return [info[k] for k in best]
 
 
-async def ask_groq(cfg: dict, talk: list[dict]) -> tuple[list[dict], str]:
+async def ask_groq(cfg: dict, talk: list[dict], deadline: float | None = None) -> tuple[list[dict], str]:
     """Groq: plot keywords → TMDB's titles with them → the model picks from those and its own memory."""
     messages = _messages(talk)
     try:
-        cands = await candidates(cfg, await plot_keywords(cfg, talk))
+        cands = await candidates(cfg, await plot_keywords(cfg, talk, deadline))
     except Exception as e:                  # the guesses go on without them
         logger.info("Describe: no TMDB candidates: %s", e)
         cands = []
@@ -164,17 +171,18 @@ async def ask_groq(cfg: dict, talk: list[dict]) -> tuple[list[dict], str]:
         messages[-1] = {**last, "content": last["content"] + "\n\nTMDB titles tagged with plot keywords of the "
                         "description (the right one may be among them, or not — then use your own):\n"
                         + "\n".join(f"- {c}" for c in cands)}
-    content = await _groq(cfg, [{"role": "system", "content": SYSTEM}, *messages], 2000)
+    content = await _groq(cfg, [{"role": "system", "content": SYSTEM}, *messages], 2000, deadline=deadline)
     try:
         return _parse(content)
     except (json.JSONDecodeError, ValueError, KeyError, IndexError) as e:
         raise ValueError("AI odpověděla nesrozumitelně — zkus to popsat jinak") from e
 
 
-async def ask_gemini(cfg: dict, talk: list[dict]) -> tuple[list[dict], str, bool, str]:
+async def ask_gemini(cfg: dict, talk: list[dict], deadline: float | None = None) -> tuple[list[dict], str, bool, str]:
     """Gemini searches Google for the scene described (forums, lists "films where…") — finds titles a model
     does not remember. (guesses, question, did it search)"""
-    answer = await ai.ask(cfg, "gemini", SYSTEM + SEARCH, _messages(talk), max_tokens=2000, search=True)
+    answer = await ai.ask(cfg, "gemini", SYSTEM + SEARCH, _messages(talk), max_tokens=2000, search=True,
+                          deadline=deadline)
     try:
         guesses, question = _parse(answer.text)
     except (json.JSONDecodeError, ValueError, KeyError, IndexError) as e:
@@ -189,14 +197,17 @@ async def ask(cfg: dict, talk: list[dict]) -> dict:
     if not who:
         raise ValueError("AI není nastavená (Nastavení → AI: Groq nebo Gemini)")
     last: Exception | None = None
-    for provider in who:
+    deadline = time.monotonic() + DEADLINE_S
+    for i, provider in enumerate(who):
         try:
             if provider == "gemini":
-                guesses, question, searched, by = await ask_gemini(cfg, talk)
+                # Groq after it: Gemini gives up in time for Groq to answer
+                mine = deadline - (GROQ_RESERVE_S if "groq" in who[i + 1:] else 0)
+                guesses, question, searched, by = await ask_gemini(cfg, talk, mine)
             else:
-                (guesses, question), searched, by = await ask_groq(cfg, talk), False, ai.LABELS[provider]
+                (guesses, question), searched, by = await ask_groq(cfg, talk, deadline), False, ai.LABELS[provider]
         except Exception as e:                       # the other AI answers
-            logger.warning("Describe: %s failed: %s", ai.LABELS[provider], e)
+            logger.warning("Describe: %s failed: %s", ai.LABELS[provider], str(e) or type(e).__name__)
             last = e
             continue
         if guesses or question or provider == who[-1]:

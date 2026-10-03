@@ -145,10 +145,10 @@ async def test_episodes_ask_each_ai_once(monkeypatch):
 async def test_describe_gemini_first_groq_when_gemini_fails(monkeypatch):
     from app.modules.search import describe
 
-    async def gemini_fails(cfg, talk):
+    async def gemini_fails(cfg, talk, deadline=None):
         raise ai.LimitError("Gemini: překročený limit")
 
-    async def groq(cfg, talk):
+    async def groq(cfg, talk, deadline=None):
         return [{"title": "Phenomenon", "year": 1996, "type": "movie", "why": "x"}], ""
     monkeypatch.setattr(describe, "ask_gemini", gemini_fails)
     monkeypatch.setattr(describe, "ask_groq", groq)
@@ -180,3 +180,24 @@ async def test_a_bad_question_does_not_cross_out_the_models(monkeypatch):
     assert ai.gemini_usage()["out"] == ["gemini-x"]
     with pytest.raises(ai.AIError):
         await ai._gemini_ask(BOTH, "sys", [], 100, 0.3, False, "gemini-3.7-flash")
+
+
+async def test_a_hanging_gemini_model_gives_way_in_time(monkeypatch):
+    """A model that does not answer (a timeout) — the next one; past the caller's deadline nothing more is asked."""
+    import time as t
+    import httpx
+
+    calls = []
+
+    def answer(url, body):
+        calls.append(url)
+        if "3.7" in url:
+            raise httpx.ReadTimeout("")
+        return gemini_ok("ok")
+    fake_http(monkeypatch, answer)
+    monkeypatch.setattr(ai, "_models", {"at": 9e12, "key": hash("k"), "names": ["gemini-3.7-flash", "gemini-3.6-flash"]})
+    got = await ai.ask({**BOTH, "gemini_model": "gemini-3.7-flash"}, "gemini", "sys",
+                       [{"role": "user", "content": "q"}], deadline=t.monotonic() + 30)
+    assert got.model == "gemini-3.6-flash" and len(calls) == 2
+    with pytest.raises(ai.LimitError):
+        await ai.ask(BOTH, "groq", "sys", [{"role": "user", "content": "q"}], deadline=t.monotonic() + 2)

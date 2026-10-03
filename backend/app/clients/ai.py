@@ -53,6 +53,8 @@ ORDER = {
     "scoring": ("groq", "gemini"),     # many short questions while searching: Groq is faster
 }
 MAX_WAIT = 20                          # seconds a per-minute limit may hold a question
+MODEL_TIMEOUT = 40                     # one Gemini model that hangs (it happens) gives way to the next one
+MIN_LEFT = 6                           # less time left than this: no new question (the caller's deadline)
 
 USAGE_FILE = DB_PATH.parent / "gemini_usage.json"
 _gemini: dict = {}
@@ -204,14 +206,30 @@ def retry_after(resp) -> float:
     return float(m.group(1)) if m else 10.0
 
 
-async def _groq(cfg: dict, system: str, messages: list[dict], max_tokens: int, temperature: float) -> str:
+def _why(e: Exception) -> str:
+    """An exception for the log — a timeout has an empty message."""
+    return str(e) or type(e).__name__
+
+
+def _left(deadline: float | None, cap: float) -> float:
+    """Seconds a question may take: ``cap``, or less as the caller's deadline nears."""
+    if deadline is None:
+        return cap
+    left = deadline - time.monotonic()
+    if left < MIN_LEFT:
+        raise LimitError("AI: vypršel čas na odpověď")
+    return min(cap, left)
+
+
+async def _groq(cfg: dict, system: str, messages: list[dict], max_tokens: int, temperature: float,
+                timeout: float = 90) -> str:
     model = cfg.get("groq_model") or ""
     body = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
             "messages": [{"role": "system", "content": system}, *messages]}
     for prefix, params in REASONING_PARAMS.items():
         if model.startswith(prefix):
             body.update(params)
-    async with httpx.AsyncClient(timeout=90) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(3):
             resp = await client.post(GROQ_API_URL, json=body, headers={
                 "Authorization": f"Bearer {cfg['groq_api_key']}", "Content-Type": "application/json"})
@@ -250,7 +268,7 @@ def _quota_model(text: str) -> str:
 
 
 async def _gemini_ask(cfg: dict, system: str, messages: list[dict], max_tokens: int, temperature: float,
-                      search: bool, model: str = "") -> tuple[str, bool]:
+                      search: bool, model: str = "", timeout: float = 120) -> tuple[str, bool]:
     model = model or cfg.get("gemini_model") or DEFAULT_GEMINI_MODEL
     contents = _gemini_contents(messages)
     if not contents:
@@ -266,7 +284,7 @@ async def _gemini_ask(cfg: dict, system: str, messages: list[dict], max_tokens: 
     if search:
         body["tools"] = [{"google_search": {}}]
     url = f"{GEMINI_API}/models/{model}:generateContent"
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(2):
             resp = await client.post(url, json=body, headers={"x-goog-api-key": cfg["gemini_api_key"],
                                                               "Content-Type": "application/json"})
@@ -304,8 +322,9 @@ async def _gemini_ask(cfg: dict, system: str, messages: list[dict], max_tokens: 
 
 
 async def ask(cfg: dict, provider: str, system: str, messages: list[dict], *, max_tokens: int = 2000,
-              temperature: float = 0.3, search: bool = False) -> Answer:
-    """One question to one AI."""
+              temperature: float = 0.3, search: bool = False, deadline: float | None = None) -> Answer:
+    """One question to one AI. ``deadline`` (time.monotonic()): the answer must come before it — a model that
+    hangs gives way to the next one in time (the web server cuts a request at 60 s)."""
     if provider == "gemini":
         if search and gemini_usage().get("no_search"):
             search = False                       # Google said no today: do not ask (and wait) again
@@ -319,18 +338,22 @@ async def ask(cfg: dict, provider: str, system: str, messages: list[dict], *, ma
                 continue
             try:
                 try:
-                    text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, search, model)
+                    text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, search, model,
+                                                       _left(deadline, MODEL_TIMEOUT))
                 except SearchLimitError as e:
                     logger.info("%s — asking without it until tomorrow", e)
                     gemini_usage()["no_search"] = True
                     search = False
-                    text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, False, model)
+                    text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, False, model,
+                                                       _left(deadline, MODEL_TIMEOUT))
                 return Answer(text, "gemini", searched, model)
             except (AIError, httpx.HTTPError) as e:
-                logger.info("Gemini %s: %s — the next model", model, e)
+                logger.info("Gemini %s: %s — the next model", model, _why(e))
                 last = e
-        raise last if isinstance(last, LimitError) else AIError(str(last))
-    return Answer(await _groq(cfg, system, messages, max_tokens, temperature), "groq")
+                if deadline is not None and deadline - time.monotonic() < MIN_LEFT:
+                    break                        # no time for another model: the caller's other AI answers
+        raise last if isinstance(last, LimitError) else AIError(_why(last) if last else "Gemini neodpověděl")
+    return Answer(await _groq(cfg, system, messages, max_tokens, temperature, _left(deadline, 90)), "groq")
 
 
 async def chat(cfg: dict, feature: str, system: str, messages: list[dict], *, max_tokens: int = 2000,
@@ -345,7 +368,7 @@ async def chat(cfg: dict, feature: str, system: str, messages: list[dict], *, ma
             return await ask(cfg, provider, system, messages, max_tokens=max_tokens, temperature=temperature,
                              search=search)
         except Exception as e:                       # the next AI answers
-            logger.warning("%s (%s) failed: %s", LABELS[provider], feature, e)
+            logger.warning("%s (%s) failed: %s", LABELS[provider], feature, _why(e))
             last = e
     if isinstance(last, LimitError):
         raise LimitError(f"{last} — zkus to za chvíli")

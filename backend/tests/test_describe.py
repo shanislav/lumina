@@ -97,7 +97,7 @@ async def test_candidates_most_keywords_first(monkeypatch):
 async def test_question_carries_the_candidates(monkeypatch):
     asked = []
 
-    async def fake_groq(cfg, messages, max_tokens, temperature=0.3):
+    async def fake_groq(cfg, messages, max_tokens, temperature=0.3, deadline=None):
         asked.append(messages)
         if len(asked) == 1:
             return '["telekinesis"]'
