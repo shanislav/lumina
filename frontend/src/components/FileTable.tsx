@@ -444,6 +444,12 @@ export default function FileTable({
                         ✓ název dílu sedí
                       </span>
                     )}
+                    {(file.film_reasons ?? []).filter((r) => r.startsWith("jiné číslování") || r.startsWith("absolutní číslo")).map((r) => (
+                      <span key={r} title="Uploader čísluje jinak než TMDB (série vysílaná na části, anime) — díl se uloží pod číslo z TMDB"
+                        className="rounded bg-sky-950/70 px-1.5 py-0.5 text-[10px] font-medium text-sky-300">
+                        {r}
+                      </span>
+                    ))}
                     {file.name_ok === false && (
                       <span title="Uploader čísluje jinak — název dílu v souboru patří jinému dílu" className="rounded bg-red-950/70 px-1.5 py-0.5 text-[10px] font-medium text-red-300">
                         {(file.film_reasons ?? [])[0] ?? "jiný díl podle názvu"}

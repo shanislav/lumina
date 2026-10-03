@@ -374,6 +374,14 @@ def pack_skip(files: list[dict], owned: set[tuple[int, int]]) -> list[int]:
     return sorted(skip)
 
 
+def _catalog_title(cat: dict, season: int, episode: int) -> str:
+    """TMDB's name of the episode in the user's language, else the English one (a show new to the library has
+    no names in library_episodes yet)."""
+    entry = cat.get((season, episode)) or {}
+    cs = entry.get("cs") or ""
+    return cs if naming.episode_title(cs) else (entry.get("en") or "") if naming.episode_title(entry.get("en") or "") else ""
+
+
 def _int(value) -> int | None:
     try:
         return int(value)
@@ -454,7 +462,7 @@ async def import_episode(payload: dict) -> None:
                 st = names["settings"]
                 _r, season_rel, name = naming.episode_paths(
                     names["info"], season, episodes, media, os.path.basename(path), names["title"],
-                    os.path.splitext(path)[1], names["titles"].get((season, episodes[0]), ""),
+                    os.path.splitext(path)[1], names["titles"].get((season, episodes[0])) or _catalog_title(cat, season, episodes[0]),
                     st["tv_folder_format"], st["tv_season_format"], st["tv_file_format"])
                 folder = season_dirs.get(season) or os.path.join(show_root, season_rel)
             else:
