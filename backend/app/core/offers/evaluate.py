@@ -90,9 +90,13 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
         "is_dubbed": tier >= 2,
         "pack": pack,               # a TV season / show pack holding the episode, not the episode alone
     }
-    if ctx.episode and ctx.episode.get("by_name"):
+    if ctx.episode and ctx.episode.get("by_name") is not None:
         want = (int(ctx.episode.get("season") or 0), int(ctx.episode.get("episode") or 0))
-        ev = judge_episode_name(ev, want, ctx.episode["by_name"].get(name))
+        hit = ctx.episode["by_name"].get(name)
+        ev = judge_episode_name(ev, want, hit)
+        if not hit and ctx.episode.get("mixed") and ev["film"] == "yes" and not pack:
+            # named files of this number are other episodes too: a file without a name may be either
+            ev["film"], ev["film_reasons"] = "unsure", [*ev["film_reasons"], "bez názvu dílu — uploadeři tento díl číslují různě"]
     return ev
 
 

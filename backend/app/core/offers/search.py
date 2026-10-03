@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from app.clients.groq_scorer import score_results
 from app.clients.tmdb import TMDBClient
 from app.core.offers.details import cached_details, get_details
+from app.core.episode_match import parse_episode
 from app.core.offers.evaluate import RELEVANCE, MovieContext, evaluate, recommended_key, year_of
 from app.core.quality import Prefs, prefs_from_settings
 from app.core.text import clean_text
@@ -295,6 +296,12 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
     if ctx.episode and by_name:
         hits = {r.name: by_name(r.name) for r in all_results}
         ctx.episode["by_name"] = {n: [list(h[0]), h[1], h[2]] for n, h in hits.items() if h}
+        # files numbered as the wanted episode whose own name is surely another one: uploaders number it
+        # differently, a file of the number without a name is not sure
+        ctx.episode["mixed"] = any(
+            h and h[1] and tuple(h[0]) != (season, episode)
+            and (p := parse_episode(n)).season == season and p.episodes == [episode]
+            for n, h in hits.items())
     known = await cached_details([(r.source_type.value, r.ident) for r in all_results])
     rows: list[dict] = []
     for r in all_results:
