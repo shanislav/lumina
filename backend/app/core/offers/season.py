@@ -16,7 +16,7 @@ import statistics
 from dataclasses import dataclass, field
 
 from app.clients.tmdb import TMDBClient
-from app.core.episode_match import _plain, parse_episode
+from app.core.episode_match import _plain, parse_episode, show_fit
 from app.core.film_match import tokens
 from app.core.offers.details import cached_details, get_details
 from app.core.offers.evaluate import MovieContext, evaluate
@@ -287,9 +287,10 @@ async def find_show_packs(cfg: dict, tmdb_id: int) -> dict:
         held = info.seasons or ([info.season] if info.season is not None else [])
         first = held[0] if held else (tmdb_seasons[0] if tmdb_seasons else 1)
         ctx = MovieContext(titles=titles, runtime=runtime, episode={"season": first, "episode": 1})
+        if show_fit(r.name, titles) != "full":
+            continue                                       # another show ("House of the Dragon" for "House")
         ev = evaluate(r.name, r.size, ctx, prefs, None, r.duration_s, r.width, r.height)
-        if ev["film"] == "no":
-            continue                                       # another show
+        ev["film"], ev["film_reasons"] = "yes", []        # the show's name, a pack: what it holds is "seasons"
         covered = [s for s in tmdb_seasons if s in held] if held else list(tmdb_seasons)
         packs.append({"ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
                       "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders,

@@ -15,7 +15,7 @@ _QUALITY_RE = {
 }
 
 _LANG_RE = {
-    "CZ": r"(?i)\b(CZ|[Čč]esk|czech|dabing|dab)\b",
+    "CZ": r"(?i)\b(CZ|CS|[Čč]esk|czech|dabing|dab)\b",     # CS: the renamer's [CS+EN] (ISO 639-1)
     "SK": r"(?i)\b(SK|[Ss]lovensk|slovak)\b",
     "EN": r"(?i)\b(EN|ENG|english)\b",
     "JP": r"(?i)\b(JP|JPN|japanese)\b",

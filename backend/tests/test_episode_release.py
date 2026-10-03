@@ -169,3 +169,26 @@ async def test_a_whole_show_pack_brings_what_is_missing(tmp_path, monkeypatch):
     assert files[3].exists()                                       # the film is no episode
     assert [r[:2] for r in _episodes()] == [(1, 2), (1, 3), (2, 5)]
     assert (season.parent / "Season 02" / "05 - Ikeova obřízka.avi").exists()
+
+
+async def test_an_episodes_languages_are_its_audio_tracks(tmp_path, monkeypatch):
+    """Rick a Morty "[CS+EN].mkv" was "EN" (the name's CZ was looked for, the renamer writes CS): the scan
+    takes the audio tracks MediaInfo read."""
+    import json as _json
+    from app.db import get_db
+    from app.modules.library import importer
+    from app.modules.library.files import _detect_language
+    assert _detect_language("Rick a Morty - S04E01 [1080p x265] [CS].mkv") == "CZ"
+    await _setup(tmp_path, monkeypatch)
+    path = str(tmp_path / "Serials" / "South Park" / "Season 01" / "South Park - S01E02 - Sopka.avi")
+    db = await get_db()
+    try:
+        await db.execute("UPDATE library_episodes SET language = 'EN' WHERE file_path = ?", (path,))
+        await db.execute("INSERT INTO tv_media (file_path, size, mtime, media) VALUES (?, 5, 1, ?)",
+                         (path, _json.dumps({"audio": [{"lang": "cs"}, {"lang": "en"}]})))
+        await db.commit()
+        await importer._tv_media(db, [{"file_path": path, "file_size": 5, "added_at": 1, "filename": "x"}])
+        row = await (await db.execute("SELECT language FROM library_episodes WHERE file_path = ?", (path,))).fetchone()
+    finally:
+        await db.close()
+    assert row[0] == "CS,EN"

@@ -851,5 +851,18 @@ async def _tv_media(db, files: list[dict]) -> None:
             await db.commit()           # never hold the database for long (other modules write too)
     present = {f["file_path"] for f in files}
     await db.executemany("DELETE FROM tv_media WHERE file_path = ?", [(p,) for p in known if p not in present])
+    # an episode's languages are its audio tracks, not what its name says (a name may say "EN" of a CS+EN file)
+    fix = []
+    for ep_id, lang, media in await (await db.execute(
+            "SELECT e.id, e.language, m.media FROM library_episodes e JOIN tv_media m ON m.file_path = e.file_path "
+            "WHERE e.has_file = 1")).fetchall():
+        try:
+            audio = (json.loads(media or "{}") or {}).get("audio") or []
+        except ValueError:
+            continue
+        langs = ",".join(sorted({a["lang"].upper() for a in audio if a.get("lang")}))
+        if langs and langs != (lang or ""):
+            fix.append((langs, ep_id))
+    await db.executemany("UPDATE library_episodes SET language = ? WHERE id = ?", fix)
     await db.commit()
 
