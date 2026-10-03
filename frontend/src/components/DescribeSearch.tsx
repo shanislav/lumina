@@ -183,7 +183,7 @@ export default function DescribeSearch({ onPick, big = false, ask }: {
             {e.by && <p className="text-[10px] text-zinc-600">odpověděl {e.by}</p>}
           </div>
         ))}
-        {busy && <p className="animate-pulse text-sm text-zinc-500">Přemýšlím…</p>}
+        {busy && <p className="animate-pulse text-sm text-zinc-500">Přemýšlím… <span className="text-xs text-zinc-600">(důkladná AI může přemýšlet i minutu)</span></p>}
         <div ref={end} />
       </div>
 

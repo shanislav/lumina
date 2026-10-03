@@ -322,9 +322,11 @@ async def _gemini_ask(cfg: dict, system: str, messages: list[dict], max_tokens: 
 
 
 async def ask(cfg: dict, provider: str, system: str, messages: list[dict], *, max_tokens: int = 2000,
-              temperature: float = 0.3, search: bool = False, deadline: float | None = None) -> Answer:
+              temperature: float = 0.3, search: bool = False, deadline: float | None = None,
+              model_timeout: float = MODEL_TIMEOUT) -> Answer:
     """One question to one AI. ``deadline`` (time.monotonic()): the answer must come before it — a model that
-    hangs gives way to the next one in time (the web server cuts a request at 60 s)."""
+    hangs gives way to the next one in time (the web server cuts a request at 60 s, the describe search at 180 s);
+    ``model_timeout``: how long one Gemini model may think."""
     if provider == "gemini":
         if search and gemini_usage().get("no_search"):
             search = False                       # Google said no today: do not ask (and wait) again
@@ -339,13 +341,13 @@ async def ask(cfg: dict, provider: str, system: str, messages: list[dict], *, ma
             try:
                 try:
                     text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, search, model,
-                                                       _left(deadline, MODEL_TIMEOUT))
+                                                       _left(deadline, model_timeout))
                 except SearchLimitError as e:
                     logger.info("%s — asking without it until tomorrow", e)
                     gemini_usage()["no_search"] = True
                     search = False
                     text, searched = await _gemini_ask(cfg, system, messages, max_tokens, temperature, False, model,
-                                                       _left(deadline, MODEL_TIMEOUT))
+                                                       _left(deadline, model_timeout))
                 return Answer(text, "gemini", searched, model)
             except (AIError, httpx.HTTPError) as e:
                 logger.info("Gemini %s: %s — the next model", model, _why(e))

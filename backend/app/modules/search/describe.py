@@ -108,8 +108,11 @@ def _parse(content: str) -> tuple[list[dict], str]:
     return guesses[:MAX_GUESSES], str(data.get("ask") or "").strip()[:300]
 
 
-DEADLINE_S = 50          # the whole answer — the web server cuts a request at 60 s
-GROQ_RESERVE_S = 15      # Gemini stops trying models while Groq still has this much time to answer
+# the whole answer: the user rather waits for a good guess (Gemini's newest flash thinks ~45 s); the web server
+# lets this one request take 180 s (nginx location /api/search/describe), everything else 60 s
+DEADLINE_S = 150
+GROQ_RESERVE_S = 25      # Gemini stops trying models while Groq still has this much time to answer
+GEMINI_MODEL_S = 90      # one Gemini model may think this long here
 
 
 async def _groq(cfg: dict, messages: list[dict], max_tokens: int, temperature: float = 0.3,
@@ -182,7 +185,7 @@ async def ask_gemini(cfg: dict, talk: list[dict], deadline: float | None = None)
     """Gemini searches Google for the scene described (forums, lists "films where…") — finds titles a model
     does not remember. (guesses, question, did it search)"""
     answer = await ai.ask(cfg, "gemini", SYSTEM + SEARCH, _messages(talk), max_tokens=2000, search=True,
-                          deadline=deadline)
+                          deadline=deadline, model_timeout=GEMINI_MODEL_S)
     try:
         guesses, question = _parse(answer.text)
     except (json.JSONDecodeError, ValueError, KeyError, IndexError) as e:
