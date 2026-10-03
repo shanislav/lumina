@@ -1,6 +1,6 @@
 """What plays in Plex right now — the phone's "Sleduji": a tap and the film / episode being watched is there,
-with its subtitles. Asked only when the user opens it. Plex's owner account is id 1; the other accounts (friends
-the server is shared with) are left out."""
+with its subtitles. Asked only when the user opens it. Everyone who watches (friends the server is shared with
+too — "Vančo watches a film, send him subtitles"), the owner (Plex account id 1) first."""
 
 from app.clients.plex import PlexClient
 from app.db import get_automation, get_db
@@ -22,15 +22,17 @@ async def now_playing() -> dict:
     db = await get_db()
     try:
         for s in sessions:
-            if str((s.get("User") or {}).get("id") or "") != OWNER or s.get("type") not in ("movie", "episode"):
+            if s.get("type") not in ("movie", "episode"):
                 continue
+            user = s.get("User") or {}
             part = ((s.get("Media") or [{}])[0].get("Part") or [{}])[0]
             path = from_plex(part.get("file") or "", cfg.get("path_map", "")) if part.get("file") else ""
             item = {"kind": s["type"], "title": s.get("title") or "", "year": s.get("year"),
                     "show": s.get("grandparentTitle") or "", "season": s.get("parentIndex"), "episode": s.get("index"),
                     "state": (s.get("Player") or {}).get("state") or "", "player": (s.get("Player") or {}).get("title") or "",
                     "progress": round(100 * (s.get("viewOffset") or 0) / s["duration"]) if s.get("duration") else None,
-                    "id": None, "tmdb_id": None}
+                    "id": None, "tmdb_id": None,
+                    "user": user.get("title") or "", "mine": str(user.get("id") or "") == OWNER}
             if path and s["type"] == "movie":
                 row = await (await db.execute("SELECT id, tmdb_id FROM library_movies WHERE file_path = ?", (path,))).fetchone()
             elif path:
@@ -43,4 +45,5 @@ async def now_playing() -> dict:
             items.append(item)
     finally:
         await db.close()
+    items.sort(key=lambda i: (not i["mine"], i["state"] != "playing", i["user"].lower()))
     return {"configured": True, "items": items}

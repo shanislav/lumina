@@ -28,7 +28,16 @@ const QUICK = ["Nic z toho", "Je to seriál", "Je to film", "Novější", "Star�
 
 /** „Neznáš název?“ under the search box (only with Groq): the user describes the film in their own words,
  *  the AI guesses titles, each one opens like a search result. Saying more narrows the guesses. */
-export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) => void }) {
+/** A sentence typed into the plain search ("film kde chlap ..."): looks like a description, not a name. */
+export function looksLikeDescription(q: string): boolean {
+  return q.trim().split(/\s+/).length >= 4;
+}
+
+export default function DescribeSearch({ onPick, big = false, ask }: {
+  onPick: (movie: TMDBMovie) => void;
+  big?: boolean;                               // the phone: a big button instead of a line of text
+  ask?: { text: string; n: number } | null;    // open and ask this (the plain search's "Zeptat se AI"); n: each new ask
+}) {
   const [status, setStatus] = useState<DescribeStatus | null>(null);
   const [open, setOpen] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -38,6 +47,15 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
   const input = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => { getDescribeStatus().then(setStatus).catch(() => {}); }, []);
+  // asked from the plain search: open and send its text (once the status is known)
+  const asked = useRef(0);
+  useEffect(() => {
+    if (!ask?.text || !status?.enabled || asked.current === ask.n) return;
+    asked.current = ask.n;
+    setOpen(true);
+    send(ask.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ask, status]);
   useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [entries, busy]);
   useEffect(() => { if (open) input.current?.focus(); }, [open]);
   // a click outside folds the chat away (the talk stays — opening it again goes on with it)
@@ -82,10 +100,21 @@ export default function DescribeSearch({ onPick }: { onPick: (movie: TMDBMovie) 
   }
 
   if (!open) {
+    if (big) {
+      return (
+        <button onClick={() => setOpen(true)}
+          className="w-full rounded-2xl border border-violet-800/70 bg-violet-950/30 px-4 py-3 text-left active:bg-violet-950">
+          <span className="block text-base font-medium text-violet-100">
+            ✨ {entries.length ? "Pokračovat v hledání podle popisu" : "Nevíš název? Popiš, o čem to bylo"}
+          </span>
+          <span className="text-sm text-zinc-400">Napiš děj, scénu nebo herce — AI zkusí uhodnout film nebo seriál.</span>
+        </button>
+      );
+    }
     return (
       <button onClick={() => setOpen(true)}
-        className="-mt-5 text-sm text-zinc-500 hover:text-violet-300 transition-colors">
-        {entries.length ? "✨ Pokračovat v hledání podle popisu" : "✨ Nevíš název? Popiš, o čem to bylo"}
+        className="-mt-4 rounded-full border border-violet-800/70 bg-violet-950/30 px-4 py-1.5 text-sm text-violet-200 hover:border-violet-600 hover:bg-violet-900/40 transition-colors">
+        ✨ {entries.length ? "Pokračovat v hledání podle popisu" : "Nevíš název? Popiš, o čem to bylo — najde to AI"}
       </button>
     );
   }

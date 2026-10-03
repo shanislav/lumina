@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import SearchBar from "@/components/SearchBar";
-import DescribeSearch from "@/components/DescribeSearch";
+import DescribeSearch, { looksLikeDescription } from "@/components/DescribeSearch";
 import MovieGrid from "@/components/MovieGrid";
 import FileTable from "@/components/FileTable";
 import DownloadPanel from "@/components/DownloadPanel";
@@ -96,7 +96,8 @@ function HomeContent() {
 
   const [searchLang, setSearchLang] = useState<string | undefined>(undefined);
   const [lastQuery, setLastQuery] = useState("");
-  const [viaDescribe, setViaDescribe] = useState(false);   // picked in „Nevíš název?“: Zpět returns to the talk
+  const [viaDescribe, setViaDescribe] = useState(false);
+  const [ask, setAsk] = useState<{ text: string; n: number } | null>(null);   // a sentence typed into the plain search   // picked in „Nevíš název?“: Zpět returns to the talk
 
   // Handle incoming movie from Discover page — go straight to file search
   const handleDiscoverMovie = useCallback(async (movie: TMDBMovie) => {
@@ -241,7 +242,7 @@ function HomeContent() {
 
       {/* kept mounted while a picked title is open: „Zpět“ returns to the talk */}
       <div className={selectedMovie ? "hidden" : "contents"}>
-        <DescribeSearch onPick={(m) => { setViaDescribe(true); setLastQuery(""); handleSelectMovie(m); }} />
+        <DescribeSearch ask={ask} onPick={(m) => { setViaDescribe(true); setLastQuery(""); handleSelectMovie(m); }} />
       </div>
 
       {error && (
@@ -257,6 +258,12 @@ function HomeContent() {
       {!selectedMovie && lastQuery && !moviesLoading && (
         <div className={`w-full max-w-2xl text-sm ${movies.length ? "text-zinc-500" : "rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-zinc-300"}`}>
           {movies.length === 0 && <p className="mb-2">Filmová databáze (TMDB) tento titul nezná.</p>}
+          {looksLikeDescription(lastQuery) && (
+            <button onClick={() => { setAsk({ text: lastQuery, n: Date.now() }); setMovies([]); setLastQuery(""); }}
+              className="mb-2 mr-3 rounded-full bg-violet-600 px-4 py-1.5 font-medium text-white hover:bg-violet-500">
+              ✨ Hledáš podle děje? Zeptej se AI
+            </button>
+          )}
           <button onClick={handleDirectSearch} className="text-violet-300 hover:text-violet-200 underline-offset-2 hover:underline">
             {movies.length ? "Není mezi výsledky? " : ""}Hledat přímo v souborech: „{lastQuery}“
           </button>

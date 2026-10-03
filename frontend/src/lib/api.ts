@@ -2074,6 +2074,8 @@ export interface NowPlaying {
   state: string; player: string; progress: number | null;
   id: number | null;          // the library film / episode (null: Lumina does not know the file)
   tmdb_id: number | null;     // the film's / the show's
+  user: string;               // the Plex account watching it
+  mine: boolean;              // the server owner (first in the list)
 }
 
 export async function getPlexPlaying(): Promise<{ configured: boolean; items: NowPlaying[]; error?: string }> {

@@ -1,6 +1,6 @@
 "use client";
 
-import DescribeSearch from "@/components/DescribeSearch";
+import DescribeSearch, { looksLikeDescription } from "@/components/DescribeSearch";
 import ClearInput from "@/components/ClearInput";
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
@@ -21,7 +21,8 @@ export default function MobileSearch() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  const shownFor = useRef("");          // the text the shown list is for — no suggestions over it
+  const shownFor = useRef("");
+  const [ask, setAsk] = useState<{ text: string; n: number } | null>(null);          // the text the shown list is for — no suggestions over it
 
   // back from a title: the last results again — anything else (a reload, the tab "Hledat") is a fresh start
   useEffect(() => {
@@ -39,7 +40,11 @@ export default function MobileSearch() {
     if (q.trim().length < 2 || q.trim() === shownFor.current) return;
     const ctl = new AbortController();
     const t = setTimeout(() => {
-      suggest(q.trim(), ctl.signal).then((s) => { setItems(s); setSearched(false); }).catch(() => {});
+      const asked = q.trim();
+      suggest(asked, ctl.signal).then((s) => {
+        if (shownFor.current === asked) return;      // searched meanwhile (Enter): the full results stay
+        setItems(s); setSearched(false);
+      }).catch(() => {});
     }, 250);
     return () => { clearTimeout(t); ctl.abort(); };
   }, [q]);
@@ -77,6 +82,15 @@ export default function MobileSearch() {
       </form>
 
       {loading && <Spinner text="Hledám…" />}
+      {!loading && searched && looksLikeDescription(q) && (
+        <div className="space-y-2 rounded-2xl border border-violet-800/60 bg-violet-950/20 p-4">
+          <p className="text-zinc-200">Hledáš podle toho, o čem to bylo?</p>
+          <button onClick={() => { setAsk({ text: q.trim(), n: Date.now() }); setItems([]); setSearched(false); }}
+            className="min-h-12 w-full rounded-xl bg-violet-600 px-4 text-base font-medium text-white active:bg-violet-700">
+            ✨ Zeptat se AI
+          </button>
+        </div>
+      )}
       {!loading && searched && !items.length && <p className="py-6 text-center text-zinc-500">Nic nenalezeno.</p>}
 
       <div className="space-y-2">
@@ -99,7 +113,7 @@ export default function MobileSearch() {
       </div>
 
       <div className="pt-6">
-        <DescribeSearch onPick={open} />
+        <DescribeSearch onPick={open} big ask={ask} />
       </div>
 
       {!q && !items.length && (
