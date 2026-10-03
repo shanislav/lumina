@@ -68,7 +68,21 @@ async def series_detail(tmdb_id: int, fresh: bool = False) -> dict:
         raise HTTPException(502, f"TMDB: {e}")
     settings = await store.get_settings(tmdb_id)
     owned = await store.owned_episodes(tmdb_id)
-    local = list(prefs_from_settings(await get_effective_settings()).local_langs)
+    cfg = await get_effective_settings()
+    local = list(prefs_from_settings(cfg).local_langs)
+    # TMDB's generic names ("7. epizoda") — the English one when there is one (the catalog, kept for a week)
+    from app.core import naming
+    from app.modules.library import episode_names
+    try:
+        _check, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, None)
+    except Exception as e:  # noqa: BLE001
+        logger.info("Episode catalog of %s: %s", tmdb_id, e)
+        cat = {}
+    for n, eps in episodes.items():
+        for ep in eps:
+            en = (cat.get((n, ep.get("episode_number"))) or {}).get("en") or ""
+            if not naming.episode_title(ep.get("name") or "") and naming.episode_title(en):
+                ep["name"] = en
     today = date.today()
     mode = settings["effective"]["lang_mode"]
     seasons = [store.season_view(s, episodes.get(s["season_number"], []), owned, mode, local, today)
