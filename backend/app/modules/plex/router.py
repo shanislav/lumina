@@ -103,3 +103,13 @@ async def friends_servers() -> list[dict]:
 @router.post("/friends/refresh", dependencies=[Depends(require("settings"))])
 async def friends_refresh() -> dict:
     return await friends.refresh()
+
+
+@router.get("/now-playing", dependencies=[Depends(require("library.view"))])
+async def now_playing() -> dict:
+    """What the owner plays in Plex right now, matched to the library (the phone's "Sleduji")."""
+    from app.modules.plex.now_playing import now_playing as playing
+    try:
+        return await playing()
+    except Exception as e:  # noqa: BLE001 — Plex down: say so, not a 500
+        return {"configured": True, "items": [], "error": str(e) or type(e).__name__}

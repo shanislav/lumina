@@ -36,6 +36,17 @@ def to_plex(folder: str, library_root: str, locations: list[str], rule: str = ""
     return None
 
 
+def from_plex(path: str, rule: str = "") -> str:
+    """A file as Plex sees it → as Lumina sees it (the manual rule backwards; without one the same path)."""
+    parsed = parse_rule(rule)
+    p = _parts(path)
+    if parsed:
+        src, dst = parsed
+        if _inside(p, dst):
+            return _join(src + p[len(dst):])
+    return _join(p)
+
+
 def suggest_rule(library_root: str, locations: list[str]) -> str | None:
     """A rule for the user to confirm: the one location sharing the longest tail with the library
     root (/data/Video/Movies ↔ /mnt/share/Video/Movies → "/data=/mnt/share"); None on a tie."""

@@ -1,8 +1,6 @@
-import type { Metadata } from "next";
-import Image from "next/image";
-import Link from "next/link";
+import AppShell from "@/components/mobile/AppShell";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import NavLinks from "@/components/NavLinks";
 import AuthGate from "@/components/AuthGate";
 
 export const metadata: Metadata = {
@@ -13,6 +11,9 @@ export const metadata: Metadata = {
   },
 };
 
+// the phone version uses the whole screen (safe areas around a notch / the home bar)
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#09090b" };
+
 export default function RootLayout({
   children,
 }: {
@@ -22,19 +23,7 @@ export default function RootLayout({
     <html lang="cs" className="dark">
       <body className="min-h-screen antialiased">
         <AuthGate>
-          <nav className="border-b border-zinc-800/50 px-4 py-3">
-            <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
-              <Link
-                href="/"
-                className="flex items-center gap-2 text-lg font-bold bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent"
-              >
-                <Image src="/favicon.svg" alt="" width={24} height={24} />
-                <span className="hidden sm:inline">Lumina</span>
-              </Link>
-              <NavLinks />
-            </div>
-          </nav>
-          {children}
+          <AppShell>{children}</AppShell>
         </AuthGate>
       </body>
     </html>

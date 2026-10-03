@@ -2066,3 +2066,18 @@ export async function markNotificationsSeen(lastId: number): Promise<void> {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ last_id: lastId }),
   });
 }
+
+// ── Plex: what plays right now (the phone's "Sleduji") ──
+
+export interface NowPlaying {
+  kind: "movie" | "episode"; title: string; year?: number | null; show: string; season: number | null; episode: number | null;
+  state: string; player: string; progress: number | null;
+  id: number | null;          // the library film / episode (null: Lumina does not know the file)
+  tmdb_id: number | null;     // the film's / the show's
+}
+
+export async function getPlexPlaying(): Promise<{ configured: boolean; items: NowPlaying[]; error?: string }> {
+  const res = await apiFetch(`${API_BASE}/api/plex/now-playing`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}

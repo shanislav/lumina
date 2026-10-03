@@ -28,7 +28,7 @@ export default function NavLinks() {
   }, []);
 
   return (
-    <div className="flex items-center gap-3 sm:gap-4">
+    <div className="flex flex-wrap items-center gap-3 sm:gap-4">
       {LINKS.filter((l) => (!l.module || !active || active.has(l.module)) && (!l.perms || l.perms.some(can))).map((l) => (
         <Link key={l.href} href={l.href} className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
           {l.label}

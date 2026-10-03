@@ -96,5 +96,11 @@ class PlexClient:
         resp = await self._http.put(f"/library/sections/{section_key}/all", params=params)
         resp.raise_for_status()
 
+    async def sessions(self) -> list[dict]:
+        """What plays right now (every account's players): Plex's session metadata."""
+        resp = await self._http.get("/status/sessions")
+        resp.raise_for_status()
+        return resp.json().get("MediaContainer", {}).get("Metadata", []) or []
+
     async def close(self) -> None:
         await self._http.aclose()
