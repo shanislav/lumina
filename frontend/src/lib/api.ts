@@ -1586,12 +1586,62 @@ export async function testOpenSubtitles(): Promise<{ api_key: boolean; account: 
 
 export type SeriesLangMode = "local_or_temp" | "local_only" | "original";
 
+export type SeriesAutoMode = "off" | "notify" | "download";
+export type SeriesAutoFrom = "next" | "all";
+
 export interface SeriesSettingValues {
   profile_id: number | null;
   lang_mode: SeriesLangMode | null;
   torrent: boolean | null;
-  monitor: boolean | null;
+  auto_new: SeriesAutoMode | null;    // new episodes: nothing / show what was found / download
+  auto_from: SeriesAutoFrom | null;   // "new" = after the last owned episode / every missing one
+  auto_dub: SeriesAutoMode | null;    // the CZ/SK dub of episodes owned in English
 }
+
+export type SeriesEffectiveSettings = SeriesSettingValues & {
+  lang_mode: SeriesLangMode; torrent: boolean; auto_new: SeriesAutoMode; auto_from: SeriesAutoFrom; auto_dub: SeriesAutoMode;
+};
+
+export interface SeriesAutoRecord {
+  tmdb_id: number; season: number; episode: number; kind: "new" | "dub";
+  status: "found" | "downloading" | "dismissed"; updated_at: string;
+  row: { name: string; source: string; size: number; resolution?: string; quality_summary?: string; audio_langs?: string[]; quality_score?: number };
+}
+
+export interface SeriesAutoCheck { checked_at: string; wanted: number; found: number; downloading: number; note: string }
+
+export interface SeriesAutoJob { running: boolean; total: number; done: number; current: string; found: number; downloading: number; queued: number }
+
+export interface SeriesAutoShow {
+  tmdb_id: number; title: string; year: string; poster_url: string | null; in_library: boolean;
+  own: SeriesSettingValues; effective: SeriesEffectiveSettings;
+  owned: number; foreign: number;           // owned episodes / of them without CZ/SK sound
+  checked: SeriesAutoCheck | null; found: SeriesAutoRecord[];
+}
+
+export interface SeriesAutoOverview {
+  shows: SeriesAutoShow[]; defaults: SeriesEffectiveSettings; job: SeriesAutoJob;
+  scheduler: { enabled: boolean; series: boolean; time: string; last_run: string };
+}
+
+async function seriesJson<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const res = await apiFetch(`${API_BASE}/api/series${path}`, body === undefined ? { method } : {
+    method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export const getSeriesAutomation = () => seriesJson<SeriesAutoOverview>("/automation/overview");
+export const saveSeriesAutomationBulk = (tmdbIds: number[], values: Partial<SeriesSettingValues>) =>
+  seriesJson<{ saved: number }>("/automation/bulk", "PUT", { tmdb_ids: tmdbIds, values });
+export const runSeriesAutomation = (tmdbIds: number[] = []) => seriesJson<SeriesAutoJob>("/automation/run", "POST", { tmdb_ids: tmdbIds });
+export const getShowAutomation = (tmdbId: number) =>
+  seriesJson<{ records: SeriesAutoRecord[]; checked: SeriesAutoCheck | null; job: SeriesAutoJob }>(`/${tmdbId}/automation`);
+export const downloadAutoFound = (tmdbId: number, keys: [number, number, string][]) =>
+  seriesJson<{ started: number; errors: string[] }>(`/${tmdbId}/automation/download`, "POST", { keys });
+export const dismissAutoFound = (tmdbId: number, keys: [number, number, string][]) =>
+  seriesJson<{ ok: boolean }>(`/${tmdbId}/automation/dismiss`, "POST", { keys });
 
 export interface SeriesEpisodeFile {
   id?: number;               // library_episodes id (the episode's window)
@@ -1631,8 +1681,7 @@ export interface SeriesDetail {
     last_episode: { season: number; episode: number; air_date: string; name: string } | null;
     next_episode: { season: number; episode: number; air_date: string; name: string } | null;
   };
-  settings: { own: SeriesSettingValues; effective: SeriesSettingValues & { lang_mode: SeriesLangMode; torrent: boolean; monitor: boolean };
-              defaults: SeriesSettingValues };
+  settings: { own: SeriesSettingValues; effective: SeriesEffectiveSettings; defaults: SeriesEffectiveSettings };
   profile: { id: number; name: string };
   seasons: SeriesSeason[];
   totals: { owned: number; temp: number; unknown: number; missing: number; upcoming: number };

@@ -12,6 +12,7 @@ from app.core import events
 from app.core.auth import require
 from app.core.profiles import load_profiles, pick_profile
 from app.core.quality import prefs_from_settings
+from app.db import get_db
 from app.modules.series import store
 
 logger = logging.getLogger(__name__)
@@ -113,7 +114,7 @@ async def episode_no_dub(tmdb_id: int, season: int, episode: int, body: NoDub) -
 
 
 class SettingsBody(BaseModel):
-    values: dict              # only the keys to change: profile_id, lang_mode, torrent, monitor (None = default)
+    values: dict              # only the keys to change: profile_id, lang_mode, torrent, auto_new, auto_from, auto_dub (None = default)
 
 
 @router.put("/{tmdb_id}/settings", dependencies=[Depends(require("library.edit"))])
@@ -136,13 +137,22 @@ async def put_series_defaults(body: SettingsBody) -> dict:
     return await store.save_defaults(body.values)
 
 
+async def search_season(tmdb_id: int, season: int, wanted: list[int], torrent: bool):
+    """The season's files grouped into releases, each judged by its numbers and its episode's own name
+    (and the other numberings of the season: a split season, anime's absolute numbers)."""
+    from app.core.offers.season import find_season_offers
+    from app.modules.library import episode_names
+
+    cfg = await get_effective_settings()
+    by_name, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, season)
+    alt = {tuple(o): e for e in wanted for o in episode_names.other_numbers(cat, season, e)["alt"]} if cat else {}
+    return await find_season_offers(cfg, tmdb_id, season, wanted, torrent=torrent, by_name=by_name, alt=alt)
+
+
 @router.get("/{tmdb_id}/season/{season}/offers", dependencies=[Depends(require("search"))])
 async def season_offers(tmdb_id: int, season: int, episodes: str = "") -> dict:
     """Files of a whole season grouped into releases, torrent packs, and a plan: a file for each wanted
     episode (default: the missing ones and the ones waiting for a dub)."""
-    from app.core.offers.season import find_season_offers
-    from app.modules.library import episode_names
-
     wanted = [int(x) for x in episodes.split(",") if x.strip().isdigit()]
     settings = await store.get_settings(tmdb_id)
     if not wanted:
@@ -152,11 +162,7 @@ async def season_offers(tmdb_id: int, season: int, episodes: str = "") -> dict:
         if not wanted:
             return {"season": season, "wanted": [], "sets": [], "packs": [], "plan": [], "movie": None}
     try:
-        cfg = await get_effective_settings()
-        by_name, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, season)
-        alt = {tuple(o): e for e in wanted for o in episode_names.other_numbers(cat, season, e)["alt"]} if cat else {}
-        offers = await find_season_offers(cfg, tmdb_id, season, wanted, torrent=settings["effective"]["torrent"],
-                                          by_name=by_name, alt=alt)
+        offers = await search_season(tmdb_id, season, wanted, settings["effective"]["torrent"])
     except Exception as e:
         logger.warning("Season offers of %s S%s failed: %s", tmdb_id, season, e)
         raise HTTPException(502, f"Hledání selhalo: {e}")
@@ -235,3 +241,117 @@ async def season_download(tmdb_id: int, season: int, body: SeasonDownload) -> di
         elif payload.get("started"):
             started += 1
     return {"started": started, "errors": errors}
+
+
+# ── automation (auto.py) ──
+
+@router.get("/automation/overview", dependencies=[Depends(require("search"))])
+async def automation_overview() -> dict:
+    """Every show of the library (and every show with its own settings): its automation, the last check,
+    what was found, how many episodes are owned and how many only without Czech/Slovak sound."""
+    from app.db import get_all_settings, get_automation
+    from app.modules.series import auto
+
+    defaults = await store.get_defaults()
+    cfg = await get_effective_settings()
+    local = set(prefs_from_settings(cfg).local_langs)
+    db = await get_db()
+    try:
+        own = {r["tmdb_id"]: dict(r) for r in await (await db.execute("SELECT * FROM series_settings")).fetchall()}
+        try:
+            shows = {r["tmdb_id"]: dict(r) for r in await (await db.execute(
+                "SELECT tmdb_id, title, year, poster_url FROM library_shows")).fetchall()}
+            counts: dict[int, dict] = {}
+            for r in await (await db.execute(
+                    "SELECT show_tmdb_id, language FROM library_episodes WHERE has_file = 1 AND season > 0")).fetchall():
+                c = counts.setdefault(r[0], {"owned": 0, "foreign": 0})
+                c["owned"] += 1
+                langs = store.languages_of(r[1])
+                if langs and not local & set(langs):
+                    c["foreign"] += 1
+        except Exception:  # noqa: BLE001 — the library module off
+            shows, counts = {}, {}
+    finally:
+        await db.close()
+    checked = await auto.checks()
+    found: dict[int, list[dict]] = {}
+    for r in await auto.records():
+        if r["status"] in ("found", "downloading"):
+            found.setdefault(r["tmdb_id"], []).append(r)
+    out = []
+    for tmdb_id in dict.fromkeys([*shows, *own]):
+        base = shows.get(tmdb_id) or own.get(tmdb_id) or {}
+        mine = {k: (own.get(tmdb_id) or {}).get(k) for k in store.FIELDS}
+        if mine["torrent"] is not None:
+            mine["torrent"] = bool(mine["torrent"])
+        out.append({"tmdb_id": tmdb_id, "title": base.get("title") or "", "year": base.get("year") or "",
+                    "poster_url": base.get("poster_url"), "in_library": tmdb_id in shows,
+                    "own": mine, "effective": {k: mine[k] if mine[k] is not None else defaults[k] for k in store.FIELDS},
+                    **(counts.get(tmdb_id) or {"owned": 0, "foreign": 0}),
+                    "checked": checked.get(tmdb_id), "found": found.get(tmdb_id, [])})
+    out.sort(key=lambda s: s["title"].lower())
+    scheduler = await get_automation("scheduler")
+    sched_cfg = (scheduler or {}).get("config") or {}
+    return {"shows": out, "defaults": defaults, "job": auto.job_status(),
+            "scheduler": {"enabled": bool(scheduler and scheduler["enabled"]),
+                          "series": str(sched_cfg.get("series", "true")).lower() == "true",
+                          "time": sched_cfg.get("time") or "03:00",
+                          "last_run": (await get_all_settings()).get("scheduler_last_run", "")}}
+
+
+class BulkSettings(BaseModel):
+    tmdb_ids: list[int]
+    values: dict              # as SettingsBody: only the keys to change (None = default)
+
+
+@router.put("/automation/bulk", dependencies=[Depends(require("library.edit"))])
+async def automation_bulk(body: BulkSettings) -> dict:
+    """The same settings for many shows at once (the overview's checked rows)."""
+    db = await get_db()
+    try:
+        shows = {r[0]: dict(r) for r in await (await db.execute(
+            "SELECT tmdb_id, title, year, poster_url FROM library_shows")).fetchall()}
+    except Exception:  # noqa: BLE001
+        shows = {}
+    finally:
+        await db.close()
+    for tmdb_id in body.tmdb_ids:
+        await store.save_settings(tmdb_id, body.values, shows.get(tmdb_id))
+    return {"saved": len(body.tmdb_ids)}
+
+
+class AutoRun(BaseModel):
+    tmdb_ids: list[int] = []  # empty: every show with anything on
+
+
+@router.post("/automation/run", dependencies=[Depends(require("library.edit"))])
+async def automation_run(body: AutoRun) -> dict:
+    """Check now (as the nightly run, for these shows) — in the background, the task list shows it."""
+    from app.modules.series import auto
+    ids = body.tmdb_ids or await auto.automated_shows()
+    return auto.enqueue(ids) if ids else auto.job_status()
+
+
+@router.get("/{tmdb_id}/automation", dependencies=[Depends(require("search"))])
+async def show_automation(tmdb_id: int) -> dict:
+    from app.modules.series import auto
+    return {"records": [r for r in await auto.records(tmdb_id) if r["status"] != "dismissed"],
+            "checked": (await auto.checks()).get(tmdb_id), "job": auto.job_status()}
+
+
+class FoundItems(BaseModel):
+    keys: list[list]          # [[season, episode, kind]]
+
+
+@router.post("/{tmdb_id}/automation/download", dependencies=[Depends(require("download"))])
+async def automation_download(tmdb_id: int, body: FoundItems) -> dict:
+    from app.modules.series import auto
+    return await auto.download_found(tmdb_id, [(int(k[0]), int(k[1]), str(k[2])) for k in body.keys])
+
+
+@router.post("/{tmdb_id}/automation/dismiss", dependencies=[Depends(require("library.edit"))])
+async def automation_dismiss(tmdb_id: int, body: FoundItems) -> dict:
+    from app.modules.series import auto
+    for k in body.keys:
+        await auto.dismiss(tmdb_id, int(k[0]), int(k[1]), str(k[2]))
+    return {"ok": True}

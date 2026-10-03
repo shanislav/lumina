@@ -7,6 +7,7 @@ import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
 import ShowPacks from "@/components/ShowPacks";
 import EpisodeWindow from "@/components/EpisodeWindow";
+import { AUTO_DUB, AUTO_NEW, AutoFields, ShowAutomation } from "@/components/SeriesAuto";
 import { useAuth } from "@/components/AuthGate";
 import {
   DownloadItem, getDownloads, setAudioLanguage,
@@ -132,6 +133,8 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
       </header>
 
       <SettingsPanel data={data} onSaved={() => load()} editable={can("library.edit")} />
+      <ShowAutomation tmdbId={tmdbId} canDownload={can("download")} canEdit={can("library.edit")}
+        on={data.settings.effective.auto_new !== "off" || data.settings.effective.auto_dub !== "off"} />
 
       {can("search") && data.settings.effective.torrent && (
         <ShowPacks tmdbId={tmdbId} onStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }} />
@@ -183,7 +186,8 @@ function SettingsPanel({ data, onSaved, editable }: { data: SeriesDetail; onSave
         <span className="text-zinc-200">Nastavení seriálu</span>
         <span className="text-xs text-zinc-500">
           {data.profile.name} · {mode?.[1]} · {effective.torrent ? "i torrenty" : "bez torrentů"}
-          {effective.monitor ? " · hlídat nové díly" : ""} {open ? "▲" : "▼"}
+          {effective.auto_new && effective.auto_new !== "off" ? ` · nové díly: ${AUTO_NEW.find(([m]) => m === effective.auto_new)?.[1]}` : ""}
+          {effective.auto_dub && effective.auto_dub !== "off" ? ` · dabing: ${AUTO_DUB.find(([m]) => m === effective.auto_dub)?.[1]}` : ""} {open ? "▲" : "▼"}
         </span>
       </button>
       {open && (
@@ -212,9 +216,8 @@ function SettingsPanel({ data, onSaved, editable }: { data: SeriesDetail; onSave
           <TriState value={own.torrent} fallback={data.settings.defaults.torrent ?? true} disabled={!editable || saving}
             yes="hledat i na torrentech" no="jen WebShare / FastShare" onChange={(v) => save({ torrent: v })} />
 
-          <label className="text-zinc-400">Nové díly</label>
-          <TriState value={own.monitor} fallback={data.settings.defaults.monitor ?? false} disabled={!editable || saving}
-            yes="hlídat (automatika přijde později)" no="nehlídat" onChange={(v) => save({ monitor: v })} />
+          <AutoFields own={own} defaults={data.settings.defaults} langMode={effective.lang_mode}
+            disabled={!editable || saving} onChange={save} />
         </div>
       )}
     </section>

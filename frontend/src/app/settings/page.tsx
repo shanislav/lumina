@@ -108,11 +108,12 @@ const INTEGRATION_TYPES = [
     type: "scheduler",
     label: "Plánovač (noční hledání)",
     icon: "🌙",
-    description: "Jednou denně v nastavený čas zkontroluje seznam „Chci“ a filmy v knihovně se zapnutým „Hlídat lepší verzi“ (hledá postupně, šetrně k WS/FS). Automatické stahování je vypnuté, dokud ho nezapneš.",
+    description: "Jednou denně v nastavený čas zkontroluje seznam „Chci“, filmy v knihovně se zapnutým „Hlídat lepší verzi“ a seriály se zapnutou automatikou (hledá postupně, šetrně k WS/FS). Automatické stahování je vypnuté, dokud ho nezapneš.",
     fields: [
       { key: "time", label: "Čas spuštění", type: "text", default: "03:00", hint: "HH:MM, čas serveru. Když server v tu dobu neběží, doběhne do 12 hodin." },
       { key: "wanted", label: "Kontrolovat seznam Chci", type: "checkbox", default: "true" },
       { key: "upgrades", label: "Kontrolovat hlídané filmy v knihovně", type: "checkbox", default: "true" },
+      { key: "series", label: "Automatika seriálů", type: "checkbox", default: "true", hint: "Nové díly a dabing — co se u kterého seriálu hledá a stahuje, se nastavuje u seriálu (Knihovna → Seriály → Automatika)" },
       { key: "auto_download_wanted", label: "Rovnou stáhnout nalezené z Chci", type: "checkbox", default: "false", hint: "Nejlepší soubor, který splní profil filmu" },
       { key: "auto_download_upgrades", label: "Lepší verze filmů v knihovně", type: "select", default: "off", options: [
         { value: "off", label: "jen ukázat" },

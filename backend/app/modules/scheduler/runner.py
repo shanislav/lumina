@@ -11,7 +11,7 @@ from app.core.auth import require
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
 
-DEFAULTS = {"time": "03:00", "wanted": "true", "upgrades": "true",
+DEFAULTS = {"time": "03:00", "wanted": "true", "upgrades": "true", "series": "true",
             "auto_download_wanted": "false", "auto_download_upgrades": "off"}
 LAST_RUN_SETTING = "scheduler_last_run"
 TICK_S = 60
@@ -59,6 +59,7 @@ async def run(reason: str = "plán") -> dict:
     payload = {
         "wanted": _on(cfg["wanted"]),
         "upgrades": _on(cfg["upgrades"]),
+        "series": _on(cfg["series"]),
         "auto_download_wanted": _on(cfg["auto_download_wanted"]),
         "auto_download_upgrades": cfg["auto_download_upgrades"] if cfg["auto_download_upgrades"] in ("version", "replace") else "off",
         "reason": reason,

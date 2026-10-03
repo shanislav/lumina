@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { SeriesLangMode, SeriesSettingValues, getSeriesDefaults, saveSeriesDefaults } from "@/lib/api";
+import { AutoFields } from "@/components/SeriesAuto";
 
 /** Defaults every TV show uses unless it has its own value (backend modules/series, setting "series_defaults").
  *  The quality profile of shows is the default profile of kind "Seriály" (profiles above). */
@@ -20,7 +21,7 @@ export default function SeriesDefaults() {
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-5 py-4 space-y-3 text-sm">
       <p className="text-zinc-200 font-medium">📺 Seriály — výchozí nastavení {saved && <span className="text-xs text-emerald-400">uloženo</span>}</p>
-      <p className="text-xs text-zinc-500">Platí pro každý seriál, který nemá vlastní nastavení (na stránce seriálu). Profil kvality seriálů = výchozí profil v sekci Seriály výše.</p>
+      <p className="text-xs text-zinc-500">Platí pro každý seriál, který nemá vlastní nastavení (na stránce seriálu). Profil kvality seriálů = výchozí profil v sekci Seriály výše. Automatika se hledá v noci s plánovačem; přehled všech seriálů je v Knihovna → Seriály → Automatika.</p>
       <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-2.5">
         <label className="text-zinc-400">Jazyk</label>
         <select value={values.lang_mode ?? "local_or_temp"} className={field}
@@ -34,11 +35,7 @@ export default function SeriesDefaults() {
           <option value="1">hledat i na torrentech</option>
           <option value="0">jen WebShare / FastShare</option>
         </select>
-        <label className="text-zinc-400">Nové díly</label>
-        <select value={values.monitor ? "1" : "0"} className={field} onChange={(e) => save({ monitor: e.target.value === "1" })}>
-          <option value="0">nehlídat</option>
-          <option value="1">hlídat (automatika přijde později)</option>
-        </select>
+        <AutoFields own={values} langMode={values.lang_mode ?? "local_or_temp"} onChange={save} />
       </div>
     </div>
   );

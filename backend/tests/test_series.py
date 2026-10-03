@@ -18,11 +18,13 @@ async def db():
 
 async def test_settings_fall_back_to_the_defaults(db):
     s = await store.get_settings(1399)
-    assert s["effective"] == {"profile_id": None, "lang_mode": "local_or_temp", "torrent": True, "monitor": False}
+    assert s["effective"] == {"profile_id": None, "lang_mode": "local_or_temp", "torrent": True,
+                              "auto_new": "off", "auto_from": "next", "auto_dub": "off"}
     await store.save_settings(1399, {"torrent": False, "lang_mode": "local_only"}, {"title": "Hra o trůny", "year": 2011})
-    await store.save_defaults({"monitor": True, "torrent": True})
+    await store.save_defaults({"auto_new": "notify", "torrent": True, "auto_dub": "nonsense"})
     s = await store.get_settings(1399)
-    assert s["own"]["torrent"] is False and s["effective"]["monitor"] is True        # own value / new default
+    assert s["own"]["torrent"] is False and s["effective"]["auto_new"] == "notify"  # own value / new default
+    assert s["effective"]["auto_dub"] == "off"                                       # not a choice → default
     assert s["effective"]["lang_mode"] == "local_only"
     s = await store.save_settings(1399, {"lang_mode": None, "torrent": None})        # back to the defaults
     assert s["effective"]["lang_mode"] == "local_or_temp" and s["effective"]["torrent"] is True

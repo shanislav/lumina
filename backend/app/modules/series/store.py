@@ -1,6 +1,8 @@
 """TV shows: the user's settings per show (on top of the defaults) and the state of each episode.
 
-Settings of a show: quality profile (kind tv), language mode, torrents yes/no, watch for new episodes.
+Settings of a show: quality profile (kind tv), language mode, torrents yes/no, and the automation
+(modules/series/auto.py): new episodes off / show / download (from the last owned one on, or every missing
+one), the Czech/Slovak dub of English episodes off / show / download.
 NULL in a column = the default (setting "series_defaults"), so changing a default changes every show
 that has no own value.
 
@@ -41,8 +43,21 @@ CREATE TABLE IF NOT EXISTS series_no_dub (
 """
 
 LANG_MODES = ("local_or_temp", "local_only", "original")
-DEFAULTS = {"profile_id": None, "lang_mode": "local_or_temp", "torrent": True, "monitor": False}
-FIELDS = ("profile_id", "lang_mode", "torrent", "monitor")
+AUTO_MODES = ("off", "notify", "download")          # nothing / show what was found / download it
+AUTO_FROM = ("next", "all")                         # after the last owned episode / every missing one
+DEFAULTS = {"profile_id": None, "lang_mode": "local_or_temp", "torrent": True,
+            "auto_new": "off", "auto_from": "next", "auto_dub": "off"}
+FIELDS = ("profile_id", "lang_mode", "torrent", "auto_new", "auto_from", "auto_dub")
+_CHOICES = {"lang_mode": LANG_MODES, "auto_new": AUTO_MODES, "auto_dub": AUTO_MODES, "auto_from": AUTO_FROM}
+
+
+def _valid(values: dict, none_ok: bool) -> None:
+    """A value outside its choices → the default (None for a show, DEFAULTS for the defaults)."""
+    for key, choices in _CHOICES.items():
+        if values.get(key) is None and none_ok:
+            continue
+        if values.get(key) not in choices:
+            values[key] = None if none_ok else DEFAULTS[key]
 
 
 def _lang(code: str) -> str:
@@ -71,8 +86,7 @@ async def save_defaults(values: dict) -> dict:
     for key in FIELDS:
         if key in values:
             current[key] = values[key]
-    if current["lang_mode"] not in LANG_MODES:
-        current["lang_mode"] = DEFAULTS["lang_mode"]
+    _valid(current, none_ok=False)
     await set_settings({"series_defaults": json.dumps(current)})
     return current
 
@@ -86,9 +100,8 @@ async def get_settings(tmdb_id: int) -> dict:
     finally:
         await db.close()
     own = {k: (row[k] if row else None) for k in FIELDS}
-    for key in ("torrent", "monitor"):
-        if own[key] is not None:
-            own[key] = bool(own[key])
+    if own["torrent"] is not None:
+        own["torrent"] = bool(own["torrent"])
     effective = {k: own[k] if own[k] is not None else defaults[k] for k in FIELDS}
     return {"own": own, "effective": effective, "defaults": defaults}
 
@@ -99,23 +112,24 @@ async def save_settings(tmdb_id: int, values: dict, show: dict | None = None) ->
     for key in FIELDS:
         if key in values:
             current[key] = values[key]
-    if current["lang_mode"] is not None and current["lang_mode"] not in LANG_MODES:
-        current["lang_mode"] = None
+    _valid(current, none_ok=True)
     show = show or {}
     db = await get_db()
     try:
         await db.execute(
-            "INSERT INTO series_settings (tmdb_id, title, year, poster_url, profile_id, lang_mode, torrent, monitor, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(tmdb_id) DO UPDATE SET "
+            "INSERT INTO series_settings (tmdb_id, title, year, poster_url, profile_id, lang_mode, torrent, "
+            "auto_new, auto_from, auto_dub, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(tmdb_id) DO UPDATE SET "
             "title = CASE WHEN excluded.title != '' THEN excluded.title ELSE series_settings.title END, "
             "year = CASE WHEN excluded.year != '' THEN excluded.year ELSE series_settings.year END, "
             "poster_url = COALESCE(excluded.poster_url, series_settings.poster_url), "
             "profile_id = excluded.profile_id, lang_mode = excluded.lang_mode, torrent = excluded.torrent, "
-            "monitor = excluded.monitor, updated_at = excluded.updated_at",
+            "auto_new = excluded.auto_new, auto_from = excluded.auto_from, auto_dub = excluded.auto_dub, "
+            "updated_at = excluded.updated_at",
             (tmdb_id, show.get("title") or "", str(show.get("year") or ""), show.get("poster_url"),
              current["profile_id"], current["lang_mode"],
              None if current["torrent"] is None else int(current["torrent"]),
-             None if current["monitor"] is None else int(current["monitor"])))
+             current["auto_new"], current["auto_from"], current["auto_dub"]))
         await db.commit()
     finally:
         await db.close()

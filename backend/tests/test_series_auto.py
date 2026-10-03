@@ -1,0 +1,111 @@
+"""TV show automation: which episodes it looks for, which file it takes, the nightly check."""
+
+import pytest
+
+from app.core import events, registry
+from app.core.profiles import Profile
+from app.db import init_db
+from app.modules.series import auto, store
+
+
+def season(n, states, specials=False):
+    return {"season_number": n, "specials": specials,
+            "episodes": [{"episode": i + 1, "state": st} for i, st in enumerate(states)]}
+
+
+SEASONS = [season(1, ["owned", "temp", "owned"]), season(2, ["owned", "missing", "missing", "upcoming"]),
+           season(0, ["missing", "missing"], specials=True)]
+
+
+def test_new_episodes_from_the_last_owned_one_or_every_missing_one():
+    eff = {"auto_new": "notify", "auto_from": "next", "auto_dub": "off", "lang_mode": "local_or_temp"}
+    assert auto.wanted_episodes(SEASONS, eff) == [(2, 2, "new"), (2, 3, "new")]
+    gap = [season(1, ["missing", "owned", "missing"])]
+    assert auto.wanted_episodes(gap, eff) == [(1, 3, "new")]                    # the old gap is not "new"
+    assert auto.wanted_episodes(gap, {**eff, "auto_from": "all"}) == [(1, 1, "new"), (1, 3, "new")]
+    assert auto.wanted_episodes([season(1, ["missing"])], eff) == []           # nothing owned: nothing is "new"
+    assert auto.wanted_episodes(SEASONS, {**eff, "auto_new": "off"}) == []     # specials never
+
+
+def test_dub_only_for_english_episodes_and_the_mode_that_waits_for_it():
+    eff = {"auto_new": "off", "auto_from": "next", "auto_dub": "download", "lang_mode": "local_or_temp"}
+    assert auto.wanted_episodes(SEASONS, eff) == [(1, 2, "dub")]
+    assert auto.wanted_episodes(SEASONS, {**eff, "lang_mode": "original"}) == []
+
+
+def row(ident, tier=2, film="yes", score=50, pack=False, resolution="1080p"):
+    return {"ident": ident, "source": "webshare", "source_id": 1, "name": f"{ident}.mkv", "lang_tier": tier, "film": film, "quality_score": score, "pack": pack,
+            "resolution": resolution, "codec": "H.264", "hdr": "", "size": 10**9, "audio_langs": ["cs"]}
+
+
+def test_pick_sure_allowed_local_file_of_the_best_release():
+    profile = Profile(id=1, name="Seriály", kind="tv", min_resolution="720p")
+    sets = [{"episodes": {3: row("en", tier=0, score=80)}},
+            {"episodes": {3: row("cz-unsure", film="unsure")}},
+            {"episodes": {3: row("cz-sd", resolution="480p")}},
+            {"episodes": {3: row("cz-pack", pack=True)}},
+            {"episodes": {3: row("cz", score=40)}}]
+    assert auto.pick(sets, 3, profile, need_local=True)["ident"] == "cz"
+    assert auto.pick(sets, 3, profile, need_local=False)["ident"] == "cz"      # Czech first even when not needed
+    assert auto.pick(sets[:1], 3, profile, need_local=False)["ident"] == "en"
+    assert auto.pick(sets[:1], 3, profile, need_local=True) is None
+    assert auto.pick(sets, 3, profile, need_local=True, skip={"cz"}) is None   # the user dismissed it
+    assert auto.pick(sets, 4, profile, need_local=False) is None
+
+
+@pytest.fixture
+async def db():
+    await init_db(registry.discover())
+
+
+async def test_check_downloads_or_keeps_what_it_found(db, monkeypatch):
+    import sys
+    router = sys.modules["app.modules.series.router"]
+
+    detail = {"show": {"title": "Seriál", "year": 2020}, "in_library": True,
+              "seasons": [season(1, ["owned", "temp", "missing"])]}
+
+    async def fake_detail(tmdb_id, fresh=False):
+        return detail
+
+    class Offers:
+        sets = [{"episodes": {2: row("dub2"), 3: row("new3", tier=0)}}]
+
+    async def fake_search(tmdb_id, season, wanted, torrent):
+        return Offers()
+
+    requests = []
+
+    async def on_request(payload):
+        requests.append(payload)
+        payload["started"] = {"gid": "x"}
+
+    monkeypatch.setattr(router, "series_detail", fake_detail)
+    monkeypatch.setattr(router, "search_season", fake_search)
+    monkeypatch.setattr(events, "_handlers", {"download.request": [(0, "test", on_request)]})
+    monkeypatch.setattr(auto, "_busy", lambda tmdb_id: _false())
+
+    await store.save_settings(77, {"auto_new": "notify", "auto_dub": "download"}, {"title": "Seriál", "year": 2020})
+    result = await auto.check_show(77)
+    assert result == {"wanted": 2, "found": 1, "downloading": 1, "note": ""}
+    assert [(r["library_action"]["episode"], r["library_action"]["replace"]) for r in requests] == [(2, True)]
+    recs = {(r["episode"], r["kind"]): r["status"] for r in await auto.records(77)}
+    assert recs == {(2, "dub"): "downloading", (3, "new"): "found"}
+
+    # the user downloads what was found; the next check does not start the dub again
+    assert (await auto.download_found(77, [(1, 3, "new")]))["started"] == 1
+    requests.clear()
+    result = await auto.check_show(77)
+    assert result["downloading"] == 2 and not requests
+
+    # the dub landed (owned in Czech now): its record goes away
+    detail["seasons"] = [season(1, ["owned", "owned", "missing"])]
+    await auto.check_show(77)
+    assert {(r["episode"], r["kind"]) for r in await auto.records(77)} == {(3, "new")}
+
+    await store.save_settings(77, {"auto_new": "off", "auto_dub": "off"})
+    assert (await auto.check_show(77))["note"] == "automatika vypnutá" and not await auto.records(77)
+
+
+async def _false():
+    return False

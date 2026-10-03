@@ -5,7 +5,8 @@ At the configured time it emits ``scheduler.run``; the wanted list and the libra
 Automatic downloads are options of this run, off by default — the modules then emit
 ``download.request``.
 
-Config (automations row "scheduler"): time "HH:MM" (server local time), wanted, upgrades,
+Config (automations row "scheduler"): time "HH:MM" (server local time), wanted, upgrades, series (the TV
+shows' automation — what each show downloads is set per show),
 auto_download_wanted, auto_download_upgrades ("off" | "version" | "replace").
 """
 

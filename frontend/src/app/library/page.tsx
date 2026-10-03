@@ -5,6 +5,7 @@ import BulkFilmSettings from "@/components/BulkFilmSettings";
 import SubtitlesPanel from "@/components/SubtitlesPanel";
 import { useRouter } from "next/navigation";
 import TvInventory from "@/components/TvInventory";
+import SeriesAutomation from "@/components/SeriesAuto";
 import TvRename from "@/components/TvRename";
 import Image from "next/image";
 import Link from "next/link";
@@ -572,6 +573,7 @@ export default function LibraryPage() {
       <input type="search" value={librarySearch} onChange={(e) => setLibrarySearch(e.target.value)}
         placeholder={tab === "filmy" ? "Hledat v knihovně — název, rok, soubor…" : "Hledat seriál…"}
         className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-600" />
+      {tab === "serialy" && <SeriesAutomation canEdit={canEdit} canDownload={can("download")} query={librarySearch} />}
       {tab === "serialy" && <TvInventory />}
 
       {loading ? (
