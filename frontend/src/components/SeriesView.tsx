@@ -9,7 +9,7 @@ import ShowPacks from "@/components/ShowPacks";
 import EpisodeWindow from "@/components/EpisodeWindow";
 import { useAuth } from "@/components/AuthGate";
 import {
-  DownloadItem, getDownloads, setAudioLanguage, setNoDub,
+  DownloadItem, getDownloads, setAudioLanguage,
   MovieContext, QualityProfile, ScoredFile, SeriesDetail, SeriesEpisode, SeriesLangMode, SeriesSeason,
   getProfiles, getSeries, saveSeriesSettings, searchFiles,
 } from "@/lib/api";
@@ -337,18 +337,10 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
                     </span>
                   ) : (
                   <span className={`w-28 ${STATE[ep.state].cls}`}
-                    title={ep.file ? `${ep.file.filename}\n${(ep.file.size / 1e9).toFixed(2)} GB` : ""}>
+                    title={ep.file ? `${ep.file.filename}\n${(ep.file.size / 1e9).toFixed(2)} GB${ep.no_dub ? "\nCZ dabing nevznikl — nečeká se na něj" : ""}` : ""}>
                     {ep.file ? [ep.file.quality, ep.file.languages.map(L).join("+")].filter(Boolean).join(" · ") || STATE[ep.state].label
                       : STATE[ep.state].label}
                   </span>
-                  )}
-                  {canEdit && ep.file && (ep.state === "temp" || ep.no_dub) && (
-                    <button onClick={() => setNoDub(tmdbId, season.season_number, ep.episode, !ep.no_dub).then(onChanged)}
-                      title={ep.no_dub ? "Označeno: CZ dabing tohoto dílu nevznikl. Klikni pro zrušení."
-                        : "CZ dabing tohoto dílu nikdy nevznikl — nečekat na něj a nehledat ho"}
-                      className={`whitespace-nowrap text-[10px] ${ep.no_dub ? "text-zinc-500 hover:text-zinc-300" : "text-amber-400/80 hover:text-amber-300"}`}>
-                      {ep.no_dub ? "bez CZ dabingu ✕" : "dabing nevznikl"}
-                    </button>
                   )}
                   {dl ? (
                     <span className={`w-24 whitespace-nowrap text-right ${dl.queued ? "text-amber-300" : "text-violet-300 animate-pulse"}`}

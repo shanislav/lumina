@@ -758,9 +758,15 @@ async def episode_detail(episode_id: int) -> dict:
         ep = await episodes.episode(db, episode_id)
         if not ep or not ep["has_file"]:
             raise HTTPException(404, "Díl v knihovně není")
+        no_dub = False
+        try:                                       # the series module's word: a dub was never made
+            from app.modules.series import store as series_store
+            no_dub = (ep["season"], ep["episode"]) in await series_store.no_dub(ep["show_tmdb_id"])
+        except Exception:  # noqa: BLE001 — the series module switched off
+            pass
         return {"id": ep["id"], "show_tmdb_id": ep["show_tmdb_id"], "show_title": ep["show_title"], "season": ep["season"],
                 "episode": ep["episode"], "episode_title": ep["episode_title"], "air_date": ep["air_date"],
-                "file_path": ep["file_path"], "versions": await episodes.versions(db, ep)}
+                "file_path": ep["file_path"], "no_dub": no_dub, "versions": await episodes.versions(db, ep)}
     finally:
         await db.close()
 

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthGate";
 import SubtitlesPanel from "@/components/SubtitlesPanel";
-import { EpisodeDetail, EpisodeVersion, deleteEpisodeFile, getEpisodeDetail, setAudioLanguage } from "@/lib/api";
+import { EpisodeDetail, EpisodeVersion, deleteEpisodeFile, getEpisodeDetail, setAudioLanguage, setNoDub } from "@/lib/api";
 
 /**
  * The window of an owned episode (show page): its files with sound and subtitles, the player, subtitles from
@@ -116,6 +116,14 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
                   ) : (
                     <p className="mt-0.5 text-zinc-400">🔊 {v.media.audio.map(audioLabel).join(" · ")}</p>
                   ))}
+                  {v.current && can("library.edit") && (
+                    <label className="mt-1 flex w-fit cursor-pointer items-center gap-1.5 text-[11px] text-zinc-400"
+                      title="Díl bez CZ zvuku se jinak počítá jako „čeká na dabing“ — u dílů, které dabing nikdy nedostaly, na něj nečekat">
+                      <input type="checkbox" checked={!!data.no_dub}
+                        onChange={async (e) => { await setNoDub(data.show_tmdb_id, data.season, data.episode, e.target.checked); await load(); onChanged(); }} />
+                      CZ dabing tohoto dílu nevznikl
+                    </label>
+                  )}
                   {!!v.media.subtitles?.length && (
                     <p className="mt-0.5 text-zinc-500">💬 v souboru: {v.media.subtitles.map((l) => l.toUpperCase()).join(", ")}</p>
                   )}

@@ -1863,6 +1863,7 @@ export interface EpisodeDetail {
   episode_title: string;
   air_date: string;
   file_path: string;
+  no_dub?: boolean;         // the user marked it: a Czech dub was never made
   versions: EpisodeVersion[];
 }
 
