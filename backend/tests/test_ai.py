@@ -92,7 +92,8 @@ async def test_gemini_out_for_the_day_groq_answers_and_gemini_goes_last(monkeypa
     calls = fake_http(monkeypatch, answer)
     got = await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}])
     assert (got.text, got.provider) == ("from groq", "groq") and len(calls) == 2
-    assert ai.gemini_usage()["exhausted"] and ai.order(BOTH, "describe") == ["groq", "gemini"]
+    assert ai.gemini_out(BOTH) and ai.order(BOTH, "describe") == ["groq", "gemini"]
+    assert not ai.gemini_out({**BOTH, "gemini_model": "gemini-flash-lite-latest"})   # each model its own limit
 
 
 async def test_no_ai_answers():

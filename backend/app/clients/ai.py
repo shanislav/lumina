@@ -7,7 +7,8 @@ Every AI feature asks through ``chat(cfg, feature, …)``: the AIs with a key, i
 - Gemini (Google AI Studio key, a free tier): remembers far more titles than Groq's model; can search Google
   while answering (``search=True``) where the key allows it (the free tier of newer models does not — then it
   answers from its memory, and Lumina does not try the search again that day). Google sends no "what is left" with an answer: Lumina counts its own calls
-  per Google's day (midnight Pacific time) and stops asking for the day after Google says the limit is out.
+  per Google's day (midnight Pacific time) and asks the other AI first for the day once Google says the
+  model's daily limit is out (each model has its own).
 """
 
 import asyncio
@@ -88,7 +89,7 @@ def order(cfg: dict, feature: str) -> list[str]:
     if choice in PROVIDERS:
         base = (choice, *[p for p in base if p != choice])
     out = [p for p in base if p in have]
-    return sorted(out, key=lambda p: p == "gemini" and gemini_usage()["exhausted"])
+    return sorted(out, key=lambda p: p == "gemini" and gemini_out(cfg))
 
 
 # ── Gemini's day ──
@@ -99,7 +100,7 @@ def _google_day() -> str:
 
 
 def gemini_usage() -> dict:
-    """{day, calls, searches, exhausted} of Google's day now."""
+    """{day, calls, searches, out: [models out of their daily limit], no_search} of Google's day now."""
     if not _gemini:
         try:
             _gemini.update(json.loads(USAGE_FILE.read_text()))
@@ -108,14 +109,20 @@ def gemini_usage() -> dict:
     day = _google_day()
     if _gemini.get("day") != day:
         _gemini.clear()
-        _gemini.update({"day": day, "calls": 0, "searches": 0, "exhausted": False})
+        _gemini.update({"day": day, "calls": 0, "searches": 0, "out": []})
+    _gemini.setdefault("out", [])
     return _gemini
 
 
-def _gemini_note(searched: bool = False, exhausted: bool = False) -> None:
+def gemini_out(cfg: dict) -> bool:
+    """Is the configured model out of its daily limit (Google counts each model on its own)?"""
+    return (cfg.get("gemini_model") or DEFAULT_GEMINI_MODEL) in gemini_usage()["out"]
+
+
+def _gemini_note(searched: bool = False, out: str = "") -> None:
     u = gemini_usage()
-    if exhausted:
-        u["exhausted"] = True
+    if out:
+        u["out"] = sorted({*u["out"], out})
     else:
         u["calls"] += 1
         u["searches"] += int(searched)
@@ -134,7 +141,7 @@ def quotas(cfg: dict) -> dict:
         out["groq"] = {k: q.get(k) for k in keep} if q else {}
     if cfg.get("gemini_api_key"):
         u = gemini_usage()
-        out["gemini"] = {"calls": u["calls"], "searches": u["searches"], "exhausted": u["exhausted"],
+        out["gemini"] = {"calls": u["calls"], "searches": u["searches"], "exhausted": gemini_out(cfg),
                          "no_search": bool(u.get("no_search"))}
     return out
 
@@ -218,7 +225,7 @@ async def _gemini_ask(cfg: dict, system: str, messages: list[dict], max_tokens: 
                 raise SearchLimitError("Gemini: hledání na Googlu není s tímto klíčem dostupné")
             if "PerDay" in (resp.text or "") or attempt == 1 or retry_after(resp) > MAX_WAIT:
                 if "PerDay" in (resp.text or ""):
-                    _gemini_note(exhausted=True)          # out for today: the other AI answers until tomorrow
+                    _gemini_note(out=model)               # out for today: the other AI answers until tomorrow
                 raise LimitError("Gemini: překročený limit")
             await asyncio.sleep(retry_after(resp))
     if resp.status_code >= 400:
