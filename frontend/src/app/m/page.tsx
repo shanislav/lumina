@@ -24,6 +24,13 @@ export default function MobileSearch() {
   const shownFor = useRef("");
   const [ask, setAsk] = useState<{ text: string; n: number } | null>(null);          // the text the shown list is for — no suggestions over it
 
+  // a film handed over by another page (Objevit, the library) — "/?movie=<base64 JSON>" → its page
+  useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get("movie");
+    if (!raw) return;
+    try { router.replace(titleHref(JSON.parse(decodeURIComponent(atob(raw))))); } catch { /* bad data: stay */ }
+  }, [router]);
+
   // back from a title: the last results again — anything else (a reload, the tab "Hledat") is a fresh start
   useEffect(() => {
     let back = false;

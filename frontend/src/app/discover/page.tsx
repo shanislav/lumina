@@ -22,6 +22,9 @@ const TV_SECTIONS: Section[] = [
 
 type Tab = "filmy" | "serialy";
 
+const NO_INDIAN_KEY = "lumina.discover.noIndian";
+const INDIAN = new Set(["hi", "ta", "te", "ml", "kn", "bn", "mr", "pa", "gu", "or", "ur"]);
+
 export default function DiscoverPage() {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("filmy");
@@ -30,6 +33,13 @@ export default function DiscoverPage() {
   const [filmLoading, setFilmLoading] = useState(true);
   const [tvLoading, setTvLoading] = useState(true);
   const [owned, setOwned] = useState<Record<string, OwnedVersion[]>>({});
+  // "Bez Bollywoodu": Indian films and shows (by their original language) left out — on unless switched off
+  const [noIndian, setNoIndian] = useState(true);
+  useEffect(() => { try { setNoIndian(localStorage.getItem(NO_INDIAN_KEY) !== "0"); } catch { /* private */ } }, []);
+  const toggleIndian = () => setNoIndian((v) => {
+    try { localStorage.setItem(NO_INDIAN_KEY, v ? "0" : "1"); } catch { /* private */ }
+    return !v;
+  });
 
   useEffect(() => {
     Promise.all(
@@ -115,6 +125,12 @@ export default function DiscoverPage() {
           Serialy
         </button>
       </div>
+      <button onClick={toggleIndian}
+        className={`-mt-5 w-fit rounded-full border px-3 py-1 text-xs ${noIndian
+          ? "border-violet-700 bg-violet-950/40 text-violet-200" : "border-zinc-700 text-zinc-500"}`}
+        title="Indické filmy a seriály (hindština, tamilština, telugština …) podle původního jazyka">
+        {noIndian ? "✓ Bez Bollywoodu" : "Bez Bollywoodu"}
+      </button>
 
       {loading ? (
         <div className="text-zinc-500 animate-pulse text-center py-12">
@@ -122,7 +138,7 @@ export default function DiscoverPage() {
         </div>
       ) : (
         sections.map((section) => {
-          const items = data[section.title] || [];
+          const items = (data[section.title] || []).filter((m) => !(noIndian && INDIAN.has(m.original_language || "")));
           if (items.length === 0) return null;
           return (
             <section key={`${tab}-${section.title}`}>

@@ -77,6 +77,7 @@ class TMDBClient:
             movies.append(
                 TMDBMovie(
                     tmdb_id=item["id"],
+                    original_language=item.get("original_language", "") or "",
                     title=item.get("title", ""),
                     original_title=item.get("original_title", ""),
                     year=release[:4] if len(release) >= 4 else "",
@@ -158,6 +159,7 @@ class TMDBClient:
             shows.append(
                 TMDBMovie(
                     tmdb_id=item["id"],
+                    original_language=item.get("original_language", "") or "",
                     title=item.get("name", ""),
                     original_title=item.get("original_name", ""),
                     year=air_date[:4] if len(air_date) >= 4 else "",

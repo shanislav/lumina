@@ -99,6 +99,7 @@ export interface TMDBMovie {
   poster_url: string | null;
   media_type?: "movie" | "tv";
   wikidata_id?: string | null;   // a film TMDB does not know (tmdb_id = 0)
+  original_language?: string;    // "en", "hi" … (Objevit can leave Indian films out)
 }
 
 export interface ScoredFile {

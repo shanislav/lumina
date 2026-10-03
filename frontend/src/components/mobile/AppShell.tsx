@@ -35,6 +35,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }, [m, path, router]);
 
   if (!m) return null;
+  // a page about to move to the other version is not drawn (it would act on its address first: "/?movie=…")
+  if ((m.mobile && TO_MOBILE[path]) || (!m.mobile && TO_FULL[path])) return null;
 
   if (!m.mobile) {
     return (
