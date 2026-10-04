@@ -32,3 +32,21 @@ async def test_a_wanted_film_is_marked_with_who_added_it(db):
     rows = await mark_known([{"tmdb_id": 1001, "media_type": "movie"}])
     assert rows[0]["wanted"]["added_by"] == "vanco"
     assert (await wanted_of(tmdb_id=1001))["added_by"] == "vanco" and await wanted_of(tmdb_id=1002) is None
+
+
+async def test_pick_tells_every_file_the_profile_allows(monkeypatch):
+    import sys
+    from app.core.profiles import Profile
+    router = sys.modules["app.modules.search.router"]
+    asked = []
+
+    async def profile(pid, kind="movie"):
+        asked.append(kind)
+        return Profile(name="Full HD", kind=kind, min_resolution="1080p")
+    monkeypatch.setattr(router, "get_profile", profile)
+    files = [{"source_id": 1, "ident": "a", "film": "yes", "resolution": "720p", "quality_score": 40},
+             {"source_id": 1, "ident": "b", "film": "yes", "resolution": "1080p", "quality_score": 50},
+             {"source_id": 2, "ident": "c", "film": "yes", "resolution": "2160p", "quality_score": 80},
+             {"source_id": 2, "ident": "d", "film": "no", "resolution": "1080p", "quality_score": 90}]
+    got = await router.search_pick(router.PickRequest(files=files, kind="tv"))
+    assert got["key"] == "2:c" and got["ok_keys"] == ["2:c", "1:b"] and asked == ["tv"]

@@ -332,13 +332,14 @@ async def search_details(body: DetailsRequest) -> dict:
 
 class PickRequest(BaseModel):
     profile_id: int | None = None
+    kind: str = "movie"           # movie | tv: whose default profile when none is chosen
     files: list[dict]             # the offers as the file table has them (verified ones re-evaluated)
 
 
 @router.post("/search/pick", dependencies=[Depends(require("search"))])
 async def search_pick(body: PickRequest) -> dict:
     """The offer a quality profile would take now (what "Chci" would download), and why the others not."""
-    profile = await get_profile(body.profile_id)
+    profile = await get_profile(body.profile_id, "tv" if body.kind == "tv" else "movie")
     ok = suitable(body.files, profile)
     reasons: dict[str, int] = {}
     for r in body.files:
@@ -349,6 +350,7 @@ async def search_pick(body: PickRequest) -> dict:
         "profile": profile.name,
         "key": f"{best['source_id']}:{best['ident']}" if best else None,
         "suitable": len(ok),
+        "ok_keys": [f"{r['source_id']}:{r['ident']}" for r in ok],    # the phone hides the rest
         "reasons": sorted(reasons.items(), key=lambda x: -x[1])[:3],
     }
 

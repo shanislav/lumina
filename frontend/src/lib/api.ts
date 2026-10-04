@@ -447,14 +447,15 @@ export interface ProfilePick {
   key: string | null;              // "<source_id>:<ident>" of the offer the profile would take now
   suitable: number;
   reasons: [string, number][];     // why the others do not suit (most common first)
+  ok_keys?: string[];              // every offer the profile allows, best first
 }
 
 /** What a quality profile would download now from these offers (the rule "Chci" uses). */
-export async function pickForProfile(profileId: number | null, files: ScoredFile[]): Promise<ProfilePick> {
+export async function pickForProfile(profileId: number | null, files: ScoredFile[], kind: "movie" | "tv" = "movie"): Promise<ProfilePick> {
   const res = await apiFetch(`${API_BASE}/api/search/pick`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ profile_id: profileId, files }),
+    body: JSON.stringify({ profile_id: profileId, files, kind }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
