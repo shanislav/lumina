@@ -12,6 +12,7 @@ from app.clients.groq_scorer import score_results
 from app.clients.tmdb import TMDBClient
 from app.core.offers.details import cached_details, get_details
 from app.core.episode_match import parse_episode
+from app.core.cinema import before_digital
 from app.core.offers.evaluate import RELEVANCE, MovieContext, evaluate, recommended_key, year_of
 from app.core.quality import Prefs, prefs_from_settings
 from app.core.text import clean_text
@@ -236,6 +237,8 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
                 local_titles = [by_lang.get(l, "") for l in prefs.local_langs]
                 ctx.runtime = full.get("runtime") or 0
                 ctx.year = full.get("year") or ctx.year
+                ctx.releases = full.get("releases") or {}
+                ctx.pre_digital = before_digital(ctx.releases)
                 ctx.titles = [full.get("title", ""), full.get("original_title", ""),
                               *(by_lang.get(l, "") for l in ("cs", "sk", "en")),
                               *full.get("alternative_titles", [])]
@@ -414,6 +417,8 @@ def upgrade_block(row: dict, owned: dict, prefs: Prefs) -> str | None:
     """
     if row.get("film") not in ("yes", "unsure"):
         return "film"
+    if row.get("cinema") in ("video", "likely", "suspect"):
+        return "cinema"
     if row.get("size") == owned.get("file_size"):
         return "same_file"
     if row.get("quality_score", 0) <= (owned.get("quality_score") or 0):

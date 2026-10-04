@@ -7,6 +7,7 @@ when verified details arrive from the source — the same rules, one place.
 import re
 from dataclasses import dataclass, field
 
+from app.core import cinema
 from app.core.episode_match import judge_episode, parse_episode, show_fit
 from app.core.film_match import judge
 from app.core.quality import Prefs, facts_from_media, facts_from_name, language_tier, prefs_from_settings, score, video_bitrate  # noqa: F401
@@ -29,18 +30,22 @@ class MovieContext:
     # a TV episode instead of a film: {"season": 1, "episode": 3}; titles = the show's names,
     # runtime = the episode's
     episode: dict | None = None
+    # the film has not come out digitally yet (core/cinema): every file is most likely a cinema recording
+    pre_digital: bool = False
+    releases: dict = field(default_factory=dict)            # {"theatrical": "2025-…", "digital": "…"}
 
     def as_dict(self) -> dict:
         return {"titles": self.titles, "year": self.year, "runtime": self.runtime,
                 "people": self.people, "other_parts": self.other_parts, "namesakes": self.namesakes,
-                "episode": self.episode}
+                "episode": self.episode, "pre_digital": self.pre_digital, "releases": self.releases}
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "MovieContext":
         d = d or {}
         return cls(titles=d.get("titles") or [], year=d.get("year"), runtime=d.get("runtime") or 0,
                    people=d.get("people") or [], other_parts=d.get("other_parts") or [],
-                   namesakes=d.get("namesakes") or [], episode=d.get("episode") or None)
+                   namesakes=d.get("namesakes") or [], episode=d.get("episode") or None,
+                   pre_digital=bool(d.get("pre_digital")), releases=d.get("releases") or {})
 
 
 def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dict | None = None,
@@ -81,6 +86,15 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
         verdict = judge(name, ctx.titles, ctx.year, facts.duration_s, ctx.runtime, ctx.people, ctx.other_parts,
                         ctx.namesakes)
         film, reasons = verdict.status, verdict.reasons
+    # a cinema recording: a cinema picture is no file of the film for anyone; Czech/Slovak sound recorded in a
+    # cinema is no dub (the language tier and the profiles see the file without it)
+    cin = cinema.judge(name, ctx.pre_digital and not ctx.episode)
+    recorded: list[str] = []
+    if cin["cinema"] == "video" and film != "no":
+        film, reasons = "no", [cin["reason"]]
+    elif cin["cinema"] == "audio":
+        recorded = [l for l in facts.audio_langs if l in cin["langs"]] or [l for l in cin["langs"] if l in prefs.local_langs]
+        facts.audio_langs = [l for l in facts.audio_langs if l not in recorded]
     tier = language_tier(facts, prefs)
     ev = {
         "film": film,
@@ -101,6 +115,9 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
         "lang_tier": tier,
         "is_dubbed": tier >= 2,
         "pack": pack,               # a TV season / show pack holding the episode, not the episode alone
+        "cinema": cin["cinema"],    # "" | video | audio | likely | suspect (core/cinema)
+        "cinema_reason": cin["reason"],
+        "cinema_langs": recorded,   # the sound's languages recorded in a cinema (not in audio_langs)
     }
     if ctx.episode and ctx.episode.get("by_name") is not None:
         want = (int(ctx.episode.get("season") or 0), int(ctx.episode.get("episode") or 0))

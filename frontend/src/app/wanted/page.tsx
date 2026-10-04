@@ -163,6 +163,8 @@ export default function WantedPage() {
                     </p>
                     <p className="text-zinc-500 truncate" title={item.best.name}>{item.best.name}</p>
                   </div>
+                ) : item.status === "wanted" && item.waiting ? (
+                  <p className="text-xs text-amber-300">🎬 {item.waiting} — zatím existují jen záznamy z kina, Lumina je nehledá.</p>
                 ) : item.status === "wanted" && item.checked_at ? (
                   <p className="text-xs text-zinc-500">Zatím nic, co by splnilo profil „{profileName(item.profile_id)}“.</p>
                 ) : null}

@@ -6,7 +6,9 @@ import logging
 from datetime import datetime
 
 from app.config import get_effective_settings
+from app.clients.tmdb import TMDBClient
 from app.core import events
+from app.core.cinema import before_digital
 from app.core.offers.search import find_offers, verify_offers
 from app.core.profiles import get_profile
 from app.core.profiles import suitable as pick_suitable
@@ -114,6 +116,18 @@ async def check(wanted_id: int) -> dict | None:
         return None
     _state["current"] = item["title"]
     cfg = await get_effective_settings()
+    waiting = await _waiting(cfg, item["tmdb_id"])
+    if waiting:
+        # only cinema recordings exist yet: nothing to search for (WebShare / FastShare spared)
+        db = await get_db()
+        try:
+            await db.execute("UPDATE wanted SET status = 'wanted', matches = 0, best = '{}', waiting = ?, checked_at = ? "
+                             "WHERE id = ?", (waiting, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), wanted_id))
+            await db.commit()
+        finally:
+            await db.close()
+        logger.info("Wanted '%s': %s", item["title"], waiting)
+        return {"status": "wanted", "matches": 0, "waiting": waiting}
     profile = await get_profile(item["profile_id"])
     query = f"{item['title']} {item['year']}".strip()
     offers = await find_offers(cfg, query, original_title=item["original_title"] or "",
@@ -125,7 +139,7 @@ async def check(wanted_id: int) -> dict | None:
     status = "found" if suitable else "wanted"
     db = await get_db()
     try:
-        await db.execute("UPDATE wanted SET status = ?, matches = ?, best = ?, checked_at = ? WHERE id = ?",
+        await db.execute("UPDATE wanted SET status = ?, matches = ?, best = ?, waiting = '', checked_at = ? WHERE id = ?",
                          (status, len(suitable), json.dumps(best), datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                           wanted_id))
         await db.commit()
@@ -137,6 +151,27 @@ async def check(wanted_id: int) -> dict | None:
                                            "title": item["title"], "year": item["year"], "profile": profile.name,
                                            "matches": len(suitable), "best": best})
     return {"status": status, "matches": len(suitable)}
+
+
+async def _waiting(cfg: dict, tmdb_id: int | None) -> str:
+    """"čeká na digitální vydání …" when the film has not come out digitally yet (core/cinema), else ""."""
+    if not tmdb_id:
+        return ""
+    client = TMDBClient(cfg.get("tmdb_api_key", ""))
+    try:
+        full = await client.get_movie_full(tmdb_id)
+    except Exception as e:  # noqa: BLE001 — TMDB down: search as before
+        logger.info("Wanted: TMDB of %s failed: %s", tmdb_id, e)
+        return ""
+    finally:
+        await client.close()
+    releases = full.get("releases") or {}
+    if not before_digital(releases):
+        return ""
+    when = releases.get("digital")
+    cz = lambda d: f"{int(d[8:10])}. {int(d[5:7])}. {d[:4]}"
+    return (f"čeká na digitální vydání ({cz(when)})" if when
+            else f"čeká na digitální vydání (v kinech od {cz(releases['theatrical'])})")
 
 
 async def request_download(wanted_id: int) -> None:

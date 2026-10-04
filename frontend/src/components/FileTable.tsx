@@ -236,7 +236,7 @@ export default function FileTable({
     return { view: sorted, junk: junkRows, hiddenByUpgrade: hidden };
   }, [rows, filters, showJunk, preferLocalAudio, upgrade, onlyBetter, ownedSizes, canMoveDub, moveDub, activeSources]);
 
-  const best = view.find((r) => r.file.film === "yes");
+  const best = view.find((r) => r.file.film === "yes" && !["likely", "suspect"].includes(r.file.cinema ?? ""));
   const audioLangChoices = useMemo(() => {
     const count = new Map<string, number>();
     for (const r of rows) for (const l of new Set((r.file.audio_langs ?? []).map((x) => x.toLowerCase())))
@@ -359,6 +359,8 @@ export default function FileTable({
         </div>
       )}
 
+      {movie?.pre_digital && <PreDigital movie={movie} />}
+
       {upgrade && (
         <div className="mb-3 rounded-lg border border-violet-800 bg-violet-950/30 px-4 py-3 text-sm space-y-1">
           <p className="text-violet-200">
@@ -439,6 +441,7 @@ export default function FileTable({
                         ✓ tento soubor už máš
                       </span>
                     )}
+                    <CinemaBadge file={file} />
                     {file.name_ok === true && (
                       <span title={(file.film_reasons ?? []).join(", ")} className="rounded bg-emerald-900/50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
                         ✓ název dílu sedí
@@ -699,6 +702,33 @@ function MultiGroup({ label, values, options, onChange }: { label: string; value
         <Chip key={v} active={values.includes(v)}
           onClick={() => onChange(values.includes(v) ? values.filter((x) => x !== v) : [...values, v])}>{l}</Chip>
       ))}
+    </div>
+  );
+}
+
+const czDate = (d?: string) => (d ? new Date(d).toLocaleDateString("cs-CZ") : "");
+
+/** A cinema recording's mark (backend core/cinema). */
+export function CinemaBadge({ file }: { file: ScoredFile }) {
+  if (!file.cinema) return null;
+  const text = file.cinema === "video" ? "📹 obraz z kina" : file.cinema === "audio"
+    ? `🎤 ${(file.cinema_langs ?? []).map((l) => (l === "cs" ? "CZ" : l.toUpperCase())).join("+") || "CZ/SK"} zvuk z kina`
+      : file.cinema === "suspect" ? "⚠ podezřelé — ještě nevyšel digitálně" : "🎬 nejspíš z kina";
+  return (
+    <span title={file.cinema_reason} className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+      file.cinema === "likely" ? "bg-amber-950/70 text-amber-300" : "bg-red-950/70 text-red-300"}`}>
+      {text}
+    </span>
+  );
+}
+
+/** The film is not out digitally yet: what exists is recorded in a cinema. */
+export function PreDigital({ movie }: { movie: MovieContext }) {
+  const r = movie.releases ?? {};
+  return (
+    <div className="mb-3 rounded-lg border border-amber-800/70 bg-amber-950/30 px-4 py-2.5 text-sm text-amber-200">
+      🎬 Film zatím nevyšel digitálně{r.digital ? ` (vyjde ${czDate(r.digital)})` : r.theatrical ? ` — v kinech od ${czDate(r.theatrical)}` : ""}.
+      <span className="text-amber-200/70"> Soubory jsou nejspíš nahrané v kině; Chci ani automatika je nestáhnou.</span>
     </div>
   );
 }

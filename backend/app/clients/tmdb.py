@@ -3,6 +3,8 @@ from datetime import date, timedelta
 
 import httpx
 
+from app.core.cinema import release_info
+
 from app.models.schemas import TMDBMovie
 
 API_BASE = "https://api.themoviedb.org/3"
@@ -340,7 +342,7 @@ class TMDBClient:
         resp = await self._http.get(
             f"{API_BASE}/movie/{tmdb_id}",
             params={"api_key": self._api_key, "language": language,
-                    "append_to_response": "translations,alternative_titles,credits,external_ids"},
+                    "append_to_response": "translations,alternative_titles,credits,external_ids,release_dates"},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -392,6 +394,8 @@ class TMDBClient:
             # languages spoken in the film — more than one: parts may need forced subtitles
             "spoken_languages": [l.get("iso_639_1") for l in data.get("spoken_languages") or [] if l.get("iso_639_1")],
             "imdb_id": data.get("imdb_id") or "",
+            # the first cinema premiere / digital release anywhere — before the latter only cinema recordings exist
+            "releases": release_info((data.get("release_dates") or {}).get("results") or []),
             "overview": data.get("overview", ""),
             "poster_url": f"{IMG_BASE}{data['poster_path']}" if data.get("poster_path") else None,
             "titles": sorted(t for t in titles if t),

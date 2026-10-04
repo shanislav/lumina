@@ -6,6 +6,7 @@ the ones the profile allows and remembers the best. When the film shows up in th
 so a notification module can pick them up later.
 """
 
+from app.core.migrations import add_column
 from app.core.module import Module, Permission, Subscription, TaskSource
 from app.modules.wanted import tasks
 from app.modules.wanted.router import router
@@ -17,7 +18,7 @@ module = Module(
     order=25,
     routers=[router],
     permissions=[Permission("wanted", "Přidávat a spravovat filmy v Chci", default=True)],
-    migrations=[WANTED],
+    migrations=[WANTED, add_column("wanted", "waiting", "TEXT DEFAULT ''")],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=80),
                    Subscription("scheduler.run", on_scheduler_run),
                    Subscription("download.cancelled", on_download_cancelled)],

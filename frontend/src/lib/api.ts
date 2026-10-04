@@ -131,6 +131,11 @@ export interface ScoredFile {
   verified: boolean;
   lang_tier: number;
   pack?: boolean;            // TV: a season / show pack holding the wanted episode
+  // a cinema recording (backend core/cinema): video = a cinema picture (junk), audio = its CZ/SK sound recorded
+  // in a cinema (cinema_langs, not in audio_langs), likely / suspect = the film is not out digitally yet
+  cinema?: "" | "video" | "audio" | "likely" | "suspect";
+  cinema_reason?: string;
+  cinema_langs?: string[];
 }
 
 /** The film a file search was for — sent back with detail requests so files are re-evaluated with it. */
@@ -139,6 +144,8 @@ export interface MovieContext {
   year: number | null;
   runtime: number;
   episode?: { season: number; episode: number } | null;   // a TV episode instead of a film
+  pre_digital?: boolean;     // not out digitally yet: every file is most likely a cinema recording
+  releases?: { theatrical?: string; digital?: string };
 }
 
 export interface SearchFilesResult {
@@ -592,6 +599,7 @@ export interface WantedItem {
   matches: number;
   best: WantedBest;
   note: string;
+  waiting?: string;          // "čeká na digitální vydání (10. 11. 2026)" — only cinema recordings exist yet
   added_at: string;
   checked_at: string | null;
   done_at: string | null;

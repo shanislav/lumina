@@ -47,6 +47,9 @@ function FileFacts({ f }: { f: ScoredFile }) {
       {f.film === "unsure" && <Tag tone="warn">možná jiný díl</Tag>}
       {f.film === "length" && <Tag tone="warn">nesedí délka</Tag>}
       {f.name_ok && <Tag tone="good">název dílu sedí</Tag>}
+      {f.cinema === "audio" && <Tag tone="warn">🎤 {(f.cinema_langs ?? []).map(langName).join("+") || "CZ/SK"} zvuk z kina</Tag>}
+      {f.cinema === "likely" && <Tag tone="warn">🎬 nejspíš z kina</Tag>}
+      {f.cinema === "suspect" && <Tag tone="warn">⚠ podezřelé</Tag>}
     </div>
   );
 }
@@ -160,7 +163,9 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
   }, [offers, filters]);
 
   // the recommended one: the profile's pick when it passes the filters, else the first sure one
-  const featured = (pickKey && view.find((o) => o.copies.some((c) => keyOf(c) === pickKey))) || view.find((o) => o.file.film === "yes");
+  // never a cinema recording (before the digital release everything is one: nothing is recommended)
+  const recommendable = (o: Offer) => o.file.film === "yes" && !["likely", "suspect"].includes(o.file.cinema ?? "");
+  const featured = (pickKey && view.find((o) => o.copies.some((c) => keyOf(c) === pickKey))) || view.find(recommendable);
   const rest = view.filter((o) => o !== featured);
   const shown = all ? rest : rest.slice(0, 6);
 
@@ -191,11 +196,19 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
         <ChoiceButton label="Řadit" value={SORTS.find(([k]) => k === filters.sort)?.[1] ?? ""} active={filters.sort !== "recommended"} onClick={() => setSheet("sort")} />
       </div>
       {verify.running && <p className="text-sm text-zinc-500">Ověřuji soubory u zdrojů… {verify.done}/{verify.total}</p>}
+      {movie?.pre_digital && (
+        <p className="rounded-xl border border-amber-800/70 bg-amber-950/30 px-4 py-3 text-amber-200">
+          🎬 Film zatím nevyšel digitálně{movie.releases?.digital ? ` (vyjde ${new Date(movie.releases.digital).toLocaleDateString("cs-CZ")})` : ""}.
+          Soubory jsou nejspíš z kina.
+        </p>
+      )}
 
       {featured ? (
         <OfferCard offer={featured} featured state={states[featured.file.ident]} onDownload={() => download(featured.file)} canDownload={can("download")} />
       ) : (
-        <p className="rounded-xl border border-zinc-800 p-4 text-zinc-400">S těmito filtry nic jistého. Zkus filtr povolit.</p>
+        <p className="rounded-xl border border-zinc-800 p-4 text-zinc-400">
+          {movie?.pre_digital ? "Nic k doporučení — dokud film nevyjde digitálně, jsou soubory jen z kina." : "S těmito filtry nic jistého. Zkus filtr povolit."}
+        </p>
       )}
       {rest.length > 0 && <p className="pt-2 text-sm text-zinc-500">Další soubory ({rest.length})</p>}
       {shown.map((o) => (

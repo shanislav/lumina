@@ -112,6 +112,8 @@ def block(row: dict, p: Profile) -> str | None:
     row: an evaluated offer / library file — resolution, codec, hdr, size, video_bitrate, lang_tier,
     quality_score. Unknown values do not pass a condition that needs them.
     """
+    if row.get("cinema") in ("video", "likely", "suspect"):
+        return "z kina"
     res = row.get("resolution") or ""
     if p.min_resolution and _rank(res) < _rank(p.min_resolution):
         return f"rozlišení {res or '?'} < {p.min_resolution}"
