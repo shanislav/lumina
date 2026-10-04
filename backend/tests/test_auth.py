@@ -162,3 +162,9 @@ def test_login_brake(client):
         assert c.post("/api/auth/login", json={"username": "shano", "password": "bad-bad-bad"}).status_code == 401
     r = c.post("/api/auth/login", json={"username": "shano", "password": "admin-pass-1"})
     assert r.status_code == 429
+
+
+def test_password_of_seven_characters_is_enough():
+    from app.core.auth import password_problem
+    assert password_problem("abcdefg") is None
+    assert password_problem("abcdef") == "Heslo musí mít aspoň 7 znaků"

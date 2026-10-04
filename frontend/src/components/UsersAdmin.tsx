@@ -90,7 +90,7 @@ function NewUserForm({ perms, onCreate, onCancel }: {
       <div className="flex flex-wrap gap-2">
         <input className={`${INPUT} flex-1 min-w-[10rem]`} placeholder="Jméno" autoComplete="off"
           value={username} onChange={(e) => setUsername(e.target.value)} />
-        <input className={`${INPUT} flex-1 min-w-[10rem]`} placeholder="Heslo (aspoň 8 znaků)" type="password" autoComplete="new-password"
+        <input className={`${INPUT} flex-1 min-w-[10rem]`} placeholder="Heslo (aspoň 7 znaků)" type="password" autoComplete="new-password"
           value={password} onChange={(e) => setPassword(e.target.value)} />
         <select className={INPUT} value={role} onChange={(e) => setRole(e.target.value)}>
           <option value="user">Uživatel</option>

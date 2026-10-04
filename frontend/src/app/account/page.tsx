@@ -69,7 +69,7 @@ export default function AccountPage() {
         <form onSubmit={submitPassword} className="grid gap-3 sm:max-w-sm">
           <input className={INPUT} type="password" placeholder="Současné heslo" autoComplete="current-password"
             value={current} onChange={(e) => setCurrent(e.target.value)} />
-          <input className={INPUT} type="password" placeholder="Nové heslo (aspoň 8 znaků)" autoComplete="new-password"
+          <input className={INPUT} type="password" placeholder="Nové heslo (aspoň 7 znaků)" autoComplete="new-password"
             value={next} onChange={(e) => setNext(e.target.value)} />
           <input className={INPUT} type="password" placeholder="Nové heslo znovu" autoComplete="new-password"
             value={again} onChange={(e) => setAgain(e.target.value)} />

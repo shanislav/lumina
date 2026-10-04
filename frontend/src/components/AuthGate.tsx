@@ -174,7 +174,7 @@ function SetupForm({ onDone }: { onDone: (u: AuthUser) => void }) {
           value={code} onChange={(e) => setCode(e.target.value)} />
         <input className={INPUT} placeholder="Jméno správce" autoComplete="username"
           value={username} onChange={(e) => setUsername(e.target.value)} />
-        <input className={INPUT} placeholder="Heslo (aspoň 8 znaků)" type="password" autoComplete="new-password"
+        <input className={INPUT} placeholder="Heslo (aspoň 7 znaků)" type="password" autoComplete="new-password"
           value={password} onChange={(e) => setPassword(e.target.value)} />
         <input className={INPUT} placeholder="Heslo znovu" type="password" autoComplete="new-password"
           value={again} onChange={(e) => setAgain(e.target.value)} />

@@ -30,7 +30,7 @@ from app.db import get_db
 COOKIE = "lumina_session"
 REMEMBER = timedelta(days=30)
 IDLE = timedelta(hours=12)
-MIN_PASSWORD = 8
+MIN_PASSWORD = 7
 ADMIN, USER = "admin", "user"
 # pseudo permission only admins have (user management)
 ADMIN_ONLY = "admin"
