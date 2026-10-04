@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   SeriesAutoFrom, SeriesAutoMode, SeriesAutoOverview, SeriesAutoRecord, SeriesAutoShow, SeriesSettingValues,
   QualityProfile, SeriesLangMode, WantShowResult, getProfiles, wantShow,
-  dismissAutoFound, downloadAutoFound, getSeriesAutomation, getShowAutomation, runSeriesAutomation,
+  cancelAutoAll, dismissAutoFound, downloadAutoFound, getSeriesAutomation, getShowAutomation, runSeriesAutomation,
   saveSeriesAutomationBulk,
 } from "@/lib/api";
 
@@ -118,12 +118,30 @@ export function AutoFound({ tmdbId, records, onChanged, canDownload }: {
             className="rounded bg-zinc-800 px-2 py-0.5 text-zinc-400 hover:text-zinc-200 disabled:opacity-50">Zahodit</button>
         </div>
       ))}
-      {found.length > 1 && canDownload && (
-        <button disabled={!!busy} onClick={() => act(() => downloadAutoFound(tmdbId, found.map(key)), "…")}
-          className="rounded bg-violet-700 px-2.5 py-1 text-xs text-white hover:bg-violet-600 disabled:opacity-50">
-          Stáhnout vše ({found.length})
-        </button>
-      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {found.length > 1 && canDownload && (
+          <button disabled={!!busy} onClick={() => act(() => downloadAutoFound(tmdbId, found.map(key)), "…")}
+            className="rounded bg-violet-700 px-2.5 py-1 text-xs text-white hover:bg-violet-600 disabled:opacity-50">
+            Stáhnout vše ({found.length})
+          </button>
+        )}
+        {found.length > 1 && (
+          <button disabled={!!busy} onClick={() => act(() => dismissAutoFound(tmdbId, found.map(key)), "…")}
+            title="Tyhle soubory ne — příště nabídne jiné" className="rounded bg-zinc-800 px-2.5 py-1 text-xs text-zinc-300 hover:text-zinc-100 disabled:opacity-50">
+            Zahodit vše ({found.length})
+          </button>
+        )}
+        {canDownload && found.length + going.length > 1 && (
+          <button disabled={!!busy} onClick={() => {
+            if (!confirm(`Zrušit vše, co automatika u tohoto seriálu našla nebo stahuje (${found.length + going.length}), `
+              + "a vypnout ji?\n\nStahování, která běží nebo čekají ve frontě, se zruší (nedokončené soubory se smažou). "
+              + "Co už je v knihovně, zůstane.")) return;
+            act(() => cancelAutoAll(tmdbId, true), "…");
+          }} className="ml-auto rounded border border-red-900/70 px-2.5 py-1 text-xs text-red-300 hover:bg-red-950/40 disabled:opacity-50">
+            Zrušit vše a vypnout automatiku
+          </button>
+        )}
+      </div>
       {going.length > 0 && (
         <p className="text-[11px] text-zinc-500">Automatika stahuje: {going.map((r) => `${se(r)}${r.kind !== "new" ? ` (${KIND[r.kind]?.[0]})` : ""}`).join(", ")}</p>
       )}

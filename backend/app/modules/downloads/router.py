@@ -252,6 +252,32 @@ async def start_queued_now(queue_id: int, user: User = Depends(require("download
     return await start_download(DownloadRequest(**item["request"]), requested_by=item["requested_by"], queued=False)
 
 
+async def cancel_tracked(did: str, backend: str) -> None:
+    """Cancel a running download Lumina started (its unfinished files are deleted) and mark it cancelled."""
+    import sqlite3
+
+    from app.db import DB_PATH
+    cfg = await get_effective_settings()
+    try:
+        if backend == "qbittorrent":
+            qbt = QBittorrentClient(cfg["qbittorrent_url"], cfg["qbittorrent_username"], cfg["qbittorrent_password"])
+            try:
+                await qbt.delete_torrent(did, delete_files=True)
+            finally:
+                await qbt.close()
+        else:
+            aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
+            try:
+                await aria2.force_remove(did)
+                await aria2.remove_result(did)
+            finally:
+                await aria2.close()
+    except Exception as e:
+        logger.warning("Cancelling %s failed: %s", did, e)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("UPDATE download_tracker SET processed = 1, status = 'cancelled' WHERE id = ?", (did,))
+
+
 class StopAll(BaseModel):
     cancel_running: bool = False     # also cancel what downloads now (else it finishes)
 
@@ -270,28 +296,10 @@ async def stop_all(body: StopAll) -> dict:
     dropped = len(tmdb_ids)
     cancelled = 0
     if body.cancel_running:
-        cfg = await get_effective_settings()
         with sqlite3.connect(DB_PATH) as conn:
             running = conn.execute("SELECT id, backend, tmdb_id FROM download_tracker WHERE processed = 0").fetchall()
         for did, backend, tmdb_id in running:
-            try:
-                if backend == "qbittorrent":
-                    qbt = QBittorrentClient(cfg["qbittorrent_url"], cfg["qbittorrent_username"], cfg["qbittorrent_password"])
-                    try:
-                        await qbt.delete_torrent(did, delete_files=True)
-                    finally:
-                        await qbt.close()
-                else:
-                    aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
-                    try:
-                        await aria2.force_remove(did)
-                        await aria2.remove_result(did)
-                    finally:
-                        await aria2.close()
-            except Exception as e:
-                logger.warning("Stop all: cancelling %s failed: %s", did, e)
-            with sqlite3.connect(DB_PATH) as conn:
-                conn.execute("UPDATE download_tracker SET processed = 1, status = 'cancelled' WHERE id = ?", (did,))
+            await cancel_tracked(did, backend)
             tmdb_ids.append(tmdb_id)
             cancelled += 1
     await events.emit("download.cancelled", {"tmdb_ids": [t for t in tmdb_ids if t], "stop_all": True})

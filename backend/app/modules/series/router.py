@@ -475,6 +475,16 @@ async def automation_download(tmdb_id: int, body: FoundItems) -> dict:
     return await auto.download_found(tmdb_id, [(int(k[0]), int(k[1]), str(k[2])) for k in body.keys])
 
 
+class CancelAll(BaseModel):
+    stop: bool = True          # also switch the show's automation off
+
+
+@router.post("/{tmdb_id}/automation/cancel", dependencies=[Depends(require("library.edit")), Depends(require("download"))])
+async def automation_cancel(tmdb_id: int, body: CancelAll) -> dict:
+    from app.modules.series import auto
+    return await auto.cancel_all(tmdb_id, body.stop)
+
+
 @router.post("/{tmdb_id}/automation/dismiss", dependencies=[Depends(require("library.edit"))])
 async def automation_dismiss(tmdb_id: int, body: FoundItems) -> dict:
     from app.modules.series import auto

@@ -1684,6 +1684,8 @@ export const getShowAutomation = (tmdbId: number) =>
   seriesJson<{ records: SeriesAutoRecord[]; checked: SeriesAutoCheck | null; job: SeriesAutoJob }>(`/${tmdbId}/automation`);
 export const downloadAutoFound = (tmdbId: number, keys: [number, number, string][]) =>
   seriesJson<{ started: number; errors: string[] }>(`/${tmdbId}/automation/download`, "POST", { keys });
+export const cancelAutoAll = (tmdbId: number, stop = true) =>
+  seriesJson<{ dropped: number; cancelled: number; forgotten: number; stopped: boolean }>(`/${tmdbId}/automation/cancel`, "POST", { stop });
 export const dismissAutoFound = (tmdbId: number, keys: [number, number, string][]) =>
   seriesJson<{ ok: boolean }>(`/${tmdbId}/automation/dismiss`, "POST", { keys });
 

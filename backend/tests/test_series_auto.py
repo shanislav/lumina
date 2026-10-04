@@ -181,3 +181,35 @@ def test_want_takes_a_pack_of_the_whole_show_only_when_it_fits():
     assert auto.choose_pack([english], seasons, hd, "original", 45) is english          # English is fine then
     assert auto.choose_pack([part, english, huge], seasons, hd, "local_only", 45) is None
     assert auto.choose_pack([good], {}, hd, "local_or_temp") is None
+
+
+async def test_cancel_all_forgets_the_found_and_switches_the_automation_off(db, monkeypatch):
+    import json as _json
+    import sys
+    from app.db import get_db
+    cancelled = []
+
+    async def fake_cancel(did, backend):
+        cancelled.append(did)
+    monkeypatch.setattr(sys.modules["app.modules.downloads.router"], "cancel_tracked", fake_cancel)
+    await store.save_settings(873, {"auto_new": "download", "auto_from": "all"})
+    conn = await get_db()
+    for ep, status in ((1, "found"), (2, "downloading"), (3, "dismissed")):
+        await conn.execute("INSERT INTO series_auto (tmdb_id, season, episode, kind, status, row, updated_at) "
+                           "VALUES (873, 1, ?, 'new', ?, '{}', datetime('now'))", (ep, status))
+    await conn.execute("INSERT INTO download_queue (request, requested_by, created_at) VALUES (?, 'x', '')",
+                       (_json.dumps({"tmdb_id": 873, "content_type": "tv"}),))
+    await conn.execute("INSERT INTO download_queue (request, requested_by, created_at) VALUES (?, 'x', '')",
+                       (_json.dumps({"tmdb_id": 603, "content_type": "movie"}),))
+    await conn.execute("INSERT INTO download_tracker (id, tmdb_id, title, year, backend, status, target_dir, processed, "
+                       "content_type) VALUES ('g1', 873, 'Columbo', 1971, 'aria2', 'active', '/x', 0, 'tv')")
+    await conn.commit()
+    await conn.close()
+    got = await auto.cancel_all(873)
+    assert got == {"dropped": 1, "cancelled": 1, "forgotten": 2, "stopped": True} and cancelled == ["g1"]
+    assert (await store.get_settings(873))["own"]["auto_new"] == "off"
+    assert [r["status"] for r in await auto.records(873)] == ["dismissed"]
+    conn = await get_db()
+    left = await (await conn.execute("SELECT request FROM download_queue")).fetchall()
+    await conn.close()
+    assert len(left) == 1 and "603" in left[0][0]

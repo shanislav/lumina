@@ -287,6 +287,37 @@ async def dismiss(tmdb_id: int, season: int, episode: int, kind: str) -> None:
         await db.close()
 
 
+async def cancel_all(tmdb_id: int, stop: bool = True) -> dict:
+    """"Zrušit vše" on the show page: the show's episodes waiting in the download queue and downloading now are
+    cancelled, what the automation found / downloads is forgotten — and with ``stop`` the automation is switched
+    off (else the next night finds it all again)."""
+    from app.modules.downloads import queue
+    from app.modules.downloads.router import cancel_tracked
+
+    dropped = 0
+    for q in await queue.items():
+        r = q["request"]
+        if r.get("tmdb_id") == tmdb_id and r.get("content_type") == "tv":
+            await queue.remove(q["id"])
+            dropped += 1
+    db = await get_db()
+    try:
+        running = await (await db.execute(
+            "SELECT id, backend FROM download_tracker WHERE processed = 0 AND tmdb_id = ? AND content_type = 'tv'",
+            (tmdb_id,))).fetchall()
+        forgotten = (await db.execute("DELETE FROM series_auto WHERE tmdb_id = ? AND status IN ('found', 'downloading')",
+                                      (tmdb_id,))).rowcount
+        await db.commit()
+    finally:
+        await db.close()
+    for did, backend in running:
+        await cancel_tracked(did, backend)
+    if stop:
+        await store.save_settings(tmdb_id, {"auto_new": "off", "auto_dub": "off", "auto_upgrade": "off"})
+    logger.info("Series automation %s: cancelled %d waiting, %d running, %d records", tmdb_id, dropped, len(running), forgotten)
+    return {"dropped": dropped, "cancelled": len(running), "forgotten": forgotten, "stopped": stop}
+
+
 # ── the check ──
 
 async def check_show(tmdb_id: int) -> dict:
