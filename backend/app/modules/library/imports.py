@@ -348,6 +348,24 @@ def _in_pack(path: str, season: int | None, episodes: list[int], pack_season: in
     return season, episodes
 
 
+def pack_by_name_or_order(path: str, cat: dict, show_names=()) -> tuple[int | None, list[int]]:
+    """A file of a whole-show pack numbered through all the seasons, no season anywhere ("Columbo (CS)/
+    01 - Vražda na předpis.avi" … "69 - …"): its episode name when TMDB surely knows it, else its number as
+    the n-th of the show's episodes in TMDB's order (no specials)."""
+    if not cat:
+        return None, []
+    hit = episode_names.release_episode(os.path.basename(path), cat, None, show_names)
+    if hit and hit[1]:
+        (season, episode), _sure, _title = hit
+        return season, [episode]
+    m = _LEADING.match(os.path.splitext(os.path.basename(path))[0])
+    order = sorted(k for k in cat if k[0] > 0)
+    if m and 1 <= int(m.group(1)) <= len(order):
+        season, episode = order[int(m.group(1)) - 1]
+        return season, [episode]
+    return None, []
+
+
 def pack_episodes(path: str, pack_season: int | None = None) -> tuple[int | None, list[int]]:
     """(season, episodes) of a file of a whole-show pack — its name, else its folders and a leading number."""
     from app.core.episode_match import parse_episode
@@ -486,6 +504,8 @@ async def import_episode(payload: dict) -> None:
             pack = action.get("mode") == "pack"
             if pack:
                 season, episodes = _in_pack(path, season, episodes, _int(action.get("pack_season")))
+                if season is None or not episodes:
+                    season, episodes = pack_by_name_or_order(path, cat, [title])
                 if season is None or not episodes:
                     logger.info("%s: no episode (a film, an extra) — left in downloads", path)
                     continue
