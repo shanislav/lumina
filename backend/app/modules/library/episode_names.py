@@ -158,6 +158,7 @@ def own_titles(files: list[tuple[str, str]], title_of) -> dict[str, str]:
     return out
 
 
+_LEAD_NUMBER = re.compile(r"(?i)^\s*(?:e|ep|díl|dil)?\s*\d{1,3}\s*(?:-|\.)\s+(?=\D)")
 _SE_AT = re.compile(r"(?i)\bs\d{1,2}\s?e\d{1,3}(?:\s?-?\s?e\d{1,3})*|\b\d{1,2}x\d{2,3}\b")
 _TAGS = re.compile(r"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}")
 _JUNK = {"cz", "sk", "en", "eng", "cze", "czech", "dab", "dabing", "dabbing", "tit", "titulky", "multi", "aac", "ac3",
@@ -190,8 +191,11 @@ def release_titles(name: str, show_names=()) -> list[str]:
     stem = _TAGS.sub(" ", stem).replace("_", " ").replace("+", " + ")
     stem = re.sub(r"(?<=\w)\.(?=\w)", " ", stem)
     m = _SE_AT.search(stem)
+    lead = _LEAD_NUMBER.match(stem)
     if m:
         after = re.sub(r"^\s*-\s*\d{1,3}\b", "", stem[m.end():])      # "S01E02-13": the 2nd of 13
+    elif lead:
+        after = stem[lead.end():]                                      # a pack's "06 - Prázdný rám" (its folder: the show)
     else:
         # no number: a special named after the show's name ("Top Gear - Polární speciál")
         after = _after_show(stem, show_names)

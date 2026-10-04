@@ -358,7 +358,9 @@ def pack_by_name_or_order(path: str, cat: dict, show_names=()) -> tuple[int | No
     if hit and hit[1]:
         (season, episode), _sure, _title = hit
         return season, [episode]
-    m = _LEADING.match(os.path.splitext(os.path.basename(path))[0])
+    if episode_names.release_titles(os.path.basename(path), show_names):
+        return None, []          # it has a name TMDB does not know: its number may count other episodes — no guess
+    m = re.match(r"(?i)^\s*(?:e|ep|díl|dil)?\s*(\d{1,3})(?!\d)",os.path.splitext(os.path.basename(path))[0])
     order = sorted(k for k in cat if k[0] > 0)
     if m and 1 <= int(m.group(1)) <= len(order):
         season, episode = order[int(m.group(1)) - 1]

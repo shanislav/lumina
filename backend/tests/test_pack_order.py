@@ -30,6 +30,20 @@ def test_a_pack_numbered_through_the_whole_show():
            (2, 1): {"cs": "Etuda v černém", "en": "Etude in Black"},
            (2, 2): {"cs": "Smrt v zrcadle", "en": "The Greenhouse Jungle"}}
     assert pack_by_name_or_order("Columbo (CS)/03 - Etuda v černém.avi", cat) == (2, [1])          # by its name
-    assert pack_by_name_or_order("Columbo (CS)/04 - Něco jiného.avi", cat) == (2, [2])               # the 4th episode
-    assert pack_by_name_or_order("Columbo (CS)/09 - Navíc.avi", cat) == (None, [])
+    assert pack_by_name_or_order("Columbo (CS)/04 - Něco jiného.avi", cat) == (None, [])        # a name TMDB lacks
+    assert pack_by_name_or_order("Columbo (CS)/04.avi", cat) == (2, [2])                         # no name: the 4th
+    assert pack_by_name_or_order("Columbo (CS)/09.avi", cat) == (None, [])
     assert pack_by_name_or_order("Columbo (CS)/01 - x.avi", {}) == (None, [])
+
+
+def test_a_numbered_file_finds_its_episode_by_its_name_first():
+    from app.modules.library.imports import pack_by_name_or_order
+    cat = {(0, 1): {"cs": "Vražda na předpis", "en": "Prescription: Murder"},
+           (0, 2): {"cs": "Výkupné za mrtvého", "en": "Ransom for a Dead Man"},
+           (1, 1): {"cs": "Vražda podle knihy", "en": "Murder by the Book"},
+           (1, 2): {"cs": "Smrt nabízí pomocnou ruku", "en": "Death Lends a Hand"},
+           (1, 3): {"cs": "Semínko pochyb", "en": "Dead Weight"},
+           (1, 4): {"cs": "Prázdný rám", "en": "Suitable for Framing"}}
+    # TMDB has the two pilots among the specials: the pack's 06th is TMDB's S01E04 — its name says so
+    assert pack_by_name_or_order("Columbo (CS)/06 - Prázdný rám.avi", cat) == (1, [4])
+    assert pack_by_name_or_order("Columbo (CS)/01 - Vražda na předpis.avi", cat) == (0, [1])
