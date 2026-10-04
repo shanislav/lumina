@@ -1,5 +1,6 @@
 "use client";
 
+import { WantedTag } from "@/components/WantedMark";
 import Image from "next/image";
 import { TMDBMovie, OwnedVersion, versionLabel } from "@/lib/api";
 
@@ -54,6 +55,7 @@ export default function MovieGrid({ movies, onSelect, owned = {} }: Props) {
                 ✓ V knihovně · {owned[String(movie.tmdb_id)].map((v) => v.quality).join(" + ")}
               </span>
             )}
+            {movie.wanted && !(movie.media_type !== "tv" && owned[String(movie.tmdb_id)]) && <WantedTag w={movie.wanted} />}
           </div>
           <div className="p-2">
             <p className="text-sm font-medium text-zinc-100 truncate">

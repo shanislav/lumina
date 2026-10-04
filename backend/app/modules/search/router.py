@@ -59,9 +59,55 @@ async def search_movies(query: str, language: str | None = None) -> list[TMDBMov
             if ti < len(shows):
                 merged.append(shows[ti])
                 ti += 1
-        return merged[:20]
+        return await mark_known(merged[:20])
     finally:
         await client.close()
+
+
+async def mark_known(items: list) -> list:
+    """Each film / show (TMDBMovie or dict): ``in_library``, and ``wanted`` when it is on the wanted list (a film
+    not done yet; a show not in the library whose automation looks for new episodes) — who added it and when."""
+    get = (lambda x, k: x.get(k)) if items and isinstance(items[0], dict) else (lambda x, k: getattr(x, k))
+    films = [get(x, "tmdb_id") for x in items if get(x, "media_type") != "tv" and get(x, "tmdb_id")]
+    shows = [get(x, "tmdb_id") for x in items if get(x, "media_type") == "tv" and get(x, "tmdb_id")]
+    wd = [get(x, "wikidata_id") for x in items if get(x, "wikidata_id")]
+    if not (films or shows or wd):
+        return items
+    from app.db import get_db
+    q = lambda n: ",".join("?" * n)  # noqa: E731
+    owned_films, owned_shows, wanted, wanted_wd, auto = set(), set(), {}, {}, set()
+    db = await get_db()
+    try:
+        for sql, args, fn in (
+            (f"SELECT DISTINCT tmdb_id FROM library_movies WHERE tmdb_id IN ({q(len(films))})", films,
+             lambda r: owned_films.add(r[0])),
+            (f"SELECT tmdb_id FROM library_shows WHERE tmdb_id IN ({q(len(shows))})", shows, lambda r: owned_shows.add(r[0])),
+            (f"SELECT tmdb_id, status, added_by, added_at FROM wanted WHERE status != 'done' AND tmdb_id IN ({q(len(films))})",
+             films, lambda r: wanted.setdefault(r[0], {"status": r[1], "added_by": r[2] or "", "added_at": r[3] or ""})),
+            (f"SELECT wikidata_id, status, added_by, added_at FROM wanted WHERE status != 'done' AND wikidata_id IN ({q(len(wd))})",
+             wd, lambda r: wanted_wd.setdefault(r[0], {"status": r[1], "added_by": r[2] or "", "added_at": r[3] or ""})),
+            (f"SELECT tmdb_id FROM series_settings WHERE auto_new IN ('notify', 'download') AND tmdb_id IN ({q(len(shows))})",
+             shows, lambda r: auto.add(r[0])),
+        ):
+            if not args:
+                continue
+            try:                     # a module may be switched off (its table missing)
+                for r in await (await db.execute(sql, args)).fetchall():
+                    fn(r)
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        await db.close()
+    for x in items:
+        tv, tid = get(x, "media_type") == "tv", get(x, "tmdb_id")
+        lib = tid in (owned_shows if tv else owned_films)
+        w = ({"status": "auto", "added_by": "", "added_at": ""} if tid in auto and not lib else None) if tv \
+            else wanted.get(tid) or wanted_wd.get(get(x, "wikidata_id") or "")
+        if isinstance(x, dict):
+            x["in_library"], x["wanted"] = lib, w
+        else:
+            x.in_library, x.wanted = lib, w
+    return items
 
 
 _suggest_cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
@@ -95,7 +141,7 @@ async def search_suggest(q: str) -> list[dict]:
     key = (query.lower(), locale)
     hit = _suggest_cache.get(key)
     if hit and time.time() - hit[0] < SUGGEST_TTL_S:
-        return hit[1]
+        return await mark_known(hit[1])          # the library / the wanted list change meanwhile
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
         results = await client.search_multi(query, language=locale)
@@ -118,19 +164,7 @@ async def search_suggest(q: str) -> list[dict]:
                 add(_suggestion(known, person=item.get("name") or ""))
         else:
             add(_suggestion(item))
-    out = out[:8]
-    from app.db import get_db
-    db = await get_db()
-    try:
-        ids = [x["tmdb_id"] for x in out if x["media_type"] == "movie"]
-        owned = {r[0] for r in await (await db.execute(
-            f"SELECT DISTINCT tmdb_id FROM library_movies WHERE tmdb_id IN ({','.join('?' * len(ids))})", ids)).fetchall()} if ids else set()
-    except Exception:            # the library module may be switched off
-        owned = set()
-    finally:
-        await db.close()
-    for x in out:
-        x["in_library"] = x["media_type"] == "movie" and x["tmdb_id"] in owned
+    out = await mark_known(out[:8])
     if len(_suggest_cache) > 500:
         _suggest_cache.clear()
     _suggest_cache[key] = (time.time(), out)
@@ -158,7 +192,7 @@ async def discover_trending(language: str | None = None) -> list[TMDBMovie]:
     lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
-        return await client.trending(language=tmdb_locale)
+        return await mark_known(await client.trending(language=tmdb_locale))
     finally:
         await client.close()
 
@@ -169,7 +203,7 @@ async def discover_now_playing(language: str | None = None) -> list[TMDBMovie]:
     lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
-        return await client.now_playing(language=tmdb_locale)
+        return await mark_known(await client.now_playing(language=tmdb_locale))
     finally:
         await client.close()
 
@@ -180,7 +214,7 @@ async def discover_recently_digital(language: str | None = None) -> list[TMDBMov
     lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
-        return await client.recently_digital(language=tmdb_locale)
+        return await mark_known(await client.recently_digital(language=tmdb_locale))
     finally:
         await client.close()
 
@@ -191,7 +225,7 @@ async def discover_recently_digital_tv(language: str | None = None) -> list[TMDB
     lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
-        return await client.recently_digital_tv(language=tmdb_locale)
+        return await mark_known(await client.recently_digital_tv(language=tmdb_locale))
     finally:
         await client.close()
 
@@ -202,7 +236,7 @@ async def discover_popular(language: str | None = None) -> list[TMDBMovie]:
     lang_code, tmdb_locale = _locale(cfg, language)
     client = TMDBClient(cfg["tmdb_api_key"])
     try:
-        return await client.popular(language=tmdb_locale)
+        return await mark_known(await client.popular(language=tmdb_locale))
     finally:
         await client.close()
 

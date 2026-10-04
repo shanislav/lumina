@@ -1,5 +1,6 @@
 "use client";
 
+import { WantedBanner } from "@/components/WantedMark";
 import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -36,6 +37,7 @@ function Title() {
           )}
         </div>
       </div>
+      <WantedBanner big movie={{ tmdb_id: tmdb, wikidata_id: wd, title, original_title: orig, year, overview: "", poster_url: poster || null }} />
       <Offers key={`${tmdb}-${title}`} tmdbId={tmdb || undefined} title={title} year={Number(year) || undefined}
         contentType="movie" owned={owned} usePick
         load={() => searchFiles(year ? `${title} ${year}` : title, undefined, orig, tmdb || undefined, "movie", wd)} />

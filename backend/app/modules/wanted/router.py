@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.db import get_db
 from app.modules.wanted import store
-from app.core.auth import require
+from app.core.auth import User, require
 
 router = APIRouter(prefix="/api/wanted", tags=["wanted"])
 
@@ -47,6 +47,21 @@ async def _tmdb_poster(tmdb_id: int) -> str | None:
         await client.close()
 
 
+@router.get("/of", dependencies=[Depends(require("search"))])
+async def wanted_of(tmdb_id: int = 0, wikidata_id: str = "") -> dict | None:
+    """Is this film on the list (not done yet)? — the film's page shows it."""
+    if not tmdb_id and not wikidata_id:
+        return None
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT id, status, added_by, added_at, waiting FROM wanted WHERE status != 'done' AND "
+            + ("tmdb_id = ?" if tmdb_id else "wikidata_id = ?"), (tmdb_id or wikidata_id,))).fetchone()
+    finally:
+        await db.close()
+    return dict(row) if row else None
+
+
 @router.get("")
 async def list_wanted():
     db = await get_db()
@@ -64,8 +79,9 @@ async def list_wanted():
         await db.close()
 
 
-@router.post("", dependencies=[Depends(require("wanted"))])
-async def add_wanted(body: WantedAdd):
+@router.post("")
+async def add_wanted(body: WantedAdd, user: User = Depends(require("wanted"))):
+    who = getattr(user, "username", "")          # called from code (no request): nobody
     if not body.tmdb_id and not body.wikidata_id:
         raise HTTPException(400, "Film potřebuje TMDB nebo Wikidata id")
     db = await get_db()
@@ -77,15 +93,16 @@ async def add_wanted(body: WantedAdd):
         existing = await cursor.fetchone()
         if existing:
             wanted_id = existing[0]
-            await db.execute("UPDATE wanted SET profile_id = ?, status = CASE WHEN status = 'done' THEN 'wanted' ELSE status END "
-                             "WHERE id = ?", (body.profile_id, wanted_id))
+            await db.execute("UPDATE wanted SET profile_id = ?, status = CASE WHEN status = 'done' THEN 'wanted' ELSE status END, "
+                             "added_by = CASE WHEN added_by = '' OR added_by IS NULL THEN ? ELSE added_by END "
+                             "WHERE id = ?", (body.profile_id, who, wanted_id))
         else:
             cursor = await db.execute(
-                "INSERT INTO wanted (tmdb_id, wikidata_id, title, original_title, year, poster_url, profile_id, added_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO wanted (tmdb_id, wikidata_id, title, original_title, year, poster_url, profile_id, added_at, added_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (body.tmdb_id or None, body.wikidata_id or "", body.title, body.original_title, body.year[:4],
                  body.poster_url or (await _tmdb_poster(body.tmdb_id) if body.tmdb_id else None),
-                 body.profile_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                 body.profile_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), who),
             )
             wanted_id = cursor.lastrowid
         await db.commit()

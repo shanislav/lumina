@@ -100,6 +100,18 @@ export interface TMDBMovie {
   media_type?: "movie" | "tv";
   wikidata_id?: string | null;   // a film TMDB does not know (tmdb_id = 0)
   original_language?: string;    // "en", "hi" … (Objevit can leave Indian films out)
+  in_library?: boolean;
+  wanted?: WantedMark | null;    // already on the wanted list (a show: its automation looks for episodes)
+}
+
+export interface WantedMark { status: string; added_by: string; added_at: string }
+
+/** The film on the wanted list (not done yet), or null. */
+export async function getWantedOf(tmdbId: number, wikidataId?: string | null): Promise<WantedMark | null> {
+  const q = tmdbId ? `tmdb_id=${tmdbId}` : `wikidata_id=${encodeURIComponent(wikidataId ?? "")}`;
+  const res = await apiFetch(`${API_BASE}/api/wanted/of?${q}`);
+  if (!res.ok) return null;
+  return res.json();
 }
 
 export interface ScoredFile {
@@ -247,7 +259,6 @@ export async function getPopular(language?: string): Promise<TMDBMovie[]> {
 
 export interface Suggestion extends TMDBMovie {
   person?: string;          // found through this person (actor / director)
-  in_library?: boolean;
 }
 
 /** As-you-type suggestions (films, shows, the best-known films of a person). */
@@ -601,6 +612,7 @@ export interface WantedItem {
   note: string;
   waiting?: string;          // "čeká na digitální vydání (10. 11. 2026)" — only cinema recordings exist yet
   added_at: string;
+  added_by?: string;
   checked_at: string | null;
   done_at: string | null;
 }

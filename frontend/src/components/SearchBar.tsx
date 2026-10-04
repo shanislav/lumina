@@ -110,7 +110,8 @@ export default function SearchBar({ onSearch, onPick, loading, initialQuery }: P
                     {s.person && ` · s ${s.person}`}
                   </p>
                 </div>
-                {s.in_library && <span className="flex-shrink-0 text-[10px] text-emerald-400">v knihovně</span>}
+                {s.in_library ? <span className="flex-shrink-0 text-[10px] text-emerald-400">v knihovně</span>
+                  : s.wanted ? <span className="flex-shrink-0 rounded bg-amber-800/80 px-1.5 py-0.5 text-[10px] font-semibold text-amber-50">★ v Chci</span> : null}
               </button>
             </li>
           ))}

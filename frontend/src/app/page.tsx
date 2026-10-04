@@ -1,5 +1,6 @@
 "use client";
 
+import { WantedBanner } from "@/components/WantedMark";
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import SearchBar from "@/components/SearchBar";
@@ -317,6 +318,7 @@ function HomeContent() {
               </button>
             )}
           </div>
+          <WantedBanner movie={selectedMovie} />
           <MovieInfoLine movie={selectedMovie} />
           <FriendCopies movie={selectedMovie} />
           {(selectedMovie.overview || selectedMovie.poster_url) && (

@@ -157,6 +157,7 @@ export default function WantedPage() {
                     <option value="">výchozí ({defaultProfile?.name ?? "—"})</option>
                     {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
+                  {item.added_by && <span className="text-zinc-500">přidal {item.added_by}</span>}
                   {item.checked_at && <span className="text-zinc-600">kontrola {item.checked_at}</span>}
                 </div>
                 {item.status === "found" && item.best.name ? (

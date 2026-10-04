@@ -34,6 +34,8 @@ class TMDBMovie(BaseModel):
     media_type: str = "movie"  # "movie" or "tv"
     wikidata_id: str | None = None   # a film TMDB does not know, found on Wikidata (tmdb_id = 0)
     original_language: str = ""      # "en", "hi" … (Objevit can leave Indian films out)
+    in_library: bool = False
+    wanted: dict | None = None       # on the wanted list: {"status", "added_by", "added_at"} (a show: its automation)
 
 
 class ScorableFile(BaseModel):

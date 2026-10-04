@@ -1,5 +1,6 @@
 "use client";
 
+import { WantedTag } from "@/components/WantedMark";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -174,6 +175,9 @@ export default function DiscoverPage() {
                         >
                           ✓ V knihovně · {owned[String(movie.tmdb_id)].map((v) => v.quality).join(" + ")}
                         </span>
+                      )}
+                      {movie.wanted && !(tab === "filmy" && owned[String(movie.tmdb_id)]) && (
+                        <WantedTag w={movie.wanted} className="absolute bottom-1 left-1 right-1 rounded" />
                       )}
                     </div>
                     <div className="p-2">

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { QualityProfile, TMDBMovie, addWanted, getProfiles } from "@/lib/api";
+import { QualityProfile, TMDBMovie, addWanted, getProfiles, getWantedOf } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 
 /** "+ Chci": put a film on the wanted list with a quality profile (checked right away). */
@@ -32,7 +32,11 @@ function WantButtonInner({ movie, profileId: shared, onProfileChange }: { movie:
   const setProfileId = onProfileChange ?? setOwn;
   const [state, setState] = useState<"idle" | "busy" | "added" | string>("idle");
 
-  useEffect(() => setState("idle"), [movie.tmdb_id, movie.wikidata_id]);
+  useEffect(() => {
+    setState("idle");
+    if (movie.media_type === "tv" || (!movie.tmdb_id && !movie.wikidata_id)) return;
+    getWantedOf(movie.tmdb_id, movie.wikidata_id).then((w) => { if (w) setState("added"); }).catch(() => {});
+  }, [movie.tmdb_id, movie.wikidata_id, movie.media_type]);
 
   if (movie.media_type === "tv" || (!movie.tmdb_id && !movie.wikidata_id)) return null;
 

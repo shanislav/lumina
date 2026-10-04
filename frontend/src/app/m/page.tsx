@@ -4,7 +4,6 @@ import DescribeSearch, { looksLikeDescription } from "@/components/DescribeSearc
 import ClearInput from "@/components/ClearInput";
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Suggestion, TMDBMovie, searchMovies, suggest } from "@/lib/api";
 import { Spinner } from "@/components/mobile/ui";
@@ -113,7 +112,8 @@ export default function MobileSearch() {
               <p className="text-sm text-zinc-400">
                 {[m.year, m.media_type === "tv" ? "seriál" : "film", m.person ? `s ${m.person}` : ""].filter(Boolean).join(" · ")}
               </p>
-              {m.in_library && <p className="text-sm text-emerald-300">V knihovně</p>}
+              {m.in_library ? <p className="text-sm text-emerald-300">V knihovně</p>
+                : m.wanted ? <p className="text-sm font-medium text-amber-300">★ V Chci{m.wanted.added_by && ` · ${m.wanted.added_by}`}</p> : null}
             </div>
             <span className="px-1 text-xl text-zinc-600">›</span>
           </button>
@@ -124,13 +124,9 @@ export default function MobileSearch() {
         <p className="text-center text-sm text-zinc-500">Znáš název? Napiš ho nahoru — Lumina najde soubory a doporučí ten nejlepší.</p>
       )}
 
-      {/* three ways in: the name (above), the story (AI), nothing in mind (Objevit) */}
+      {/* two ways in: the name (above), the story (AI); nothing in mind → Objevit in the bottom tabs */}
       <div className="space-y-3 pt-4">
         <DescribeSearch onPick={open} big ask={ask} />
-        <Link href="/discover" className="block rounded-2xl border border-sky-800/60 bg-sky-950/20 px-4 py-3 active:bg-sky-950">
-          <span className="block text-base font-medium text-sky-100">🧭 Nevíš, co pustit? Objevit</span>
-          <span className="text-sm text-zinc-400">Novinky, populární a nejlépe hodnocené filmy a seriály — klepni a vyber.</span>
-        </Link>
       </div>
     </main>
   );
