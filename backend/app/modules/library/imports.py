@@ -526,7 +526,7 @@ async def import_episode(payload: dict) -> None:
         rows = []
         if tmdb_id:
             rows = await (await db.execute(
-                "SELECT season, episode, file_path FROM library_episodes WHERE show_tmdb_id = ? AND has_file = 1 "
+                "SELECT season, episode, file_path, language FROM library_episodes WHERE show_tmdb_id = ? AND has_file = 1 "
                 "ORDER BY season, episode", (tmdb_id,))).fetchall()
         show_root, season_dirs = _show_folders(root, rows)
         renamer = await get_automation("renamer")
@@ -537,12 +537,17 @@ async def import_episode(payload: dict) -> None:
             show_root = os.path.join(root, *folder_rel.split("/"))
         show_root = show_root or os.path.join(root, naming.sanitize(f"{title} ({year})" if year else title))
         owned = {(r["season"], r["episode"]): r["file_path"] for r in rows}
+        # owned without Czech / Slovak sound ("EN"): a downloaded file with it takes the episode's place
+        owned_foreign = {(r["season"], r["episode"]) for r in rows
+                         if r["language"] and not ({"CS", "SK"} & set((r["language"] or "").upper().split(",")))}
         cat = {}
         if tmdb_id:
             _check, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, None)
         extras = payload.get("extra_paths") or []
         targets = []
         unsorted: list[str] = []
+        placed: list[str] = []                 # "S01E04" — what went to the library (the notification names them)
+        left: list[list[str]] = []             # [file name, why] — what stayed in the downloads
         for path in [src, *extras]:
             info = parse_episode(os.path.basename(path))
             season = info.season
@@ -565,13 +570,23 @@ async def import_episode(payload: dict) -> None:
                         unsorted.append(await _unsorted(db, path, root, show_root, tmdb_id))
                     else:
                         logger.info("%s: no episode (a film, an extra) — left in downloads", path)
+                        left.append([os.path.basename(path), "není díl (film, bonus)" if duration else "neznámý díl"])
                     continue
             file_numbers = (season, list(episodes))
             season, episodes, why = _which_episode(os.path.basename(path), season, episodes, cat,
                                                    action if path == src and not extras else {}, [title])
+            dub_over = False
             if (path != src or pack) and season is not None and episodes and not action.get("replace_owned", True) \
-                    and all((season, ep) in owned for ep in episodes):
+                    and all((season, ep) in owned for ep in episodes) and all((season, ep) in owned_foreign for ep in episodes):
+                new_langs = {a["lang"] for a in _lang_from_release(await probe_async(path), action.get("release") or
+                                                                   os.path.basename(path)).get("audio", []) if a.get("lang")}
+                dub_over = bool({"cs", "sk"} & {lang.lower() for lang in new_langs})
+                if dub_over:
+                    logger.info("%s: S%02dE%02d owned only without CZ/SK — the dub takes its place", path, season, episodes[0])
+            if (path != src or pack) and season is not None and episodes and not action.get("replace_owned", True) \
+                    and all((season, ep) in owned for ep in episodes) and not dub_over:
                 logger.info("%s: S%02dE%02d is owned already — left in downloads", path, season, episodes[0])
+                left.append([os.path.basename(path), f"S{season:02d}E{episodes[0]:02d} už máš"])
                 continue
             name, media = os.path.basename(path), None
             if names and season is not None and episodes:
@@ -593,7 +608,7 @@ async def import_episode(payload: dict) -> None:
                 continue
             picked = (_int(action.get("season")), [_int(action.get("episode"))]) if action.get("episode") else None
             # "replace" was for the episode the user picked: a file that turned out another one replaces nothing
-            if (action.get("replace") and path == src and picked in (None, (season, episodes)))                     or (path != src and action.get("replace_owned")):
+            if dub_over or (action.get("replace") and path == src and picked in (None, (season, episodes)))                     or (path != src and action.get("replace_owned")):
                 for ep in episodes:
                     old = owned.get((season, ep))
                     if old and old != target and os.path.exists(old):
@@ -620,11 +635,13 @@ async def import_episode(payload: dict) -> None:
                     "language = excluded.language, has_file = 1",
                     (tmdb_id, season, ep, *values))
             logger.info("Imported episode S%02d%s → %s", season, "".join(f"E{e:02d}" for e in episodes), target)
+            placed.append(f"S{season:02d}" + "".join(f"E{e:02d}" for e in episodes))
         if tmdb_id and targets:
             await _ensure_show(db, tmdb_id, title, year)
         await db.commit()
     finally:
         await db.close()
+    payload["placed_episodes"], payload["left_files"] = placed, left
     if unsorted:
         payload["unsorted"] = [os.path.basename(u) for u in unsorted]
         payload["imported"] = True

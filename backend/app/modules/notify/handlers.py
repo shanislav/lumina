@@ -1,5 +1,6 @@
 """What becomes a notification — the other modules' events."""
 
+import os
 import logging
 
 from app.modules.notify import store
@@ -27,8 +28,12 @@ async def on_download_completed(p: dict) -> None:
     tv = p.get("content_type") == "tv"
     link = f"/series?tmdb={p['tmdb_id']}" if tv and p.get("tmdb_id") else "/library" if p.get("imported") else "/downloads"
     if not p.get("imported"):
-        await store.add("download", f"Staženo, ale není v knihovně: {_name(p)}", "soubor zůstal ve stažených",
-                        level="warn", link="/downloads", permission="download")
+        # which file and why — "Columbo: 18 - Sladká, leč smrtící.avi (S03E01 už máš)"
+        left = p.get("left_files") or [[os.path.basename(p.get("path") or ""), ""]]
+        body = "; ".join(f"{name}{f' — {why}' if why else ''}" for name, why in left[:3]) + (f" a {len(left) - 3} dalších" if len(left) > 3 else "")
+        await store.add("download", f"Staženo, ale není v knihovně: {_name(p)}", f"{body} · zůstalo ve stažených",
+                        level="warn", link="/downloads", permission="download",
+                        group=f"left:{p.get('tmdb_id')}" if tv else "", item=left[0][0] if tv else "")
         return
     if p.get("unsorted"):
         n = len(p["unsorted"])
@@ -44,7 +49,9 @@ async def on_download_completed(p: dict) -> None:
                         level="warn", link="/library", permission="download")
         return
     if tv:
-        item = _se(action.get("season"), action.get("episode")) or ("celý balík" if action.get("mode") == "pack" else "")
+        # the episodes that went in (a pack imports them one by one while it downloads), else the one asked for
+        item = ", ".join(p.get("placed_episodes") or []) or _se(action.get("season"), action.get("episode")) \
+            or ("celý balík" if action.get("mode") == "pack" else "")
         await store.add("download", f"V knihovně: {_name(p)}", level="ok", link=link, permission="download",
                         group=f"tv:{p.get('tmdb_id')}", item=item)
     else:

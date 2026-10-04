@@ -325,3 +325,26 @@ def test_an_untagged_track_takes_the_one_language_the_release_names():
     assert f({"audio": [{"lang": ""}]}, "Friends S01-S10 (CZ/SK/EN)")["audio"][0]["lang"] == ""     # which one?
     assert f({"audio": [{"lang": "en"}]}, "South Park CZ")["audio"][0]["lang"] == "en"               # the file knows
     assert f({"audio": [{"lang": ""}, {"lang": ""}]}, "X CZ")["audio"][0]["lang"] == ""             # two tracks
+
+
+async def test_a_pack_with_the_dub_takes_the_place_of_an_english_episode(tmp_path, monkeypatch):
+    """Columbo S08E03: owned in English only; the Czech pack's file takes its place (not left in the downloads)."""
+    from app.db import get_db
+    from app.modules.library import imports
+    season, owned, dl = await _setup(tmp_path, monkeypatch)
+
+    async def probe(path):
+        return {"audio": [{"lang": "cs"}]} if "CZ" in str(path) else {"audio": [{"lang": "en"}]}
+    monkeypatch.setattr(imports, "probe_async", probe)
+    db = await get_db()
+    await db.execute("UPDATE library_episodes SET language = 'EN' WHERE file_path = ?", (str(owned),))
+    await db.commit()
+    await db.close()
+    f = dl / "South Park CZ" / "Season 01" / "South Park S01E02 - Sopka CZ.avi"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"x" * 20)
+    await events.emit("download.completed", {
+        "download_id": "p", "tmdb_id": 2190, "title": "South Park", "year": "1997", "content_type": "tv",
+        "path": str(f), "extra_paths": [], "library_action": {"mode": "pack", "replace_owned": False}})
+    assert not f.exists() and not owned.exists()                    # the dub in, the English one gone
+    assert [r[:2] for r in _episodes()] == [(1, 2)]
