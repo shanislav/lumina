@@ -348,20 +348,69 @@ def _in_pack(path: str, season: int | None, episodes: list[int], pack_season: in
     return season, episodes
 
 
-def pack_by_name_or_order(path: str, cat: dict, show_names=()) -> tuple[int | None, list[int]]:
+UNSORTED_DIR = "Nezařazeno"
+
+
+def is_episode_length(duration_s: int, cat: dict) -> bool:
+    """A file as long as the show's episodes (not a film or a short extra of the pack). Its length unknown (no
+    MediaInfo): no — it stays in the downloads, as before; TMDB knows no runtime: yes."""
+    runtimes = sorted(v.get("runtime") or 0 for k, v in cat.items() if k[0] > 0 and v.get("runtime"))
+    if not duration_s:
+        return False
+    if not runtimes:
+        return True
+    typical = runtimes[len(runtimes) // 2] * 60
+    return 0.5 * typical <= duration_s <= 1.6 * typical
+
+
+async def _unsorted(db, path: str, root: str, show_root: str, tmdb_id) -> str:
+    """A downloaded episode Lumina can not place: into "<show>/Nezařazeno/", in the library check as an unknown
+    episode — "Upravit díly…" places it (by hand, or the AI's suggestion)."""
+    folder = os.path.join(show_root, UNSORTED_DIR)
+    _ensure_dir(folder)
+    target = _unique_path(os.path.join(folder, os.path.basename(path)))
+    _move_with_subtitles(path, target)
+    show_folder = os.path.relpath(show_root, root).split(os.sep)[0]
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        await db.execute("INSERT OR IGNORE INTO tv_folders (folder, tmdb_id, source, files, scanned_at) VALUES (?, ?, 'lumina', 0, ?)",
+                         (show_folder, tmdb_id, now))
+        await db.execute("INSERT OR REPLACE INTO tv_files (file_path, folder, show_tmdb_id, season, episodes, status, note, facts, "
+                         "scanned_at) VALUES (?, ?, ?, NULL, '[]', 'unknown', ?, ?, ?)",
+                         (target, show_folder, tmdb_id, "stažený díl — Lumina ho nedokázala zařadit",
+                          json.dumps({"title": episode_names.bare_title(os.path.basename(path))
+                                      or episode_names.title_in_name(os.path.basename(path))}), now))
+    except Exception as e:  # noqa: BLE001 — the inventory tables missing: the file is in the folder anyway
+        logger.info("Unsorted %s: not in the library check: %s", target, e)
+    logger.info("%s: episode not known — %s", os.path.basename(path), target)
+    return target
+
+
+def pack_by_name_or_order(path: str, cat: dict, show_names=(), duration_s: int = 0) -> tuple[int | None, list[int]]:
     """A file of a whole-show pack numbered through all the seasons, no season anywhere ("Columbo (CS)/
-    01 - Vražda na předpis.avi" … "69 - …"): its episode name when TMDB surely knows it, else its number as
-    the n-th of the show's episodes in TMDB's order (no specials)."""
+    01 - Vražda na předpis.avi" … "69 - …"): its episode name when TMDB surely knows it (with its length: a far
+    match only when the length fits too), else a three-digit absolute number ("Naruto 153"), else a bare number
+    as the n-th of the show's episodes in TMDB's order (no specials)."""
     if not cat:
         return None, []
-    hit = episode_names.release_episode(os.path.basename(path), cat, None, show_names)
+    name = os.path.basename(path)
+    hit = episode_names.release_episode(name, cat, None, show_names)
     if hit and hit[1]:
         (season, episode), _sure, _title = hit
         return season, [episode]
-    if episode_names.release_titles(os.path.basename(path), show_names):
-        return None, []          # it has a name TMDB does not know: its number may count other episodes — no guess
-    m = re.match(r"(?i)^\s*(?:e|ep|díl|dil)?\s*(\d{1,3})(?!\d)",os.path.splitext(os.path.basename(path))[0])
+    titles = episode_names.release_titles(name, show_names)
+    if duration_s:
+        for title in titles:
+            key, sure = episode_names.best(title, cat, None, duration_s)
+            if key and sure:
+                return key[0], [key[1]]
     order = sorted(k for k in cat if k[0] > 0)
+    absolute = episode_names.absolute_in_name(name)
+    if absolute and 0 < absolute <= len(order) and not titles:
+        return order[absolute - 1][0], [order[absolute - 1][1]]
+    if titles:
+        return None, []          # it has a name TMDB does not know: its number may count other episodes — no guess
+    m = re.match(r"(?i)^\s*(?:e|ep|díl|dil)?\s*(\d{1,3})(?!\d)", os.path.splitext(name)[0])
     if m and 1 <= int(m.group(1)) <= len(order):
         season, episode = order[int(m.group(1)) - 1]
         return season, [episode]
@@ -493,6 +542,7 @@ async def import_episode(payload: dict) -> None:
             _check, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, None)
         extras = payload.get("extra_paths") or []
         targets = []
+        unsorted: list[str] = []
         for path in [src, *extras]:
             info = parse_episode(os.path.basename(path))
             season = info.season
@@ -507,9 +557,14 @@ async def import_episode(payload: dict) -> None:
             if pack:
                 season, episodes = _in_pack(path, season, episodes, _int(action.get("pack_season")))
                 if season is None or not episodes:
-                    season, episodes = pack_by_name_or_order(path, cat, [title])
+                    duration = (await probe_async(path)).get("duration_s") or 0
+                    season, episodes = pack_by_name_or_order(path, cat, [title], duration)
                 if season is None or not episodes:
-                    logger.info("%s: no episode (a film, an extra) — left in downloads", path)
+                    if is_episode_length(duration, cat):
+                        # an episode Lumina can not place: into the show's folder, for "Upravit díly…" (by hand / AI)
+                        unsorted.append(await _unsorted(db, path, root, show_root, tmdb_id))
+                    else:
+                        logger.info("%s: no episode (a film, an extra) — left in downloads", path)
                     continue
             file_numbers = (season, list(episodes))
             season, episodes, why = _which_episode(os.path.basename(path), season, episodes, cat,
@@ -570,10 +625,15 @@ async def import_episode(payload: dict) -> None:
         await db.commit()
     finally:
         await db.close()
+    if unsorted:
+        payload["unsorted"] = [os.path.basename(u) for u in unsorted]
+        payload["imported"] = True
+        payload["placed"] = bool(targets)
     if targets:
         payload["path"] = targets[0]
         payload["imported"] = True
-        await events.emit("library.files_added", {"folders": sorted({os.path.dirname(t) for t in targets})})
+    if targets or unsorted:
+        await events.emit("library.files_added", {"folders": sorted({os.path.dirname(t) for t in targets + unsorted})})
 
 
 async def import_movie(payload: dict) -> None:

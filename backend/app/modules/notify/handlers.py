@@ -30,6 +30,15 @@ async def on_download_completed(p: dict) -> None:
         await store.add("download", f"Staženo, ale není v knihovně: {_name(p)}", "soubor zůstal ve stažených",
                         level="warn", link="/downloads", permission="download")
         return
+    if p.get("unsorted"):
+        n = len(p["unsorted"])
+        await store.add("download", f"Nezařazené díly: {_name(p)}",
+                        f"{n} {'soubor' if n == 1 else 'soubory' if n < 5 else 'souborů'} ve složce Nezařazeno — "
+                        "Knihovna → Seriály → Kontrola knihovny → Upravit díly (i s návrhem AI)",
+                        level="warn", link="/library?tab=serialy", permission="library.edit", group=f"unsorted:{p.get('tmdb_id')}",
+                        item=", ".join(p["unsorted"][:3]))
+        if not p.get("placed"):
+            return                               # nothing of it went to its episode
     if p.get("review"):
         await store.add("download", f"Na kontrolu: {_name(p)}", f"stažený soubor sedí jen napůl — {p['review']}",
                         level="warn", link="/library", permission="download")

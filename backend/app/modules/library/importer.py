@@ -425,20 +425,10 @@ def _episode_by_folder(f: dict, tv_dir: str) -> dict | None:
             "episode": info.episodes[0], "year": year.group(0)[1:-1] if year else None}
 
 
-_TITLE_AFTER = re.compile(r"(?i)(?:s\d{1,2}\s?e\d{1,3}(?:-?e\d{1,3})*|\b\d{1,2}x\d{2,3})[\s._-]*(.*)$")
-_TITLE_NOISE = re.compile(r"(?i)\[[^\]]*\]|\([^)]*\)|\b(?:\d{3,4}p|x26[45]|h\.?26[45]|hevc|web-?dl|webrip|bluray|bdrip|hdtv|dvdrip|"
-                          r"cz|sk|en|eng|cze|dab(?:ing)?|tit(?:ulky)?|multi|aac|ac3|dts|5\.1|"
-                          r"ai-?upscale|upscale|dvb-?[ct]|sdtv|full ?hd|xvid|divx|dvd|fs)\b.*$")
-
-
-def _title_in_name(filename: str) -> str:
-    """The episode's name a file carries after its number ("S12E24 Stockholmský syndrom.mkv")."""
-    stem = os.path.splitext(filename)[0]
-    m = _TITLE_AFTER.search(stem)
-    if not m:
-        return ""
-    title = _TITLE_NOISE.sub("", m.group(1).replace(".", " ").replace("_", " ")).strip(" -")
-    return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
+# the file's own episode name and an absolute number: episode_names (the import of a download reads them alike)
+_title_in_name = episode_names.title_in_name
+_bare_title = episode_names.bare_title
+_absolute_in_name = episode_names.absolute_in_name
 
 
 def _other_by_name(file_title: str, plex_name: str, fits, cat: dict, here: tuple[int, int], duration: int,
@@ -457,29 +447,6 @@ def _other_by_name(file_title: str, plex_name: str, fits, cat: dict, here: tuple
         own = cat.get(here, {}).get("cs") or cat.get(here, {}).get("en") or ""
         where = f"S{key[0]:02d}E{key[1]:02d}" if key[0] != here[0] else f"E{key[1]:02d}"
         return f"{who}: „{name}“ = v TMDB {where} „{t}“ (E{here[1]:02d} je „{own}“)", key, sure
-    return None
-
-
-def _bare_title(filename: str) -> str:
-    """The episode's name after a bare number ("37.Davný protivník.avi" → "Davný protivník")."""
-    m = re.match(r"\s*\d{1,3}\s*[._ -]+\s*(.+)$", os.path.splitext(filename)[0])
-    if not m:
-        return ""
-    title = _TITLE_NOISE.sub("", m.group(1).replace(".", " ").replace("_", " ")).strip(" -")
-    return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
-
-
-_ABSOLUTE = re.compile(r"(?<![0-9])(\d{3})(?![0-9]|p\b|i\b|\s?kbps)")
-
-
-def _absolute_in_name(filename: str) -> int | None:
-    """A three-digit absolute episode number in a name ("Naruto_CZ_027-02x01", "[CNT]_Naruto_153_[…]"),
-    not a resolution or a CRC."""
-    name = re.sub(r"\[[0-9A-Fa-f]{8}\]", "", os.path.splitext(filename)[0])
-    for m in _ABSOLUTE.finditer(name):
-        n = int(m.group(1))
-        if n not in (480, 576, 720, 264, 265) and n > 0:
-            return n
     return None
 
 

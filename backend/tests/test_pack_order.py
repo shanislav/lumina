@@ -47,3 +47,17 @@ def test_a_numbered_file_finds_its_episode_by_its_name_first():
     # TMDB has the two pilots among the specials: the pack's 06th is TMDB's S01E04 — its name says so
     assert pack_by_name_or_order("Columbo (CS)/06 - Prázdný rám.avi", cat) == (1, [4])
     assert pack_by_name_or_order("Columbo (CS)/01 - Vražda na předpis.avi", cat) == (0, [1])
+
+
+def test_an_episode_long_file_vs_a_film_of_the_pack():
+    from app.modules.library.imports import is_episode_length
+    cat = {(1, e): {"runtime": 75} for e in range(1, 6)}
+    assert is_episode_length(74 * 60, cat) and not is_episode_length(0, cat)
+    assert not is_episode_length(140 * 60, cat) and not is_episode_length(5 * 60, cat)
+
+
+def test_the_scan_and_the_import_read_the_same_names():
+    from app.modules.library import episode_names, importer
+    assert importer._bare_title is episode_names.bare_title
+    assert "Davný protivník" in episode_names.release_titles("37.Davný protivník.avi")
+    assert episode_names.absolute_in_name("[CNT]_Naruto_153_[1080p].mkv") == 153

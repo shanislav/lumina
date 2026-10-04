@@ -183,6 +183,45 @@ def _after_show(stem: str, show_names) -> str | None:
     return None
 
 
+_TITLE_AFTER = re.compile(r"(?i)(?:s\d{1,2}\s?e\d{1,3}(?:-?e\d{1,3})*|\b\d{1,2}x\d{2,3})[\s._-]*(.*)$")
+_TITLE_NOISE = re.compile(r"(?i)\[[^\]]*\]|\([^)]*\)|\b(?:\d{3,4}p|x26[45]|h\.?26[45]|hevc|web-?dl|webrip|bluray|bdrip|hdtv|dvdrip|"
+                          r"cz|sk|en|eng|cze|dab(?:ing)?|tit(?:ulky)?|multi|aac|ac3|dts|5\.1|"
+                          r"ai-?upscale|upscale|dvb-?[ct]|sdtv|full ?hd|xvid|divx|dvd|fs)\b.*$")
+
+
+def title_in_name(filename: str) -> str:
+    """The episode's name a file carries after its number ("S12E24 Stockholmský syndrom.mkv")."""
+    stem = os.path.splitext(filename)[0]
+    m = _TITLE_AFTER.search(stem)
+    if not m:
+        return ""
+    title = _TITLE_NOISE.sub("", m.group(1).replace(".", " ").replace("_", " ")).strip(" -")
+    return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
+
+
+def bare_title(filename: str) -> str:
+    """The episode's name after a bare number ("37.Davný protivník.avi" → "Davný protivník")."""
+    m = re.match(r"\s*\d{1,3}\s*[._ -]+\s*(.+)$", os.path.splitext(filename)[0])
+    if not m:
+        return ""
+    title = _TITLE_NOISE.sub("", m.group(1).replace(".", " ").replace("_", " ")).strip(" -")
+    return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
+
+
+_ABSOLUTE = re.compile(r"(?<![0-9])(\d{3})(?![0-9]|p\b|i\b|\s?kbps)")
+
+
+def absolute_in_name(filename: str) -> int | None:
+    """A three-digit absolute episode number in a name ("Naruto_CZ_027-02x01", "[CNT]_Naruto_153_[…]"),
+    not a resolution or a CRC."""
+    name = re.sub(r"\[[0-9A-Fa-f]{8}\]", "", os.path.splitext(filename)[0])
+    for m in _ABSOLUTE.finditer(name):
+        n = int(m.group(1))
+        if n not in (480, 576, 720, 264, 265) and n > 0:
+            return n
+    return None
+
+
 def release_titles(name: str, show_names=()) -> list[str]:
     """Episode names a release's file name may carry after its number, cleanest first: "Městečko South Park
     S01E02-13 1997 CZ dab 1080p - Posilovač 4000.mkv" → ["Posilovač 4000"], "South.Park.S01E02.Posilovac.4000
@@ -200,7 +239,8 @@ def release_titles(name: str, show_names=()) -> list[str]:
         # no number: a special named after the show's name ("Top Gear - Polární speciál")
         after = _after_show(stem, show_names)
         if after is None:
-            return []
+            # the library scan's readings ("37.Davný protivník.avi")
+            return [t for t in dict.fromkeys((title_in_name(name), bare_title(name))) if t]
     after = re.sub(r"(?<=\S)-[A-Za-z0-9]+\s*$", "", after)             # "x264-AMB3R": the release group
     out = []
     for seg in re.split(r"\s+-\s+|\s*\.\s+|^\s*[-.]\s*", after):
@@ -224,6 +264,9 @@ def release_titles(name: str, show_names=()) -> list[str]:
         title = " ".join(words).strip(" -.")
         if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 and title not in out:
             out.append(title)
+    for extra in (title_in_name(name), bare_title(name)):        # the library scan's readings (the same names)
+        if extra and tv_inventory.normalized(extra) not in {tv_inventory.normalized(t) for t in out}:
+            out.append(extra)
     return out
 
 
