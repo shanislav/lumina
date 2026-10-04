@@ -26,6 +26,7 @@ class JackettSource(BaseSource):
                     size=t.size,
                     magnet_url=t.magnet_url,
                     seeders=t.seeders,
+                    published=getattr(t, "published_date", "") or "",
                 )
             )
         return results

@@ -8,6 +8,7 @@ from app.config import get_effective_settings
 from app.clients.tmdb import TMDBClient
 from app.clients.wikidata import WikidataClient
 from app.core.offers.details import get_details
+from app.core.cinema import mark_before_release
 from app.core.offers.evaluate import MovieContext, evaluate
 from app.core.offers.search import find_offers
 from app.core.profiles import block, get_profile, suitable
@@ -285,7 +286,13 @@ async def search_details(body: DetailsRequest) -> dict:
     for f in body.files:
         key = f"{f.source_id}:{f.ident}"
         d = details.get(key)
-        out[key] = {"details": d, **evaluate(f.name, f.size, ctx, prefs, d)} if d else None
+        if not d:
+            out[key] = None
+            continue
+        ev = evaluate(f.name, f.size, ctx, prefs, d)
+        ev = mark_before_release(ev, {"source_id": f.source_id, "ident": f.ident, "size": f.size},
+                                 set(ctx.recorded), set(ctx.recorded_sizes), (ctx.releases or {}).get("digital") or "")
+        out[key] = {"details": d, **ev}
     return out
 
 

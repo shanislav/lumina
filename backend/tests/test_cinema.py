@@ -74,11 +74,11 @@ async def test_wanted_waits_for_the_digital_release(monkeypatch):
         async def close(self):
             pass
 
-    async def no_search(*a, **kw):
-        raise AssertionError("a film not out digitally must not be searched")
 
     monkeypatch.setattr(store, "TMDBClient", Tmdb)
-    monkeypatch.setattr(store, "find_offers", no_search)
+    async def noop_search(*a, **kw):
+        return None
+    monkeypatch.setattr(store, "find_offers", noop_search)
     out = await store.check(wid)
     assert out["waiting"] == "čeká na digitální vydání (10. 11. 2099)"
     assert (await store.get(wid))["waiting"] == out["waiting"]
@@ -100,3 +100,27 @@ def test_a_fresh_dub_is_a_cinema_one():
     assert ev["cinema"] == "" and ev["film"] == "yes"
     ev = evaluate("Odyssea The Odyssey 2026 1080p CZ titulky.mkv", 4 * 10**9, ctx, prefs)
     assert ev["cinema"] == ""                                             # Czech subtitles are fine
+
+
+async def test_files_from_before_the_release_stay_recordings():
+    """The Odyssey's September "AMZN WEB-DL" fakes: after 15. 11. they are still recordings — remembered by
+    their file (and size: a re-upload), a torrent by its publication date."""
+    from app.core import registry
+    from app.db import init_db
+    await init_db(registry.discover())
+    fake = {"source_id": 1, "ident": "ws1", "size": 6_000_000_000, "source": "webshare", "film": "yes",
+            "name": "The.Odyssey.2026.1080p.AMZN.WEB-DL-Kitsune.mkv"}
+    junk = {"source_id": 1, "ident": "ws2", "size": 5, "source": "webshare", "film": "no", "name": "Odyssea 2014.avi"}
+    await cinema.remember(1368337, [fake, junk])
+    keys, sizes = await cinema.remembered(1368337)
+    assert keys == ["1:ws1"] and sizes == [6_000_000_000]
+    assert await cinema.last_remembered(1368337)
+    ev = {"cinema": "", "film": "yes"}
+    assert cinema.mark_before_release(ev, fake, set(keys), set(sizes), "2026-11-15")["cinema"] == "likely"
+    reupload = {**fake, "source": "fastshare", "source_id": 2, "ident": "fs9"}
+    assert cinema.mark_before_release(ev, reupload, set(keys), set(sizes), "2026-11-15")["cinema"] == "likely"
+    new = {**fake, "ident": "ws3", "size": 7_000_000_000}
+    assert cinema.mark_before_release(ev, new, set(keys), set(sizes), "2026-11-15")["cinema"] == ""
+    torrent = {"source_id": 3, "ident": "t1", "size": 1, "source": "prowlarr", "published": "2026-09-20"}
+    assert cinema.mark_before_release(ev, torrent, set(), set(), "2026-11-15")["cinema"] == "likely"
+    assert cinema.mark_before_release(ev, {**torrent, "published": "2026-11-18"}, set(), set(), "2026-11-15")["cinema"] == ""

@@ -34,12 +34,15 @@ class MovieContext:
     pre_digital: bool = False
     pre_local: bool = False      # not out digitally in CZ/SK yet: a CZ/SK dub in a file is recorded in a cinema
     releases: dict = field(default_factory=dict)            # {"theatrical": "2025-…", "digital": "…"}
+    # after the digital release: the files seen before it (core/cinema.remember) — still recordings
+    recorded: list[str] = field(default_factory=list)
+    recorded_sizes: list[int] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {"titles": self.titles, "year": self.year, "runtime": self.runtime,
                 "people": self.people, "other_parts": self.other_parts, "namesakes": self.namesakes,
                 "episode": self.episode, "pre_digital": self.pre_digital, "pre_local": self.pre_local,
-                "releases": self.releases}
+                "releases": self.releases, "recorded": self.recorded, "recorded_sizes": self.recorded_sizes}
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "MovieContext":
@@ -48,7 +51,8 @@ class MovieContext:
                    people=d.get("people") or [], other_parts=d.get("other_parts") or [],
                    namesakes=d.get("namesakes") or [], episode=d.get("episode") or None,
                    pre_digital=bool(d.get("pre_digital")), pre_local=bool(d.get("pre_local")),
-                   releases=d.get("releases") or {})
+                   releases=d.get("releases") or {}, recorded=d.get("recorded") or [],
+                   recorded_sizes=d.get("recorded_sizes") or [])
 
 
 def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dict | None = None,

@@ -11,13 +11,19 @@ Two signs:
              is a fake). No digital date known: only a recent premiere (MAX_FRESH_DAYS) counts as before it.
              Release names never prove a digital release: The Odyssey 2026 (digital 15. 11.) had "AMZN WEB-DL"
              files of several "release groups" in September — all fakes over a cinema recording.
+  before     those files stay what they are after the release day: a search before it remembers them
+             (PRE_RELEASE_FILES: the source's file, and its size — a re-upload elsewhere is the same file), a
+             torrent tells its publication date. WebShare tells no upload date; FastShare's is nonsense
+             ("2023-11-30" for a 2026 film) — so the memory.
   the dub    a Czech/Slovak dub exists only in Czech/Slovak cinemas until the film comes out digitally there
              (TMDB's CZ/SK dates; none known: MAX_FRESH_DAYS from the CZ/SK premiere) — a file with it before
              then has the sound recorded in a cinema over a WEB picture.
 """
 
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+
+from app.db import get_db
 
 MAX_FRESH_DAYS = 120          # no digital date in TMDB: a premiere this recent still means "only in cinemas"
 
@@ -121,3 +127,77 @@ def judge(name: str, pre_digital: bool, pre_local: bool = False, audio_langs: li
             return {"cinema": "suspect", "langs": [], "reason": "podezřelé — film ještě nevyšel digitálně"}
         return {"cinema": "likely", "langs": [], "reason": "nejspíš z kina — film ještě nevyšel digitálně"}
     return {"cinema": "", "langs": [], "reason": ""}
+
+
+PRE_RELEASE_FILES = """
+CREATE TABLE IF NOT EXISTS pre_release_files (
+    tmdb_id INTEGER NOT NULL,
+    file_key TEXT NOT NULL,             -- "<source_id>:<ident>"
+    size INTEGER NOT NULL DEFAULT 0,    -- a DDL file of the same size elsewhere is the same file
+    name TEXT NOT NULL DEFAULT '',
+    seen_at TEXT NOT NULL,
+    PRIMARY KEY (tmdb_id, file_key)
+);
+CREATE INDEX IF NOT EXISTS pre_release_files_size ON pre_release_files (tmdb_id, size);
+"""
+TORRENTS = ("jackett", "prowlarr")
+
+
+async def remember(tmdb_id: int, rows: list[dict]) -> None:
+    """Before the digital release: the film's files (not the junk) — after it they are still recordings."""
+    keep = [r for r in rows if r.get("film") != "no" or r.get("cinema") == "video"]
+    if not tmdb_id or not keep:
+        return
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db = await get_db()
+    try:
+        await db.executemany(
+            "INSERT OR IGNORE INTO pre_release_files (tmdb_id, file_key, size, name, seen_at) VALUES (?, ?, ?, ?, ?)",
+            [(tmdb_id, f"{r['source_id']}:{r['ident']}", r.get("size") or 0, r.get("name") or "", now) for r in keep])
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def remembered(tmdb_id: int) -> tuple[list[str], list[int]]:
+    """(file keys, DDL sizes) seen before the film's digital release."""
+    if not tmdb_id:
+        return [], []
+    db = await get_db()
+    try:
+        rows = await (await db.execute("SELECT file_key, size FROM pre_release_files WHERE tmdb_id = ?", (tmdb_id,))).fetchall()
+    except Exception:  # noqa: BLE001 — before the migration
+        rows = []
+    finally:
+        await db.close()
+    return [r[0] for r in rows], sorted({r[1] for r in rows if r[1]})
+
+
+async def last_remembered(tmdb_id: int) -> str:
+    db = await get_db()
+    try:
+        row = await (await db.execute("SELECT MAX(seen_at) FROM pre_release_files WHERE tmdb_id = ?", (tmdb_id,))).fetchone()
+    except Exception:  # noqa: BLE001
+        row = None
+    finally:
+        await db.close()
+    return (row[0] if row else "") or ""
+
+
+def before_release(row: dict, recorded: list[str] | set[str], sizes: list[int] | set[int], digital: str) -> bool:
+    """The file existed before the film's digital release: seen then, the same file elsewhere (a DDL of the same
+    size), or a torrent published before it."""
+    if f"{row.get('source_id')}:{row.get('ident')}" in recorded:
+        return True
+    torrent = row.get("source") in TORRENTS
+    if not torrent and row.get("size") and row["size"] in sizes:
+        return True
+    published = row.get("published") or ""
+    return bool(torrent and digital and published and published < digital)
+
+
+def mark_before_release(ev: dict, row: dict, recorded, sizes, digital: str) -> dict:
+    """A file from before the digital release is a recording whatever its name says (not hidden, never taken)."""
+    if ev.get("cinema") in ("video", "audio", "likely", "suspect") or not before_release(row, recorded, sizes, digital):
+        return ev
+    return {**ev, "cinema": "likely", "cinema_reason": "nahráno ještě před digitálním vydáním — nejspíš z kina"}

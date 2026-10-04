@@ -3,12 +3,13 @@
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.config import get_effective_settings
 from app.clients.tmdb import TMDBClient
 from app.core import events
 from app.core.cinema import before_digital
+from app.core.cinema import last_remembered as cinema_last_seen
 from app.core.offers.search import find_offers, verify_offers
 from app.core.profiles import get_profile
 from app.core.profiles import suitable as pick_suitable
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS wanted (
 """
 
 PAUSE_BETWEEN_FILMS_S = 5
+RECORD_EVERY_DAYS = 7          # a film waiting for its digital release: its cinema recordings remembered this often
 VERIFY_PER_FILM = 10
 BEST_FIELDS = ("name", "source", "source_id", "ident", "size", "magnet_url", "quality_score", "quality_summary",
                "resolution", "codec", "hdr", "lang_tier", "audio_langs", "verified", "video_bitrate")
@@ -127,6 +129,14 @@ async def check(wanted_id: int) -> dict | None:
         finally:
             await db.close()
         logger.info("Wanted '%s': %s", item["title"], waiting)
+        # once a week: what is out there now is a cinema recording — remembered for after the release day
+        last = await cinema_last_seen(item["tmdb_id"])
+        if not last or last < (datetime.now() - timedelta(days=RECORD_EVERY_DAYS)).strftime("%Y-%m-%d %H:%M:%S"):
+            try:
+                await find_offers(cfg, f"{item['title']} {item['year']}".strip(), original_title=item["original_title"] or "",
+                                  tmdb_id=item["tmdb_id"], media_type="movie", use_ai=False)
+            except Exception as e:  # noqa: BLE001
+                logger.info("Wanted '%s': remembering the pre-release files failed: %s", item["title"], e)
         return {"status": "wanted", "matches": 0, "waiting": waiting}
     profile = await get_profile(item["profile_id"])
     query = f"{item['title']} {item['year']}".strip()

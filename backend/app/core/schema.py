@@ -44,9 +44,12 @@ from app.core.profiles import QUALITY_PROFILES, seed_default_profiles, seed_tv_p
 from app.core.auth import USERS  # noqa: E402
 # v6: a profile for TV shows (profiles have a kind: movie | tv, docs SERIALY)
 
+# v7: files seen before a film's digital release (core/cinema) — after it they are still cinema recordings
+from app.core.cinema import PRE_RELEASE_FILES  # noqa: E402
+
 CORE = Module(name="core", title="Core", order=0, required=True,
               migrations=[CORE_V1, SOURCE_FILE_DETAILS, QUALITY_PROFILES, seed_default_profiles(), USERS,
-                          seed_tv_profile])
+                          seed_tv_profile, PRE_RELEASE_FILES])
 
 
 def seed_automation(type_name: str, name: str) -> str:

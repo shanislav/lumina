@@ -33,6 +33,7 @@ class SearchResult(BaseModel):
     duration_s: int = 0
     width: int = 0
     height: int = 0
+    published: str = ""        # torrents: when the tracker got it ("2026-09-14") — WebShare / FastShare tell no date
 
 
 class BaseSource(ABC):

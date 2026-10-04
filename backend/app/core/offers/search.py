@@ -12,7 +12,8 @@ from app.clients.groq_scorer import score_results
 from app.clients.tmdb import TMDBClient
 from app.core.offers.details import cached_details, get_details
 from app.core.episode_match import parse_episode
-from app.core.cinema import before_digital, before_local_digital
+from app.core.cinema import before_digital, before_local_digital, mark_before_release, remember
+from app.core.cinema import remembered as cinema_memory
 from app.core.offers.evaluate import RELEVANCE, MovieContext, evaluate, recommended_key, year_of
 from app.core.quality import Prefs, prefs_from_settings
 from app.core.text import clean_text
@@ -240,6 +241,8 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
                 ctx.releases = full.get("releases") or {}
                 ctx.pre_digital = before_digital(ctx.releases)
                 ctx.pre_local = before_local_digital(ctx.releases)
+                if not ctx.pre_digital and ctx.releases.get("digital"):
+                    ctx.recorded, ctx.recorded_sizes = await cinema_memory(tmdb_id)
                 ctx.titles = [full.get("title", ""), full.get("original_title", ""),
                               *(by_lang.get(l, "") for l in ("cs", "sk", "en")),
                               *full.get("alternative_titles", [])]
@@ -328,14 +331,17 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
         for r in all_results:
             details = known.get((r.source_type.value, r.ident))
             ev = evaluate(r.name, r.size, ctx, prefs, details, r.duration_s, r.width, r.height)
-            rows.append({
-                "ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
-                "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders,
-                "quality": ev["resolution"] or "unknown", "relevance_score": RELEVANCE[ev["film"]], **ev,
-            })
+            row = {"ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
+                   "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders, "published": r.published}
+            if ctx.recorded or ctx.recorded_sizes or r.published:
+                ev = mark_before_release(ev, row, set(ctx.recorded), set(ctx.recorded_sizes),
+                                         (ctx.releases or {}).get("digital") or "")
+            rows.append({**row, "quality": ev["resolution"] or "unknown", "relevance_score": RELEVANCE[ev["film"]], **ev})
         return rows
 
     rows = judged()
+    if ctx.pre_digital and tmdb_id and media_type == "movie":
+        await remember(tmdb_id, rows)             # after the release day they are still recordings
 
     # AI only decides what the rules could not ("Dune Part Two" vs "Dune: Part One", odd names).
     unclear = [row for row in rows if row["film"] == "unsure"]
@@ -373,7 +379,9 @@ async def _ask_ai(cfg: dict, ctx: MovieContext, prefs: Prefs, unclear: list[dict
 
 def reevaluate(row: dict, details: dict, ctx: MovieContext, prefs: Prefs) -> dict:
     """A row judged again with verified details from its source."""
-    return {**row, "details": details, **evaluate(row["name"], row["size"], ctx, prefs, details)}
+    ev = evaluate(row["name"], row["size"], ctx, prefs, details)
+    ev = mark_before_release(ev, row, set(ctx.recorded), set(ctx.recorded_sizes), (ctx.releases or {}).get("digital") or "")
+    return {**row, "details": details, **ev}
 
 
 async def verify_offers(offers: Offers, limit: int = 15) -> None:
