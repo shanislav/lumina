@@ -128,17 +128,18 @@ async def _monitor_loop():
                                     cur.execute("UPDATE download_tracker SET processed = 1, status = 'not_found' WHERE id = ?", (did,))
                                     conn.commit()
                                     continue
-                                if intent and intent.get("mode") == "pack" and not intent.get("replace_owned") \
-                                        and not intent.get("files_chosen") and tmdb_id:
-                                    # a whole-show pack: the episodes the user has are not downloaded at all
+                                if intent and intent.get("mode") == "pack" and not intent.get("files_chosen") and tmdb_id:
+                                    # a whole-show pack: the episodes the user has are not downloaded at all (unless
+                                    # they are to be replaced), the first wanted ones first
                                     files = await qbt.files(did)
                                     if files:          # a magnet's metadata is in
                                         from app.modules.library.imports import pack_skip
                                         owned = {(r[0], r[1]) for r in cur.execute(
                                             "SELECT season, episode FROM library_episodes WHERE show_tmdb_id = ? AND has_file = 1",
                                             (tmdb_id,)).fetchall()}
-                                        skip = pack_skip(files, owned, intent.get("pack_season"))
-                                        await qbt.set_file_priority(did, skip, 0)
+                                        skip = [] if intent.get("replace_owned") else pack_skip(files, owned, intent.get("pack_season"))
+                                        if skip:
+                                            await qbt.set_file_priority(did, skip, 0)
                                         # the first episodes first, in order — each goes to the library once it is
                                         # complete (below), so watching can start before the whole pack is in
                                         first = pack_order(files, skip, intent.get("pack_season"))[:FIRST_EPISODES]
