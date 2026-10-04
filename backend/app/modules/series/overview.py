@@ -66,6 +66,15 @@ def pack_summary(p: dict, episodes: int, profile, lang_mode: str) -> dict:
             "covers": p.get("covers"), "fits": fits}
 
 
+def only_season(name: str, season: int) -> bool:
+    """A pack of this one season ("Columbo 3. série", "Show S03") — not of more seasons or the whole show."""
+    from app.core.episode_match import parse_episode
+
+    info = parse_episode(name)
+    held = info.seasons or ([info.season] if info.season is not None else [])
+    return held == [season] and not (info.complete and len(info.seasons or []) > 1)
+
+
 async def build(tmdb_id: int) -> dict:
     """The overview of one show (minutes for a long one: a season search each)."""
     from app.config import get_effective_settings
@@ -111,7 +120,8 @@ async def build(tmdb_id: int) -> dict:
             _state["done"] += 1
             continue
         found_sets[n] = offers.sets
-        packs = [{**p, "seasons": [n]} for p in offers.packs if p.get("source") in ("jackett", "prowlarr")]
+        packs = [{**p, "seasons": [n]} for p in offers.packs if p.get("source") in ("jackett", "prowlarr")
+                 and only_season(p["name"], n)]
         rows.append({"season": n, "aired": len(eps), "owned": owned,
                      "sets": [set_summary(st, len(eps), profile) for st in offers.sets[:SETS_SHOWN]],
                      "packs": [pack_summary(p, len(eps), profile, lang_mode) for p in packs[:PACKS_SHOWN]],

@@ -258,3 +258,10 @@ async def test_overview_wants_the_season_packs_that_suit_and_the_rest_by_episode
     assert taken == ["p2"] and queued == [55]
     eff = (await store.get_settings(55))["effective"]
     assert eff["auto_new"] == "download" and eff["auto_from"] == "all"
+
+
+def test_a_seasons_pack_holds_that_season_only():
+    from app.modules.series.overview import only_season
+    assert only_season("Columbo  3.  série (1973-1974)(CZ/EN)[1080p]", 3)
+    assert not only_season("Columbo S01-S10 (1971-2003)(CZ)", 1)         # the whole show: not a season's pack
+    assert not only_season("Show S03 1080p", 2)
