@@ -122,6 +122,31 @@ async def below_profile(seasons: list[dict], profile, prefs) -> dict[tuple[int, 
     return out
 
 
+def preferred_release(season_sets: dict[int, list[dict]]) -> str | None:
+    """The release (one uploader's naming and encode — season.release_key, no season number in it) that is among
+    the best of the most seasons: one uploader for the whole show where it can be, not another one for a season
+    only because its score is a little higher there. A set counts in a season when it holds nearly all the
+    season's wanted episodes (80 % of the best set) and has the sound the best one has. Two seasons at least."""
+    count: dict[str, int] = {}
+    for sets in season_sets.values():
+        if not sets:
+            continue
+        top = max(st.get("coverage", 0) for st in sets)
+        local = sets[0].get("local")
+        for key in {st.get("key") for st in sets
+                    if st.get("key") and st.get("coverage", 0) >= max(1, top * 0.8) and st.get("local") == local}:
+            count[key] = count.get(key, 0) + 1
+    if not count:
+        return None
+    key, seasons = max(count.items(), key=lambda kv: kv[1])
+    return key if seasons >= 2 else None
+
+
+def prefer(sets: list[dict], key: str | None) -> list[dict]:
+    """The preferred release first (the rest in their order) — ``pick`` takes the sound first, then this order."""
+    return sorted(sets, key=lambda st: st.get("key") != key) if key else sets
+
+
 def pick(sets: list[dict], episode: int, profile, need_local: bool, skip: set[str] = frozenset(),
          owned: dict | None = None, prefs=None) -> dict | None:
     """The file for an episode: sure to be it, allowed by the profile, not a pack, Czech/Slovak sound when
@@ -357,23 +382,27 @@ async def check_show(tmdb_id: int) -> dict:
         todo.setdefault(season, []).append((episode, kind))
 
     news: dict[str, list] = {"found": [], "downloading": []}       # for the notification
-    first = True
-    for season, items in sorted(todo.items()):
-        if not first:
+    # every season searched first: then one uploader for the whole show where it can be (preferred_release)
+    found_sets: dict[int, list[dict]] = {}
+    for i, (season, items) in enumerate(sorted(todo.items())):
+        if i:
             await asyncio.sleep(PAUSE_S)
-        first = False
         try:
-            offers = await search_season(tmdb_id, season, sorted({e for e, _ in items}), eff["torrent"])
+            found_sets[season] = (await search_season(tmdb_id, season, sorted({e for e, _ in items}), eff["torrent"])).sets
         except Exception as e:  # noqa: BLE001 — one season must not stop the show
             logger.warning("Series automation: %s S%02d search failed: %s", tmdb_id, season, e)
             result["note"] = f"hledání S{season:02d} selhalo"
+    preferred = preferred_release(found_sets)
+    for season, items in sorted(todo.items()):
+        if season not in found_sets:
             continue
+        sets = prefer(found_sets[season], preferred)
         for episode, kind in items:
             rec = known.get((season, episode, kind))
             skip = {rec["row"].get("ident")} if rec and rec["status"] == "dismissed" else set()
             need_local = kind == "dub" or eff["lang_mode"] == "local_only" or (
                 kind == "upgrade" and below.get((season, episode), {}).get("language") == "?" and eff["lang_mode"] != "original")
-            row = pick(offers.sets, episode, profile, need_local, skip,
+            row = pick(sets, episode, profile, need_local, skip,
                        owned=below.get((season, episode)) if kind == "upgrade" else None, prefs=prefs)
             if not row:
                 continue

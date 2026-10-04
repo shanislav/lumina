@@ -213,3 +213,48 @@ async def test_cancel_all_forgets_the_found_and_switches_the_automation_off(db, 
     left = await (await conn.execute("SELECT request FROM download_queue")).fetchall()
     await conn.close()
     assert len(left) == 1 and "603" in left[0][0]
+
+
+def test_one_uploader_for_the_whole_show_where_it_can_be():
+    def st(key, coverage, local=True, score=50):
+        return {"key": key, "coverage": coverage, "local": local, "score": score}
+    seasons = {1: [st("A", 10), st("B", 10)],
+               2: [st("B", 8, score=70), st("A", 8)],              # B a bit better here, A has it all too
+               3: [st("A", 9), st("C", 9)],
+               4: [st("C", 6, local=True), st("A", 6, local=False)]}  # A without the sound here: does not count
+    assert auto.preferred_release(seasons) == "A"
+    assert [x["key"] for x in auto.prefer(seasons[2], "A")] == ["A", "B"]
+    assert auto.preferred_release({1: [st("A", 10)]}) is None              # one season: nothing to unify
+    assert auto.prefer(seasons[2], None) == seasons[2]
+
+
+async def test_overview_wants_the_season_packs_that_suit_and_the_rest_by_episodes(db, monkeypatch):
+    import sys
+    from app.modules.series import overview
+    router = sys.modules["app.modules.series.router"]
+    hd = Profile(id=7, name="HD", kind="tv", min_resolution="720p")
+    sd_pack = {"ident": "p1", "name": "Show S01 SD", "size": 10e9, "seeders": 9, "lang_tier": 2, "resolution": "SD"}
+    hd_pack = {"ident": "p2", "name": "Show S02 1080p CZ", "size": 10e9, "seeders": 9, "lang_tier": 2,
+               "resolution": "1080p", "codec": "H.264"}
+    en_pack = {**hd_pack, "ident": "p3", "lang_tier": 0}
+    assert not overview.pack_summary(sd_pack, 10, hd, "local_or_temp")["fits"]
+    assert overview.pack_summary(hd_pack, 10, hd, "local_or_temp")["fits"]
+    assert not overview.pack_summary(en_pack, 10, hd, "local_only")["fits"]
+    assert overview.pack_summary(en_pack, 10, hd, "original")["fits"]
+
+    taken, queued = [], []
+
+    async def fake_pack(tmdb_id, body):
+        taken.append(body.row["ident"])
+    monkeypatch.setattr(router, "pack_download", fake_pack)
+    monkeypatch.setattr(auto, "enqueue", lambda ids: queued.extend(ids))
+    rows = [{"season": 1, "aired": 10, "owned": 0, "packs": [overview.pack_summary(sd_pack, 10, hd, "local_or_temp")],
+             "_pack_rows": [sd_pack]},
+            {"season": 2, "aired": 10, "owned": 0, "packs": [overview.pack_summary(hd_pack, 10, hd, "local_or_temp")],
+             "_pack_rows": [hd_pack]},
+            {"season": 3, "aired": 10, "owned": 10, "packs": [overview.pack_summary(hd_pack, 10, hd, "local_or_temp")],
+             "_pack_rows": [hd_pack]}]                           # owned already: nothing
+    assert await overview.act({"tmdb_id": 55, "seasons": rows}) == {"packs": [2]}
+    assert taken == ["p2"] and queued == [55]
+    eff = (await store.get_settings(55))["effective"]
+    assert eff["auto_new"] == "download" and eff["auto_from"] == "all"

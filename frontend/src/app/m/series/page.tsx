@@ -1,6 +1,7 @@
 "use client";
 
 import { WantShow } from "@/components/SeriesAuto";
+import SeriesSources from "@/components/SeriesSources";
 import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -147,6 +148,7 @@ function Series() {
       {!data.in_library && can("library.edit") && data.settings.effective.auto_new === "off" && (
         <WantShow big tmdbId={tmdb} aired={totals.missing} onDone={load} langDefault={data.settings.defaults.lang_mode} />
       )}
+      {can("search") && <SeriesSources tmdbId={tmdb} canStart />}
       <div className="space-y-2">
         {data.seasons.map((s) => (
           <Season key={s.season_number} data={data} season={s} open={!!open[s.season_number]}

@@ -222,7 +222,12 @@ export function WantShow({ tmdbId, aired, onDone, langDefault, big = false }: {
     <section className={`space-y-3 border border-violet-800/50 bg-violet-950/20 ${big ? "rounded-2xl p-4" : "rounded-xl px-4 py-3 text-sm"}`}>
       <p className={big ? "text-base text-zinc-200" : "text-zinc-200"}>Tenhle seriál zatím nemáš.</p>
       {result ? (
-        result.way === "pack" && result.pack ? (
+        result.way === "seasons" ? (
+          <p className="text-emerald-300">
+            ✓ Celý seriál najednou na torrentu není{result.why ? ` (${result.why})` : ""}. Lumina teď na pozadí projde série:
+            kde je balík série v téhle kvalitě a zvuku, stáhne ho, zbytek díl po dílu. Průběh je v „Přehledu zdrojů po sériích“.
+          </p>
+        ) : result.way === "pack" && result.pack ? (
           <p className="text-emerald-300">
             ✓ Stahuje se celý seriál z torrentu: <span className="break-all text-zinc-200">{result.pack.name}</span>
             {" "}({packSize(result.pack.size)}{result.pack.is_dubbed ? ", dabing" : ""}). Díly se zařadí do sérií, nové pak hlídá automatika.

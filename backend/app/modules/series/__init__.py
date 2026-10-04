@@ -9,7 +9,7 @@ owned episodes (library_episodes), which this module reads.
 
 from app.core.migrations import add_column
 from app.core.module import Module, Subscription, TaskSource
-from app.modules.series import auto
+from app.modules.series import auto, overview
 from app.modules.series.router import router
 from app.modules.series.store import SERIES_NO_DUB, SERIES_SETTINGS
 
@@ -23,7 +23,8 @@ module = Module(
                 add_column("series_settings", "auto_from", "TEXT"),
                 add_column("series_settings", "auto_dub", "TEXT"),
                 auto.SERIES_AUTO,
-                add_column("series_settings", "auto_upgrade", "TEXT")],
+                add_column("series_settings", "auto_upgrade", "TEXT"),
+                overview.SERIES_OVERVIEW],
     subscriptions=[Subscription("scheduler.run", auto.on_scheduler_run)],
     tasks=[TaskSource(auto.tasks, "library.edit")],
 )

@@ -1665,8 +1665,28 @@ async function seriesJson<T>(path: string, method = "GET", body?: unknown): Prom
   return res.json();
 }
 
+export interface OverviewSet {
+  key: string; label: string; coverage: number; aired: number; resolution: string; codec: string; langs: string[];
+  local: boolean; local_subs: boolean; score: number; size: number; episode_size: number; sources: string[];
+  verified: boolean; fits: number;
+}
+export interface OverviewPack {
+  ident: string; name: string; size: number; seeders: number; resolution: string; codec: string; langs: string[];
+  lang_tier: number; verified: boolean; seasons: number[]; covers?: number | null; fits: boolean;
+}
+export interface SeriesOverview {
+  data: {
+    tmdb_id: number; title: string; profile: string; lang_mode: string; torrent: boolean; preferred: string | null;
+    whole: OverviewPack[]; created_at: string;
+    seasons: { season: number; aired: number; owned: number; error?: string; sets: OverviewSet[]; packs: OverviewPack[]; pick: string | null }[];
+  } | null;
+  job: { running: boolean; mine?: boolean; done: number; total: number; current: string };
+}
+export const getSeriesOverview = (tmdbId: number) => seriesJson<SeriesOverview>(`/${tmdbId}/overview`);
+export const startSeriesOverview = (tmdbId: number) => seriesJson<SeriesOverview["job"]>(`/${tmdbId}/overview`, "POST", {});
+
 export interface WantShowResult {
-  way: "pack" | "episodes";
+  way: "pack" | "episodes" | "seasons";
   pack?: { name: string; size: number; seeders: number | null; seasons: number[]; covers: number; resolution: string;
            lang_tier: number; is_dubbed: boolean };
   why?: string;              // episode by episode: why no pack

@@ -7,6 +7,7 @@ import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
 import ShowPacks from "@/components/ShowPacks";
 import EpisodeWindow from "@/components/EpisodeWindow";
+import SeriesSources from "@/components/SeriesSources";
 import { AUTO_DUB, AUTO_NEW, AUTO_UPGRADE, AutoFields, ShowAutomation, WantShow } from "@/components/SeriesAuto";
 import { useAuth } from "@/components/AuthGate";
 import {
@@ -137,6 +138,7 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
           onDone={() => { watchDownloads(); load(); }} />
       )}
       <SettingsPanel data={data} onSaved={() => load()} editable={can("library.edit")} />
+      {can("search") && <SeriesSources tmdbId={tmdbId} canStart={can("search")} />}
       <ShowAutomation tmdbId={tmdbId} canDownload={can("download")} canEdit={can("library.edit")}
         on={[data.settings.effective.auto_new, data.settings.effective.auto_dub, data.settings.effective.auto_upgrade]
           .some((v) => v && v !== "off")} />

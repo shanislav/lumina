@@ -276,13 +276,35 @@ async def want_show(tmdb_id: int, body: WantBody) -> dict:
             why = "torrenty teď nejdou prohledat"
     if pack:
         await pack_download(tmdb_id, PackDownload(row=pack))
-        # the new episodes after the pack: from the last owned one (nothing owned until it is in = nothing yet)
-        await store.save_settings(tmdb_id, {"auto_new": "download", "auto_from": "next"}, meta)
+        # the rest (seasons the pack lacks, new episodes): the automation — it waits while the pack downloads
+        await store.save_settings(tmdb_id, {"auto_new": "download", "auto_from": "all"}, meta)
         return {"way": "pack", "pack": {k: pack.get(k) for k in ("name", "size", "seeders", "seasons", "covers",
                                                                      "resolution", "lang_tier", "is_dubbed")}}
+    if mode == "download" and eff.get("torrent") and pack is None and why != "torrenty teď nejdou prohledat":
+        # no pack of the whole show: season by season in the background — a season's pack where one suits,
+        # the rest episode by episode (overview.act)
+        # (the automation is switched on only after it — else a night run in between would take episodes of a
+        # season whose pack comes)
+        from app.modules.series import overview
+        overview.enqueue(tmdb_id, then_want=True)
+        return {"way": "seasons", "why": why}
     await store.save_settings(tmdb_id, {"auto_new": mode, "auto_from": "all"}, meta)
     job = auto.enqueue([tmdb_id])
     return {"way": "episodes", "why": why, "job": job}
+
+
+@router.get("/{tmdb_id}/overview", dependencies=[Depends(require("search"))])
+async def get_overview(tmdb_id: int) -> dict:
+    """Přehled zdrojů: the last overview of the show (or none) and whether one is being built."""
+    from app.modules.series import overview
+    return {"data": await overview.stored(tmdb_id), "job": overview.job_status(tmdb_id)}
+
+
+@router.post("/{tmdb_id}/overview", dependencies=[Depends(require("search"))])
+async def start_overview(tmdb_id: int) -> dict:
+    """Build the overview in the background (a season search each, gently to WebShare / FastShare)."""
+    from app.modules.series import overview
+    return overview.enqueue(tmdb_id)
 
 
 class SeasonDownload(BaseModel):
