@@ -4,6 +4,7 @@ import DescribeSearch, { looksLikeDescription } from "@/components/DescribeSearc
 import ClearInput from "@/components/ClearInput";
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Suggestion, TMDBMovie, searchMovies, suggest } from "@/lib/api";
 import { Spinner } from "@/components/mobile/ui";
@@ -119,13 +120,18 @@ export default function MobileSearch() {
         ))}
       </div>
 
-      <div className="pt-6">
-        <DescribeSearch onPick={open} big ask={ask} />
-      </div>
-
       {!q && !items.length && (
-        <p className="pt-6 text-center text-sm text-zinc-500">Napiš název filmu nebo seriálu. Lumina najde soubory a doporučí ten nejlepší.</p>
+        <p className="text-center text-sm text-zinc-500">Znáš název? Napiš ho nahoru — Lumina najde soubory a doporučí ten nejlepší.</p>
       )}
+
+      {/* three ways in: the name (above), the story (AI), nothing in mind (Objevit) */}
+      <div className="space-y-3 pt-4">
+        <DescribeSearch onPick={open} big ask={ask} />
+        <Link href="/discover" className="block rounded-2xl border border-sky-800/60 bg-sky-950/20 px-4 py-3 active:bg-sky-950">
+          <span className="block text-base font-medium text-sky-100">🧭 Nevíš, co pustit? Objevit</span>
+          <span className="text-sm text-zinc-400">Novinky, populární a nejlépe hodnocené filmy a seriály — klepni a vyber.</span>
+        </Link>
+      </div>
     </main>
   );
 }

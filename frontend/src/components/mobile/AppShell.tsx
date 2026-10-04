@@ -15,6 +15,7 @@ const TO_FULL: Record<string, string> = { "/m": "/", "/m/series": "/series", "/m
 
 const TABS = [
   { href: "/m", label: "Hledat", icon: "M21 21l-4.3-4.3M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z", match: ["/m", "/m/title", "/m/series", "/m/episode"] },
+  { href: "/discover", label: "Objevit", icon: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM15.5 8.5l-2 5-5 2 2-5z", match: ["/discover"] },
   { href: "/m/watch", label: "Sleduji", icon: "M8 5v14l11-7z", match: ["/m/watch"] },
   { href: "/m/downloads", label: "Stahuje", icon: "M12 3v12m0 0l-5-5m5 5l5-5M4 19h16", match: ["/m/downloads"] },
   { href: "/m/more", label: "Více", icon: "M4 6h16M4 12h16M4 18h16", match: ["/m/more"] },
@@ -67,7 +68,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <NotifyButton />
       </header>
       {children}
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-zinc-800 bg-zinc-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-zinc-800 bg-zinc-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
         {TABS.map((t) => {
           const on = t.match.includes(path);
           return (

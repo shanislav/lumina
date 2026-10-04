@@ -9,7 +9,6 @@ import { setPro } from "@/lib/mobile";
 const LINKS: { href: string; label: string; hint: string; perm?: string }[] = [
   { href: "/wanted", label: "Chci", hint: "filmy a seriály, které Lumina hlídá" },
   { href: "/library", label: "Knihovna", hint: "co máš", perm: "library.view" },
-  { href: "/discover", label: "Objevit", hint: "novinky a populární", perm: "search" },
   { href: "/account", label: "Účet", hint: "heslo, kde jsem přihlášen" },
 ];
 
