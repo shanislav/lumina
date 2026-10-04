@@ -218,6 +218,36 @@ class WantBody(BaseModel):
     mode: str = "download"           # download | notify ("Jen najít a ukázat": episode by episode, nothing taken)
 
 
+VERIFY_PACKS = 5      # the candidates whose tracker page (MediaInfo) is read before choosing
+
+
+async def _verify_packs(found: dict, seasons: dict[int, int]) -> list[dict]:
+    """The packs judged by what their tracker page says (MediaInfo: resolution, codec, the sound's languages) and
+    not by the name only ("Columbo S01-S10 (CZ)" tells no resolution) — the few that could be chosen at all."""
+    from app.core.offers.details import get_details
+    from app.core.offers.evaluate import MovieContext, evaluate
+    from app.modules.series import auto
+
+    packs = [dict(p) for p in found.get("packs") or []]
+    need = max(1, round(len(seasons) * auto.PACK_COVERAGE))
+    cands = [p for p in packs if len([x for x in (p.get("seasons") or list(seasons)) if x in seasons]) >= need
+             and (p.get("seeders") or 0) >= auto.PACK_MIN_SEEDERS][:VERIFY_PACKS]
+    if not cands:
+        return packs
+    details = await get_details([{"source_id": p["source_id"], "ident": p["ident"], "name": p["name"]} for p in cands])
+    ctx, prefs = MovieContext.from_dict(found.get("movie")), prefs_from_settings(await get_effective_settings())
+    for p in cands:
+        d = details.get(f"{p['source_id']}:{p['ident']}")
+        if not d:
+            continue
+        # judged as one of its episodes: the bitrate from an episode's share of the size and the page's length
+        held = [x for x in (p.get("seasons") or list(seasons)) if x in seasons]
+        per_episode = int(p["size"] / (sum(seasons[x] for x in held) or 1))
+        ev = evaluate(p["name"], per_episode, ctx, prefs, d)
+        p.update({k: v for k, v in ev.items() if k not in ("film", "film_reasons", "cinema", "cinema_reason", "size")})
+    return packs
+
+
 @router.post("/{tmdb_id}/want", dependencies=[Depends(require("library.edit"))])
 async def want_show(tmdb_id: int, body: WantBody) -> dict:
     """"Chci" of a show not owned — fully automatic: the quality profile and the sound chosen, Lumina decides
@@ -237,8 +267,8 @@ async def want_show(tmdb_id: int, body: WantBody) -> dict:
             found = await find_show_packs(await get_effective_settings(), tmdb_id)
             seasons = {n: len(episodes.get(n) or []) for n in (s["season_number"] for s in show.get("seasons", [])) if n}
             profile = pick_profile(await load_profiles(), eff.get("profile_id"), "tv")
-            pack = auto.choose_pack(found.get("packs") or [], seasons, profile, eff.get("lang_mode") or "",
-                                    show.get("episode_runtime") or 0)
+            packs = await _verify_packs(found, seasons)
+            pack = auto.choose_pack(packs, seasons, profile, eff.get("lang_mode") or "", show.get("episode_runtime") or 0)
             if not pack:
                 why = "na torrentech není balík celého seriálu, který by splnil profil a jazyk"
         except Exception as e:  # noqa: BLE001 — the torrents fail: episode by episode still works
