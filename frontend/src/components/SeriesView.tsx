@@ -133,14 +133,16 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
       </header>
 
       {!data.in_library && can("library.edit") && data.settings.effective.auto_new === "off" && (
-        <WantShow tmdbId={tmdbId} aired={totals.missing} onDone={() => load()} />
+        <WantShow tmdbId={tmdbId} aired={totals.missing} onDone={() => load()} torrent={!!data.settings.effective.torrent && can("search")}
+          onPackStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }} />
       )}
       <SettingsPanel data={data} onSaved={() => load()} editable={can("library.edit")} />
       <ShowAutomation tmdbId={tmdbId} canDownload={can("download")} canEdit={can("library.edit")}
         on={[data.settings.effective.auto_new, data.settings.effective.auto_dub, data.settings.effective.auto_upgrade]
           .some((v) => v && v !== "off")} />
 
-      {can("search") && data.settings.effective.torrent && (
+      {/* the card above offers it already for a show not owned yet */}
+      {can("search") && data.settings.effective.torrent && !(!data.in_library && can("library.edit") && data.settings.effective.auto_new === "off") && (
         <ShowPacks tmdbId={tmdbId} onStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }} />
       )}
 

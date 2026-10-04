@@ -1,5 +1,6 @@
 "use client";
 
+import ShowPacks from "@/components/ShowPacks";
 import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -113,6 +114,7 @@ function Series() {
   const [error, setError] = useState("");
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const [more, setMore] = useState(false);
+  const [packs, setPacks] = useState(false);
   const load = () => getSeries(tmdb).then((d) => {
     setData(d);
     // open the season where something is missing, the newest one first
@@ -153,7 +155,12 @@ function Series() {
         <div className="space-y-2 rounded-2xl border border-violet-800/50 bg-violet-950/20 p-4">
           <p className="text-zinc-200">Tenhle seriál zatím nemáš.</p>
           <BigButton onClick={() => want("download")}>Chci — stahovat všechny díly</BigButton>
+          {data.settings.effective.torrent && can("search") && (
+            <BigButton kind="secondary" onClick={() => setPacks(true)}>Celý seriál z torrentu</BigButton>
+          )}
           <BigButton kind="secondary" onClick={() => want("notify")}>Jen najít a ukázat</BigButton>
+          <p className="text-sm text-zinc-500">Po dílech = automatika (WebShare / FastShare, i nové díly). Torrent = jeden balík se všemi sériemi.</p>
+          {packs && <ShowPacks tmdbId={tmdb} big autoOpen onClose={() => setPacks(false)} onStarted={() => {}} />}
         </div>
       )}
       <div className="space-y-2">

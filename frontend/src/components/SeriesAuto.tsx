@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import ShowPacks from "@/components/ShowPacks";
 import { useCallback, useEffect, useState } from "react";
 import {
   saveSeriesSettings,
@@ -166,8 +167,13 @@ export function ShowAutomation({ tmdbId, on, canDownload, canEdit }: { tmdbId: n
 }
 
 /** The show page of a show not in the library: "I want it" = the automation looks for every aired episode. */
-export function WantShow({ tmdbId, aired, onDone }: { tmdbId: number; aired: number; onDone: () => void }) {
+export function WantShow({ tmdbId, aired, onDone, torrent = false, onPackStarted }: {
+  tmdbId: number; aired: number; onDone: () => void;
+  torrent?: boolean;                     // torrents allowed for the show: "Celý seriál z torrentu" too
+  onPackStarted?: () => void;
+}) {
   const [busy, setBusy] = useState(false);
+  const [packs, setPacks] = useState(false);
   async function want(mode: SeriesAutoMode) {
     setBusy(true);
     try {
@@ -181,14 +187,22 @@ export function WantShow({ tmdbId, aired, onDone }: { tmdbId: number; aired: num
       <p className="text-zinc-200">Tenhle seriál zatím nemáš.</p>
       <p className="text-xs text-zinc-400">
         Chci = automatika najde všechny vydané díly ({aired}) podle profilu a jazyka seriálu, hned teď a pak každou noc
-        i ty nové. Celé série najednou z torrentů jsou níž („Celý seriál na torrentech“).
+        i ty nové — po jednom dílu z WebShare / FastShare.
+        {torrent && <> Celý seriál z torrentu = jeden balík se všemi sériemi najednou (u starších seriálů skoro vždy je).</>}
       </p>
       <div className="flex flex-wrap gap-2">
         <button disabled={busy} onClick={() => want("download")}
           className="rounded bg-violet-600 px-3 py-1.5 text-white hover:bg-violet-500 disabled:opacity-50">Chci — stahovat díly</button>
+        {torrent && (
+          <button disabled={busy} onClick={() => setPacks(true)}
+            className={`rounded px-3 py-1.5 disabled:opacity-50 ${packs ? "bg-violet-900 text-violet-100" : "bg-violet-800/70 text-white hover:bg-violet-700"}`}>
+            Celý seriál z torrentu
+          </button>
+        )}
         <button disabled={busy} onClick={() => want("notify")}
           className="rounded bg-zinc-800 px-3 py-1.5 text-zinc-200 hover:bg-zinc-700 disabled:opacity-50">Jen najít a ukázat</button>
       </div>
+      {packs && <ShowPacks tmdbId={tmdbId} autoOpen onClose={() => setPacks(false)} onStarted={() => onPackStarted?.()} />}
     </section>
   );
 }
