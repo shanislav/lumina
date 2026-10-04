@@ -90,7 +90,7 @@ async def build(tmdb_id: int) -> dict:
             found = await find_show_packs(await get_effective_settings(), tmdb_id)
             packs = await _verify_packs(found, counts)
             whole = [pack_summary(p, sum(counts[s] for s in (p.get("seasons") or list(counts)) if s in counts),
-                                  profile, lang_mode) for p in packs[:3]]
+                                  profile, lang_mode) for p in packs if (p.get("covers") or 0) > 1][:3]
         except Exception as e:  # noqa: BLE001
             logger.info("Overview %s: show packs failed: %s", tmdb_id, e)
     _state["done"] = 1
