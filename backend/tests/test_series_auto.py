@@ -265,3 +265,15 @@ def test_a_seasons_pack_holds_that_season_only():
     assert only_season("Columbo  3.  série (1973-1974)(CZ/EN)[1080p]", 3)
     assert not only_season("Columbo S01-S10 (1971-2003)(CZ)", 1)         # the whole show: not a season's pack
     assert not only_season("Show S03 1080p", 2)
+
+
+def test_the_space_estimate():
+    from app.modules.series.overview import estimate
+    st = {"key": "A", "episode_size": 1_000_000_000}
+    rows = [{"aired": 10, "owned": 0, "pick": "A", "sets": [st], "packs": [{"fits": True, "size": 20e9}]},
+            {"aired": 10, "owned": 5, "pick": "A", "sets": [st], "packs": [{"fits": False, "size": 30e9}]},
+            {"aired": 4, "owned": 4, "sets": [], "packs": []},
+            {"aired": 6, "owned": 0, "sets": [], "packs": []}]
+    got = estimate(rows, [])
+    assert got == {"chci": 20e9 + 5e9, "way": "seasons", "episodes": 15e9, "unknown": 1}
+    assert estimate(rows, [{"fits": True, "size": 90e9}])["chci"] == 90e9

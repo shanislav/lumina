@@ -16,6 +16,21 @@ from app.db import DB_PATH
 logger = logging.getLogger("app.modules.downloads.monitor")
 
 SEEDING_DIR = ".lumina-import"
+VIDEO_EXTS = ('.mkv', '.mp4', '.avi', '.ts', '.m4v')
+FIRST_EPISODES = 2       # a show pack: these of the wanted episodes get the highest priority (watch while it downloads)
+
+
+def pack_order(files: list[dict], skip: list[int], pack_season: int | None) -> list[int]:
+    """The indexes of a pack's wanted episode files, the first episode first (a file of no episode last)."""
+    from app.modules.library.imports import pack_episodes
+
+    order = []
+    for f in files:
+        if f["index"] in skip or os.path.splitext(f["name"])[1].lower() not in VIDEO_EXTS:
+            continue
+        season, episodes = pack_episodes(f["name"].replace("\\", "/").replace("/", os.sep), pack_season)
+        order.append(((season is None or not episodes, season or 0, (episodes or [0])[0]), f["index"]))
+    return [i for _, i in sorted(order)]
 
 
 def _seeding_copy(path: str, torrent_hash: str) -> str:
@@ -124,12 +139,44 @@ async def _monitor_loop():
                                             (tmdb_id,)).fetchall()}
                                         skip = pack_skip(files, owned, intent.get("pack_season"))
                                         await qbt.set_file_priority(did, skip, 0)
+                                        # the first episodes first, in order — each goes to the library once it is
+                                        # complete (below), so watching can start before the whole pack is in
+                                        first = pack_order(files, skip, intent.get("pack_season"))[:FIRST_EPISODES]
+                                        try:
+                                            if first:
+                                                await qbt.set_file_priority(did, first, 7)
+                                            await qbt.set_sequential(did, True)
+                                        except Exception as e:  # noqa: BLE001 — only the order
+                                            logger.info("Pack %s: the order not set: %s", title, e)
                                         intent.update(files_chosen=True, skipped=len(skip))
                                         cur.execute("UPDATE download_tracker SET intent = ? WHERE id = ?", (json.dumps(intent), did))
                                         conn.commit()
                                         logger.info("Pack %s: %d of %d files not downloaded (owned episodes)", title, len(skip), len(files))
                                 state = t.get("state", "")
                                 progress = t.get("progress", 0)
+                                if intent and intent.get("mode") == "pack" and content_type == "tv" and progress < 1.0 \
+                                        and intent.get("files_chosen") and t.get("save_path"):
+                                    # a pack's episode complete: to the library now (a hard link — it keeps seeding)
+                                    rule = cfg.get("qbittorrent_path_map", "")
+                                    done_before = set(intent.get("imported_paths") or [])
+                                    for f in await qbt.files(did):
+                                        if f.get("priority", 1) == 0 or (f.get("progress") or 0) < 1 \
+                                                or os.path.splitext(f["name"])[1].lower() not in VIDEO_EXTS:
+                                            continue
+                                        full = map_path(os.path.join(t["save_path"], f["name"]), rule, to_lumina=True)
+                                        if not full or full in done_before or not os.path.exists(full) \
+                                                or "sample" in os.path.basename(full).lower():
+                                            continue
+                                        await events.emit("download.completed", {
+                                            "download_id": did, "tmdb_id": tmdb_id, "title": title, "year": year,
+                                            "content_type": content_type, "path": _seeding_copy(full, did),
+                                            "extra_paths": [], "library_action": intent, "partial": True,
+                                        })
+                                        done_before.add(full)
+                                        intent["imported_paths"] = sorted(done_before)
+                                        cur.execute("UPDATE download_tracker SET intent = ? WHERE id = ?", (json.dumps(intent), did))
+                                        conn.commit()
+                                        logger.info("Pack %s: %s in the library before the rest", title, os.path.basename(full))
                                 # Completed states or progress == 1.0
                                 if state in ("uploading", "stalledUP", "pausedUP", "forcedUP", "queuedUP", "checkingUP") or progress >= 1.0:
                                     # content_path = the file or the torrent's folder, as qBittorrent sees it
@@ -153,8 +200,18 @@ async def _monitor_loop():
                                                             if not completed_path or os.path.getsize(fp) > os.path.getsize(completed_path):
                                                                 completed_path = fp
                                                 if content_type == "tv":
-                                                    # a season pack: every episode goes to the library
+                                                    # a season pack: every episode goes to the library — but the ones
+                                                    # imported while it downloaded (above) not again
+                                                    done_before = set((intent or {}).get("imported_paths") or [])
+                                                    videos = [fp for fp in videos if fp not in done_before]
+                                                    if done_before and completed_path in done_before:
+                                                        completed_path = max(videos, key=os.path.getsize) if videos else None
                                                     extra_paths = [_seeding_copy(fp, did) for fp in videos if fp != completed_path]
+                                                    if not completed_path and done_before:
+                                                        cur.execute("UPDATE download_tracker SET processed = 1, status = 'complete', "
+                                                                    "finished_at = ? WHERE id = ?", (_now(), did))
+                                                        conn.commit()
+                                                        logger.info("Pack %s complete: every episode imported on the way", title)
                                             else:
                                                 completed_path = candidate
                                     if completed_path:

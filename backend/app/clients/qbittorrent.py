@@ -128,6 +128,7 @@ class QBittorrentClient:
             "download_speed": t.get("dlspeed", 0),
             "total_size": t.get("total_size", 0),
             "downloaded": t.get("downloaded", 0),
+            "seq_dl": bool(t.get("seq_dl")),
         }
 
     async def files(self, torrent_hash: str) -> list[dict]:
@@ -147,6 +148,14 @@ class QBittorrentClient:
         resp = await self._http.post(f"{self._base_url}/api/v2/torrents/filePrio",
                                      data={"hash": torrent_hash, "id": "|".join(str(i) for i in indexes),
                                            "priority": str(priority)})
+        resp.raise_for_status()
+
+    async def set_sequential(self, torrent_hash: str, on: bool = True) -> None:
+        """Download the pieces in order (a show pack: the first episodes first). qBittorrent only toggles it."""
+        if (await self.get_status(torrent_hash)).get("seq_dl") == on:
+            return
+        resp = await self._http.post(f"{self._base_url}/api/v2/torrents/toggleSequentialDownload",
+                                     data={"hashes": torrent_hash})
         resp.raise_for_status()
 
     async def delete_torrent(self, torrent_hash: str, delete_files: bool = False) -> bool:

@@ -64,6 +64,7 @@ export default function SeriesSources({ tmdbId, canStart }: { tmdbId: number; ca
           {running ? <span className="text-violet-300 animate-pulse">zjišťuji {data.job.done}/{data.job.total || "…"}{data.job.current && ` · ${data.job.current}`}</span>
             : o ? `z ${o.created_at} · profil ${o.profile}` : "odkud a v jaké kvalitě se dá stáhnout — každá série, pár vzorků"}
         </span>
+        {o?.estimate && !running && <SpaceLine e={o.estimate} />}
         {canStart && !running && (
           <button onClick={async () => { await startSeriesOverview(tmdbId); setOpen(true); load(); }}
             className="ml-auto rounded bg-zinc-800 px-2.5 py-1 text-zinc-200 hover:bg-zinc-700">{o ? "Zjistit znovu" : "Zjistit"}</button>
@@ -117,5 +118,16 @@ export default function SeriesSources({ tmdbId, canStart }: { tmdbId: number; ca
       )}
       {open && !o && !running && <p className="px-4 pb-3 text-zinc-500">Zatím nezjištěno.</p>}
     </section>
+  );
+}
+
+/** "≈ 230 GB místa" — what the missing episodes take. */
+export function SpaceLine({ e, big = false }: { e: NonNullable<NonNullable<SeriesOverview["data"]>["estimate"]>; big?: boolean }) {
+  return (
+    <span className={big ? "text-sm text-zinc-300" : "text-zinc-300"}
+      title={`Chci: ${e.way === "whole" ? "balík celého seriálu" : "balíky sérií, kde sedí, zbytek po dílech"}. Po dílech celkem ${gb(e.episodes)}.`
+        + (e.unknown ? ` U ${e.unknown} sérií nic nenalezeno — nezapočítáno.` : "")}>
+      💾 ≈ {gb(e.chci)} místa{e.unknown ? <span className="text-zinc-500"> (+ {e.unknown} sérií neznámo)</span> : ""}
+    </span>
   );
 }

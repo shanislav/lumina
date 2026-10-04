@@ -1678,6 +1678,8 @@ export interface SeriesOverview {
   data: {
     tmdb_id: number; title: string; profile: string; lang_mode: string; torrent: boolean; preferred: string | null;
     whole: OverviewPack[]; created_at: string;
+    // space: "chci" what "Chci" would download (a whole-show pack, else season packs + the rest by episodes)
+    estimate?: { chci: number; way: "whole" | "seasons"; episodes: number; unknown: number };
     seasons: { season: number; aired: number; owned: number; error?: string; sets: OverviewSet[]; packs: OverviewPack[]; pick: string | null }[];
   } | null;
   job: { running: boolean; mine?: boolean; done: number; total: number; current: string };

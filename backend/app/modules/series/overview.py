@@ -75,6 +75,31 @@ def only_season(name: str, season: int) -> bool:
     return held == [season] and not (info.complete and len(info.seasons or []) > 1)
 
 
+def estimate(rows: list[dict], whole: list[dict]) -> dict:
+    """How much space it takes: "chci" — what "Chci" would download (a pack of the whole show that suits, else the
+    season packs that suit and the rest episode by episode, ★ release); "episodes" — everything episode by episode.
+    Only the missing episodes (a pack skips the owned ones — its size is a little more then); "unknown": seasons
+    with nothing found."""
+    by_episodes = plan = unknown = 0
+    for r in rows:
+        missing = max(0, r.get("aired", 0) - r.get("owned", 0))
+        if not missing:
+            continue
+        st = next((x for x in r.get("sets") or [] if x["key"] == r.get("pick")), None) or (r.get("sets") or [None])[0]
+        ep = missing * st["episode_size"] if st else 0
+        by_episodes += ep
+        pack = next((p for p in r.get("packs") or [] if p["fits"]), None)
+        if pack:
+            plan += int(pack["size"] * missing / max(1, r.get("aired", 1)))
+        elif st:
+            plan += ep
+        else:
+            unknown += 1
+    fit = next((p for p in whole if p["fits"]), None)
+    return {"chci": fit["size"] if fit else plan, "way": "whole" if fit else "seasons",
+            "episodes": by_episodes, "unknown": unknown}
+
+
 async def build(tmdb_id: int) -> dict:
     """The overview of one show (minutes for a long one: a season search each)."""
     from app.config import get_effective_settings
@@ -133,7 +158,7 @@ async def build(tmdb_id: int) -> dict:
         # what the automation would take: the preferred release (one uploader) when it is among the season's best
         r["pick"] = next((st["key"] for st in sets if st["key"] == preferred), sets[0]["key"] if sets else None)
     from datetime import datetime
-    data = {"tmdb_id": tmdb_id, "title": detail["show"].get("title") or "", "profile": profile.name,
+    data = {"estimate": estimate(rows, whole), "tmdb_id": tmdb_id, "title": detail["show"].get("title") or "", "profile": profile.name,
             "lang_mode": lang_mode, "torrent": bool(eff.get("torrent")), "preferred": preferred,
             "whole": whole, "seasons": rows, "created_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
     db = await get_db()

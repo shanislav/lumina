@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { gb as packSize } from "@/components/ShowPacks";
+import { SpaceLine } from "@/components/SeriesSources";
 import { useCallback, useEffect, useState } from "react";
 import {
   SeriesAutoFrom, SeriesAutoMode, SeriesAutoOverview, SeriesAutoRecord, SeriesAutoShow, SeriesSettingValues,
-  QualityProfile, SeriesLangMode, WantShowResult, getProfiles, wantShow,
+  QualityProfile, SeriesLangMode, SeriesOverview, WantShowResult, getProfiles, getSeriesOverview, wantShow,
   cancelAutoAll, dismissAutoFound, downloadAutoFound, getSeriesAutomation, getShowAutomation, runSeriesAutomation,
   saveSeriesAutomationBulk,
 } from "@/lib/api";
@@ -202,7 +203,9 @@ export function WantShow({ tmdbId, aired, onDone, langDefault, big = false }: {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<WantShowResult | null>(null);
   const [error, setError] = useState("");
+  const [overview, setOverview] = useState<SeriesOverview["data"]>(null);
   useEffect(() => { getProfiles("tv").then(setProfiles).catch(() => {}); }, []);
+  useEffect(() => { getSeriesOverview(tmdbId).then((o) => setOverview(o.data)).catch(() => {}); }, [tmdbId]);
   const def = profiles.find((p) => p.is_default);
 
   async function want(mode: "download" | "notify") {
@@ -264,6 +267,8 @@ export function WantShow({ tmdbId, aired, onDone, langDefault, big = false }: {
             <button disabled={busy} onClick={() => want("notify")}
               className={`${btn} bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-50`}>Jen najít a ukázat</button>
           </div>
+          {overview?.estimate ? <SpaceLine e={overview.estimate} big />
+            : <p className="text-xs text-zinc-500">Kolik to zabere místa, ukáže „Přehled zdrojů po sériích“ níž (Zjistit).</p>}
           <p className="text-xs text-zinc-500">
             Lumina sama vybere, odkud: když je na torrentech celý seriál ({aired} dílů) v téhle kvalitě a zvuku, stáhne ho
             najednou od jednoho uploadera; jinak díl po dílu z WebShare / FastShare. Nové díly pak hlídá každou noc.
