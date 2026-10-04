@@ -438,3 +438,31 @@ async def tasks() -> list[dict]:
     return [{"id": "series-auto", "title": "Automatika seriálů",
              "detail": f"{s.get('current') or ''} · nalezeno {s.get('found', 0)} · stahuje {s.get('downloading', 0)}".strip(" ·"),
              "done": s.get("done"), "total": s.get("total"), "running": True, "link": "/library?tab=serialy"}]
+
+
+PACK_COVERAGE = 0.8      # a pack must hold this share of the show's seasons to be "the whole show"
+PACK_MIN_SEEDERS = 2
+
+
+def choose_pack(packs: list[dict], seasons: dict[int, int], profile, lang_mode: str, runtime_min: int = 0) -> dict | None:
+    """"Chci" of a show not owned: the pack of the whole show to take, or None (episode by episode then).
+    ``seasons``: {season: its episodes} (TMDB, no specials). A pack must hold most of the seasons
+    (PACK_COVERAGE), have seeders, pass the show's profile judged per episode (its size spread over the episodes it
+    holds) and have the sound the show wants (CZ/SK for both Czech modes — a whole show in English would be
+    replaced episode by episode later). ``packs`` come best first (find_show_packs)."""
+    if not seasons:
+        return None
+    need = max(1, round(len(seasons) * PACK_COVERAGE))
+    for p in packs:
+        held = [s for s in (p.get("seasons") or list(seasons)) if s in seasons]
+        if len(held) < need or (p.get("seeders") or 0) < PACK_MIN_SEEDERS or p.get("film") == "unsure":
+            continue
+        if lang_mode in ("local_or_temp", "local_only") and (p.get("lang_tier") or 0) < 2:
+            continue
+        episodes = sum(seasons[s] for s in held) or 1
+        per_episode = int((p.get("size") or 0) / episodes)
+        row = {**p, "size": per_episode, "pack": False,
+               "video_bitrate": int(per_episode * 8 / (runtime_min * 60)) if runtime_min else p.get("video_bitrate") or 0}
+        if block(row, profile) is None:
+            return p
+    return None

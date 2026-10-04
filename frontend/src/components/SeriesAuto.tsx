@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import ShowPacks from "@/components/ShowPacks";
+import { gb as packSize } from "@/components/ShowPacks";
 import { useCallback, useEffect, useState } from "react";
 import {
-  saveSeriesSettings,
   SeriesAutoFrom, SeriesAutoMode, SeriesAutoOverview, SeriesAutoRecord, SeriesAutoShow, SeriesSettingValues,
+  QualityProfile, SeriesLangMode, WantShowResult, getProfiles, wantShow,
   dismissAutoFound, downloadAutoFound, getSeriesAutomation, getShowAutomation, runSeriesAutomation,
   saveSeriesAutomationBulk,
 } from "@/lib/api";
@@ -166,43 +166,89 @@ export function ShowAutomation({ tmdbId, on, canDownload, canEdit }: { tmdbId: n
   );
 }
 
-/** The show page of a show not in the library: "I want it" = the automation looks for every aired episode. */
-export function WantShow({ tmdbId, aired, onDone, torrent = false, onPackStarted }: {
+const WANT_LANG: [SeriesLangMode, string][] = [
+  ["local_or_temp", "CZ/SK, jinak zatím EN"], ["local_only", "jen CZ/SK"], ["original", "původní (EN…)"],
+];
+
+/** The show page of a show not owned: "Chci" — the quality (profile) and the sound, nothing else; Lumina decides
+ *  where from (backend series/router.want_show): a fitting pack of the whole show from a torrent, or episode by
+ *  episode. The manual search (packs, seasons) is further down the page. ``big``: the phone. */
+export function WantShow({ tmdbId, aired, onDone, langDefault, big = false }: {
   tmdbId: number; aired: number; onDone: () => void;
-  torrent?: boolean;                     // torrents allowed for the show: "Celý seriál z torrentu" too
-  onPackStarted?: () => void;
+  langDefault?: SeriesLangMode;
+  big?: boolean;
 }) {
+  const [profiles, setProfiles] = useState<QualityProfile[]>([]);
+  const [profile, setProfile] = useState<number | "">("");
+  const [lang, setLang] = useState<SeriesLangMode | "">("");
   const [busy, setBusy] = useState(false);
-  const [packs, setPacks] = useState(false);
-  async function want(mode: SeriesAutoMode) {
+  const [result, setResult] = useState<WantShowResult | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => { getProfiles("tv").then(setProfiles).catch(() => {}); }, []);
+  const def = profiles.find((p) => p.is_default);
+
+  async function want(mode: "download" | "notify") {
     setBusy(true);
+    setError("");
     try {
-      await saveSeriesSettings(tmdbId, { auto_new: mode, auto_from: "all" });
-      await runSeriesAutomation([tmdbId]);          // checked right away, as "+ Chci" of a film
-      onDone();
+      setResult(await wantShow(tmdbId, { profile_id: profile === "" ? null : profile, lang_mode: lang || null, mode }));
+      setTimeout(onDone, 1500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Nepodařilo se");
     } finally { setBusy(false); }
   }
+
+  const sel = `rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-200 ${big ? "min-h-12 w-full px-3 text-base" : "px-2 py-1 text-sm"}`;
+  const btn = big ? "min-h-12 w-full rounded-xl px-4 text-base font-medium" : "rounded px-4 py-1.5 font-medium";
   return (
-    <section className="rounded-xl border border-violet-800/50 bg-violet-950/20 px-4 py-3 space-y-2 text-sm">
-      <p className="text-zinc-200">Tenhle seriál zatím nemáš.</p>
-      <p className="text-xs text-zinc-400">
-        Chci = automatika najde všechny vydané díly ({aired}) podle profilu a jazyka seriálu, hned teď a pak každou noc
-        i ty nové — po jednom dílu z WebShare / FastShare.
-        {torrent && <> Celý seriál z torrentu = jeden balík se všemi sériemi najednou (u starších seriálů skoro vždy je).</>}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <button disabled={busy} onClick={() => want("download")}
-          className="rounded bg-violet-600 px-3 py-1.5 text-white hover:bg-violet-500 disabled:opacity-50">Chci — stahovat díly</button>
-        {torrent && (
-          <button disabled={busy} onClick={() => setPacks(true)}
-            className={`rounded px-3 py-1.5 disabled:opacity-50 ${packs ? "bg-violet-900 text-violet-100" : "bg-violet-800/70 text-white hover:bg-violet-700"}`}>
-            Celý seriál z torrentu
-          </button>
-        )}
-        <button disabled={busy} onClick={() => want("notify")}
-          className="rounded bg-zinc-800 px-3 py-1.5 text-zinc-200 hover:bg-zinc-700 disabled:opacity-50">Jen najít a ukázat</button>
-      </div>
-      {packs && <ShowPacks tmdbId={tmdbId} autoOpen onClose={() => setPacks(false)} onStarted={() => onPackStarted?.()} />}
+    <section className={`space-y-3 border border-violet-800/50 bg-violet-950/20 ${big ? "rounded-2xl p-4" : "rounded-xl px-4 py-3 text-sm"}`}>
+      <p className={big ? "text-base text-zinc-200" : "text-zinc-200"}>Tenhle seriál zatím nemáš.</p>
+      {result ? (
+        result.way === "pack" && result.pack ? (
+          <p className="text-emerald-300">
+            ✓ Stahuje se celý seriál z torrentu: <span className="break-all text-zinc-200">{result.pack.name}</span>
+            {" "}({packSize(result.pack.size)}{result.pack.is_dubbed ? ", dabing" : ""}). Díly se zařadí do sérií, nové pak hlídá automatika.
+          </p>
+        ) : (
+          <p className="text-emerald-300">
+            ✓ Automatika hledá díly po jednom (WebShare / FastShare{result.why ? "" : ", torrenty"}) — hned teď a pak každou noc.
+            {result.why && <span className="block text-xs text-zinc-400">Celý seriál najednou ne: {result.why}.</span>}
+          </p>
+        )
+      ) : (
+        <>
+          <div className={big ? "space-y-2" : "flex flex-wrap items-center gap-x-4 gap-y-2"}>
+            <label className={big ? "block space-y-1 text-sm text-zinc-400" : "flex items-center gap-2 text-zinc-400"}>
+              <span>Kvalita</span>
+              <select value={profile} onChange={(e) => setProfile(e.target.value === "" ? "" : Number(e.target.value))} className={sel}>
+                <option value="">výchozí ({def?.name ?? "—"})</option>
+                {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </label>
+            <label className={big ? "block space-y-1 text-sm text-zinc-400" : "flex items-center gap-2 text-zinc-400"}>
+              <span>Zvuk</span>
+              <select value={lang} onChange={(e) => setLang(e.target.value as SeriesLangMode | "")} className={sel}>
+                <option value="">výchozí ({WANT_LANG.find(([k]) => k === langDefault)?.[1] ?? "—"})</option>
+                {WANT_LANG.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className={big ? "space-y-2" : "flex flex-wrap items-center gap-2"}>
+            <button disabled={busy} onClick={() => want("download")}
+              className={`${btn} bg-violet-600 text-white hover:bg-violet-500 active:bg-violet-700 disabled:opacity-50`}>
+              {busy ? "Hledám, odkud nejlépe…" : "Chci"}
+            </button>
+            <button disabled={busy} onClick={() => want("notify")}
+              className={`${btn} bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-50`}>Jen najít a ukázat</button>
+          </div>
+          <p className="text-xs text-zinc-500">
+            Lumina sama vybere, odkud: když je na torrentech celý seriál ({aired} dílů) v téhle kvalitě a zvuku, stáhne ho
+            najednou od jednoho uploadera; jinak díl po dílu z WebShare / FastShare. Nové díly pak hlídá každou noc.
+            Ruční hledání je níž.
+          </p>
+          {error && <p className="text-red-400">{error}</p>}
+        </>
+      )}
     </section>
   );
 }

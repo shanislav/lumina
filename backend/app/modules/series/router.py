@@ -212,6 +212,49 @@ async def pack_download(tmdb_id: int, body: PackDownload) -> dict:
     return {"started": bool(payload.get("started"))}
 
 
+class WantBody(BaseModel):
+    profile_id: int | None = None    # None: the default (TV) profile
+    lang_mode: str | None = None     # None: the default
+    mode: str = "download"           # download | notify ("Jen najít a ukázat": episode by episode, nothing taken)
+
+
+@router.post("/{tmdb_id}/want", dependencies=[Depends(require("library.edit"))])
+async def want_show(tmdb_id: int, body: WantBody) -> dict:
+    """"Chci" of a show not owned — fully automatic: the quality profile and the sound chosen, Lumina decides
+    where from. A pack of the whole show on a torrent (one uploader, everything at once) when a fitting one exists —
+    then the automation keeps the new episodes; else the automation episode by episode (WebShare / FastShare)."""
+    from app.core.offers.season import find_show_packs
+    from app.modules.series import auto
+
+    mode = body.mode if body.mode in ("download", "notify") else "download"
+    show, episodes = await show_with_seasons(tmdb_id)
+    meta = {"title": show.get("title") or "", "year": show.get("year") or "", "poster_url": show.get("poster_url")}
+    await store.save_settings(tmdb_id, {"profile_id": body.profile_id, "lang_mode": body.lang_mode}, meta)
+    eff = (await store.get_settings(tmdb_id))["effective"]
+    pack, why = None, ""
+    if mode == "download" and eff.get("torrent"):
+        try:
+            found = await find_show_packs(await get_effective_settings(), tmdb_id)
+            seasons = {n: len(episodes.get(n) or []) for n in (s["season_number"] for s in show.get("seasons", [])) if n}
+            profile = pick_profile(await load_profiles(), eff.get("profile_id"), "tv")
+            pack = auto.choose_pack(found.get("packs") or [], seasons, profile, eff.get("lang_mode") or "",
+                                    show.get("episode_runtime") or 0)
+            if not pack:
+                why = "na torrentech není balík celého seriálu, který by splnil profil a jazyk"
+        except Exception as e:  # noqa: BLE001 — the torrents fail: episode by episode still works
+            logger.warning("Want %s: the packs failed: %s", tmdb_id, e)
+            why = "torrenty teď nejdou prohledat"
+    if pack:
+        await pack_download(tmdb_id, PackDownload(row=pack))
+        # the new episodes after the pack: from the last owned one (nothing owned until it is in = nothing yet)
+        await store.save_settings(tmdb_id, {"auto_new": "download", "auto_from": "next"}, meta)
+        return {"way": "pack", "pack": {k: pack.get(k) for k in ("name", "size", "seeders", "seasons", "covers",
+                                                                     "resolution", "lang_tier", "is_dubbed")}}
+    await store.save_settings(tmdb_id, {"auto_new": mode, "auto_from": "all"}, meta)
+    job = auto.enqueue([tmdb_id])
+    return {"way": "episodes", "why": why, "job": job}
+
+
 class SeasonDownload(BaseModel):
     items: list[dict]          # [{"episode": 3, "row": <offer row>}] — a pack: any episode of it
     replace_owned: bool = True # owned episodes (EN waiting for the dub) are replaced by the new files

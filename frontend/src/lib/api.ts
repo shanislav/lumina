@@ -1665,6 +1665,17 @@ async function seriesJson<T>(path: string, method = "GET", body?: unknown): Prom
   return res.json();
 }
 
+export interface WantShowResult {
+  way: "pack" | "episodes";
+  pack?: { name: string; size: number; seeders: number | null; seasons: number[]; covers: number; resolution: string;
+           lang_tier: number; is_dubbed: boolean };
+  why?: string;              // episode by episode: why no pack
+}
+
+/** "Chci" of a show not owned: Lumina decides — a pack of the whole show from a torrent, or episode by episode. */
+export const wantShow = (tmdbId: number, body: { profile_id: number | null; lang_mode: SeriesLangMode | null; mode: "download" | "notify" }) =>
+  seriesJson<WantShowResult>(`/${tmdbId}/want`, "POST", body);
+
 export const getSeriesAutomation = () => seriesJson<SeriesAutoOverview>("/automation/overview");
 export const saveSeriesAutomationBulk = (tmdbIds: number[], values: Partial<SeriesSettingValues>) =>
   seriesJson<{ saved: number }>("/automation/bulk", "PUT", { tmdb_ids: tmdbIds, values });

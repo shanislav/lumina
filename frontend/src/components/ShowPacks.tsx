@@ -5,7 +5,7 @@ import { ShowPack, ShowPacks as Packs, downloadShowPack, getShowPacks } from "@/
 import { useAuth } from "@/components/AuthGate";
 
 // Torrents of the whole show ("komplet", "1-26. série", "S01-S10") — beside the search by seasons.
-const gb = (b: number) => (b >= 1e12 ? `${(b / 1e12).toFixed(2)} TB` : `${(b / 1e9).toFixed(1)} GB`);
+export const gb = (b: number) => (b >= 1e12 ? `${(b / 1e12).toFixed(2)} TB` : `${(b / 1e9).toFixed(1)} GB`);
 
 function span(seasons: number[]): string {
   if (!seasons.length) return "";
@@ -13,7 +13,7 @@ function span(seasons: number[]): string {
   return a === b ? `S${String(a).padStart(2, "0")}` : `S${String(a).padStart(2, "0")}–S${String(b).padStart(2, "0")}`;
 }
 
-function coverage(p: ShowPack, all: number[]): { label: string; cls: string } {
+export function coverage(p: ShowPack, all: number[]): { label: string; cls: string } {
   if (!p.seasons.length) return { label: "celý seriál", cls: "text-emerald-300" };
   const whole = all.length > 0 && p.covers >= all.length;
   return {

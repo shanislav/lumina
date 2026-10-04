@@ -163,3 +163,21 @@ async def test_quality_overview_of_a_shows_episodes(db, monkeypatch):
     q = (await router._quality(episodes, {}, {"profile_id": None}, Prefs(local_langs=("cs",))))[5]
     assert q["known"] == 2 and q["res"] == {"SD": 1, "1080p": 1} and q["below"] == 1
     assert q["size"] == 1_100_000_100 and q["min_score"] <= q["avg_score"]
+
+
+def test_want_takes_a_pack_of_the_whole_show_only_when_it_fits():
+    seasons = {1: 10, 2: 10, 3: 10, 4: 10, 5: 10}
+    hd = Profile(id=7, name="HD", kind="tv", min_resolution="720p", max_size_gb=3)
+
+    def pack(name, held, size_gb, tier=2, seeders=20, res="1080p"):
+        return {"ident": name, "name": name, "seasons": held, "size": size_gb * 1e9, "seeders": seeders, "lang_tier": tier,
+                "resolution": res, "codec": "H.264", "quality_score": 60, "film": "yes"}
+    part = pack("S01-S02", [1, 2], 20)
+    english = pack("Complete EN", [], 60, tier=0)
+    huge = pack("Komplet REMUX", [], 600)                       # 12 GB an episode: over the profile
+    good = pack("Komplet CZ", [1, 2, 3, 4], 40)                 # 4 of 5 seasons, 1 GB an episode
+    dead = pack("Komplet CZ dead", [], 40, seeders=0)
+    assert auto.choose_pack([part, english, huge, dead, good], seasons, hd, "local_or_temp", 45) is good
+    assert auto.choose_pack([english], seasons, hd, "original", 45) is english          # English is fine then
+    assert auto.choose_pack([part, english, huge], seasons, hd, "local_only", 45) is None
+    assert auto.choose_pack([good], {}, hd, "local_or_temp") is None

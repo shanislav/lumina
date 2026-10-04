@@ -1,13 +1,12 @@
 "use client";
 
-import ShowPacks from "@/components/ShowPacks";
+import { WantShow } from "@/components/SeriesAuto";
 import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   SeasonOffers, SeriesDetail, SeriesEpisode, SeriesSeason, downloadSeason, getSeasonOffers, getSeries,
-  runSeriesAutomation, saveSeriesSettings,
 } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 import { langName, size } from "@/lib/mobile";
@@ -114,7 +113,6 @@ function Series() {
   const [error, setError] = useState("");
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const [more, setMore] = useState(false);
-  const [packs, setPacks] = useState(false);
   const load = () => getSeries(tmdb).then((d) => {
     setData(d);
     // open the season where something is missing, the newest one first
@@ -126,11 +124,6 @@ function Series() {
   if (error) return <main className="p-4 text-red-400">{error}</main>;
   if (!data) return <main className="px-4"><Spinner text="Načítám seriál…" /></main>;
   const { show, totals } = data;
-  const want = async (mode: "download" | "notify") => {
-    await saveSeriesSettings(tmdb, { auto_new: mode, auto_from: "all" });
-    await runSeriesAutomation([tmdb]);
-    load();
-  };
   return (
     <main className="space-y-4 px-4 py-4">
       <button onClick={() => router.back()} className="py-1 text-base text-violet-300">‹ Zpět</button>
@@ -152,16 +145,7 @@ function Series() {
         <button onClick={() => setMore(!more)} className={`text-left text-sm text-zinc-400 ${more ? "" : "line-clamp-2"}`}>{show.overview}</button>
       )}
       {!data.in_library && can("library.edit") && data.settings.effective.auto_new === "off" && (
-        <div className="space-y-2 rounded-2xl border border-violet-800/50 bg-violet-950/20 p-4">
-          <p className="text-zinc-200">Tenhle seriál zatím nemáš.</p>
-          <BigButton onClick={() => want("download")}>Chci — stahovat všechny díly</BigButton>
-          {data.settings.effective.torrent && can("search") && (
-            <BigButton kind="secondary" onClick={() => setPacks(true)}>Celý seriál z torrentu</BigButton>
-          )}
-          <BigButton kind="secondary" onClick={() => want("notify")}>Jen najít a ukázat</BigButton>
-          <p className="text-sm text-zinc-500">Po dílech = automatika (WebShare / FastShare, i nové díly). Torrent = jeden balík se všemi sériemi.</p>
-          {packs && <ShowPacks tmdbId={tmdb} big autoOpen onClose={() => setPacks(false)} onStarted={() => {}} />}
-        </div>
+        <WantShow big tmdbId={tmdb} aired={totals.missing} onDone={load} langDefault={data.settings.defaults.lang_mode} />
       )}
       <div className="space-y-2">
         {data.seasons.map((s) => (
