@@ -303,6 +303,10 @@ async def automation_overview() -> dict:
 
 
 WEAK_SCORE = 50        # as the library's films: an episode below it is a candidate for a better version
+# an episode's file judged once (MediaInfo → resolution, codec, score): ~0.1 ms each, 5 700 episodes = 0.5 s for
+# every overview — the same file with the same MediaInfo and score weights gives the same row
+_ROWS: dict[tuple, dict] = {}
+_ROWS_MAX = 50_000
 
 
 async def _quality(episodes, own: dict, defaults: dict, prefs) -> dict[int, dict]:
@@ -312,15 +316,20 @@ async def _quality(episodes, own: dict, defaults: dict, prefs) -> dict[int, dict
 
     from app.core.profiles import block, reached_cutoff, row_from_media
     profiles = await load_profiles()
+    weights = repr(prefs)
     out: dict[int, dict] = {}
     for tmdb_id, _lang, filename, size, media in episodes:
         q = out.setdefault(tmdb_id, {"size": 0, "known": 0, "res": {}, "codec": {}, "hdr": 0, "weak": 0,
                                      "below": 0, "min_score": None, "score_sum": 0})
         q["size"] += size or 0
-        m = json.loads(media or "{}")
-        if not m:
+        if not media or media == "{}":
             continue
-        row = row_from_media(m, filename or "", size or 0, prefs)
+        key = (filename, size, media, weights)
+        row = _ROWS.get(key)
+        if row is None:
+            if len(_ROWS) > _ROWS_MAX:
+                _ROWS.clear()
+            row = _ROWS[key] = row_from_media(json.loads(media), filename or "", size or 0, prefs)
         q["known"] += 1
         res = row.get("resolution") or "SD"
         res = res if res in ("2160p", "1080p", "720p") else "SD"

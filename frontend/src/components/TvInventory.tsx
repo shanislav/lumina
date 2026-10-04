@@ -29,16 +29,22 @@ export default function TvInventory() {
   const allFiles = Object.values(data.total).reduce((a, b) => a + b, 0);
   const list = onlyProblems ? bad : data.folders;
 
+  // a button next to "Opravit názvy seriálů"; the list opens over the page
   return (
-    <section className="rounded-xl border border-zinc-800 bg-zinc-900/50">
-      <button onClick={() => setOpen(!open)} className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm">
-        <span className="text-zinc-200">Kontrola knihovny seriálů</span>
-        <span className="text-xs text-zinc-500">
-          v pořádku {okFiles} z {allFiles} souborů · {bad.length ? <span className="text-amber-300">k řešení {bad.length} složek</span> : "vše sedí"} {open ? "▲" : "▼"}
-        </span>
+    <>
+      <button onClick={() => setOpen(true)}
+        title={`Co poslední sken našel ve složkách seriálů — v pořádku ${okFiles} z ${allFiles} souborů`}
+        className="px-3 py-2 rounded-lg border border-zinc-700 hover:border-zinc-500 text-zinc-300 text-sm transition-colors">
+        Kontrola knihovny{bad.length > 0 && <span className="ml-1.5 rounded-full bg-amber-900/70 px-1.5 text-xs text-amber-200">{bad.length}</span>}
       </button>
       {open && (
-        <div className="space-y-2 px-4 pb-4 text-xs">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
+        <div className="my-8 w-full max-w-5xl space-y-2 rounded-xl border border-zinc-700 bg-zinc-900 p-5 text-xs" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-lg font-semibold text-zinc-100">Kontrola knihovny seriálů</h3>
+            <span className="text-zinc-500">v pořádku {okFiles} z {allFiles} souborů · {bad.length ? <span className="text-amber-300">k řešení {bad.length} složek</span> : "vše sedí"}</span>
+            <button onClick={() => setOpen(false)} className="text-xl leading-none text-zinc-500 hover:text-zinc-200" aria-label="Zavřít">✕</button>
+          </div>
           <p className="text-zinc-500">
             Co poslední sken našel ve složkách seriálů. Seriál složky určuje tvoje volba, jinak Plex (jeho spárování často
             někdo opravil ručně), jinak Lumina podle názvů. Než se knihovna přejmenuje, vyřeš složky, kde se Lumina a Plex neshodnou.
@@ -59,8 +65,9 @@ export default function TvInventory() {
             ))}
           </div>
         </div>
+        </div>
       )}
-    </section>
+    </>
   );
 }
 

@@ -506,7 +506,7 @@ export default function LibraryPage() {
           <h1 className="text-2xl font-bold text-zinc-100">Knihovna</h1>
         </div>
         {canEdit && <div className="flex flex-wrap items-center gap-2">
-          {tab === "serialy" ? <TvRename onChanged={loadData} /> : (
+          {tab === "serialy" ? <><TvRename onChanged={loadData} /><TvInventory /></> : (
           <button
             onClick={() => openBulk()}
             disabled={scanning}
@@ -582,7 +582,6 @@ export default function LibraryPage() {
       {tab === "serialy" && !selectedShow && (
         <SeriesQuality canEdit={canEdit} query={librarySearch} onView={(ids, byId) => setShowView({ ids, byId })} />
       )}
-      {tab === "serialy" && <TvInventory />}
 
       {loading ? (
         <div className="text-zinc-500 animate-pulse text-center py-12">Nacitam...</div>
