@@ -33,6 +33,22 @@ def pack_order(files: list[dict], skip: list[int], pack_season: int | None) -> l
     return [i for _, i in sorted(order)]
 
 
+def pack_priorities(files: list[dict], skip: list[int], pack_season: int | None) -> dict[int, list[int]]:
+    """qBittorrent's priorities of a pack's files: the first wanted episodes the highest (7), the rest of their
+    season high (6); the other seasons stay normal (1)."""
+    from app.modules.library.imports import pack_episodes
+
+    order = pack_order(files, skip, pack_season)
+    if not order:
+        return {}
+    names = {f["index"]: f["name"] for f in files}
+    season_of = {i: pack_episodes(names[i].replace("\\", "/").replace("/", os.sep), pack_season)[0] for i in order}
+    first = season_of[order[0]]
+    top = order[:FIRST_EPISODES]
+    high = [i for i in order if first is not None and season_of[i] == first and i not in top]
+    return {7: top, 6: high} if high else {7: top}
+
+
 def _seeding_copy(path: str, torrent_hash: str) -> str:
     """A hard link of a finished torrent's video next to it (a copy across file systems) — the import
     takes that one, the torrent's own file stays for seeding (private trackers want a ratio)."""
@@ -142,10 +158,9 @@ async def _monitor_loop():
                                             await qbt.set_file_priority(did, skip, 0)
                                         # the first episodes first, in order — each goes to the library once it is
                                         # complete (below), so watching can start before the whole pack is in
-                                        first = pack_order(files, skip, intent.get("pack_season"))[:FIRST_EPISODES]
                                         try:
-                                            if first:
-                                                await qbt.set_file_priority(did, first, 7)
+                                            for priority, indexes in pack_priorities(files, skip, intent.get("pack_season")).items():
+                                                await qbt.set_file_priority(did, indexes, priority)
                                             await qbt.set_sequential(did, True)
                                         except Exception as e:  # noqa: BLE001 — only the order
                                             logger.info("Pack %s: the order not set: %s", title, e)
