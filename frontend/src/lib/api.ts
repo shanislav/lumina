@@ -1628,6 +1628,15 @@ export interface SeriesAutoShow {
   own: SeriesSettingValues; effective: SeriesEffectiveSettings;
   owned: number; foreign: number;           // owned episodes / of them without CZ/SK sound
   checked: SeriesAutoCheck | null; found: SeriesAutoRecord[];
+  quality: SeriesQualityStats | null;      // the owned episodes by their MediaInfo (null: none owned)
+}
+
+export interface SeriesQualityStats {
+  size: number; known: number;             // all owned episodes' size / how many have MediaInfo
+  res: Record<string, number>;             // "2160p" | "1080p" | "720p" | "SD" → episodes
+  codec: Record<string, number>;
+  hdr: number; weak: number; below: number;  // with HDR / score under 50 / not meeting the show's profile
+  min_score: number | null; avg_score: number | null;
 }
 
 export interface SeriesAutoOverview {

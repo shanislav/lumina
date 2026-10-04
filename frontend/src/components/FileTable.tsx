@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { confirmCinema } from "@/lib/cinema";
 import {
   ScoredFile,
   MovieContext,
@@ -273,6 +274,7 @@ export default function FileTable({
   }, [pick, pickRow, pickDownloading]);
 
   function handleDownload(file: ScoredFile) {
+    if (!confirmCinema(file)) return;
     // Movie already in the library → ask: another version, or replace one?
     if (owned.length > 0 && (mediaType || "movie") === "movie") {
       setChoosing(file);

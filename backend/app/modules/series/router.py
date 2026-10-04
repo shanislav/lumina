@@ -262,17 +262,20 @@ async def automation_overview() -> dict:
             shows = {r["tmdb_id"]: dict(r) for r in await (await db.execute(
                 "SELECT tmdb_id, title, year, poster_url FROM library_shows")).fetchall()}
             counts: dict[int, dict] = {}
-            for r in await (await db.execute(
-                    "SELECT show_tmdb_id, language FROM library_episodes WHERE has_file = 1 AND season > 0")).fetchall():
+            episodes = await (await db.execute(
+                "SELECT e.show_tmdb_id, e.language, e.filename, e.file_size, m.media FROM library_episodes e "
+                "LEFT JOIN tv_media m ON m.file_path = e.file_path WHERE e.has_file = 1 AND e.season > 0")).fetchall()
+            for r in episodes:
                 c = counts.setdefault(r[0], {"owned": 0, "foreign": 0})
                 c["owned"] += 1
                 langs = store.languages_of(r[1])
                 if langs and not local & set(langs):
                     c["foreign"] += 1
         except Exception:  # noqa: BLE001 — the library module off
-            shows, counts = {}, {}
+            shows, counts, episodes = {}, {}, []
     finally:
         await db.close()
+    quality = await _quality(episodes, own, defaults, prefs_from_settings(cfg))
     checked = await auto.checks()
     found: dict[int, list[dict]] = {}
     for r in await auto.records():
@@ -287,7 +290,7 @@ async def automation_overview() -> dict:
         out.append({"tmdb_id": tmdb_id, "title": base.get("title") or "", "year": base.get("year") or "",
                     "poster_url": base.get("poster_url"), "in_library": tmdb_id in shows,
                     "own": mine, "effective": {k: mine[k] if mine[k] is not None else defaults[k] for k in store.FIELDS},
-                    **(counts.get(tmdb_id) or {"owned": 0, "foreign": 0}),
+                    **(counts.get(tmdb_id) or {"owned": 0, "foreign": 0}), "quality": quality.get(tmdb_id),
                     "checked": checked.get(tmdb_id), "found": found.get(tmdb_id, [])})
     out.sort(key=lambda s: s["title"].lower())
     scheduler = await get_automation("scheduler")
@@ -297,6 +300,47 @@ async def automation_overview() -> dict:
                           "series": str(sched_cfg.get("series", "true")).lower() == "true",
                           "time": sched_cfg.get("time") or "03:00",
                           "last_run": (await get_all_settings()).get("scheduler_last_run", "")}}
+
+
+WEAK_SCORE = 50        # as the library's films: an episode below it is a candidate for a better version
+
+
+async def _quality(episodes, own: dict, defaults: dict, prefs) -> dict[int, dict]:
+    """Each show's owned episodes by their MediaInfo (the library scan): resolutions, codecs, HDR, the size, the
+    scores — and how many do not meet the show's profile (what "lepší kvalita" of the automation would replace)."""
+    import json
+
+    from app.core.profiles import block, reached_cutoff, row_from_media
+    profiles = await load_profiles()
+    out: dict[int, dict] = {}
+    for tmdb_id, _lang, filename, size, media in episodes:
+        q = out.setdefault(tmdb_id, {"size": 0, "known": 0, "res": {}, "codec": {}, "hdr": 0, "weak": 0,
+                                     "below": 0, "min_score": None, "score_sum": 0})
+        q["size"] += size or 0
+        m = json.loads(media or "{}")
+        if not m:
+            continue
+        row = row_from_media(m, filename or "", size or 0, prefs)
+        q["known"] += 1
+        res = row.get("resolution") or "SD"
+        res = res if res in ("2160p", "1080p", "720p") else "SD"
+        q["res"][res] = q["res"].get(res, 0) + 1
+        codec = row.get("codec") or "?"
+        q["codec"][codec] = q["codec"].get(codec, 0) + 1
+        if row.get("hdr"):
+            q["hdr"] += 1
+        s = row.get("quality_score") or 0
+        q["score_sum"] += s
+        q["min_score"] = s if q["min_score"] is None else min(q["min_score"], s)
+        if s < WEAK_SCORE:
+            q["weak"] += 1
+        pid = (own.get(tmdb_id) or {}).get("profile_id")
+        profile = pick_profile(profiles, pid if pid is not None else defaults.get("profile_id"), "tv")
+        if block(row, profile) is not None or (profile.cutoff and not reached_cutoff(row, profile)):
+            q["below"] += 1
+    for q in out.values():
+        q["avg_score"] = round(q.pop("score_sum") / q["known"]) if q["known"] else None
+    return out
 
 
 class BulkSettings(BaseModel):

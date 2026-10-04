@@ -147,3 +147,19 @@ async def test_below_profile_reads_the_files_media(db):
 def test_upgrade_of_an_episode_of_unknown_sound_wants_czech():
     eff = {"auto_new": "off", "auto_from": "next", "auto_dub": "off", "auto_upgrade": "notify", "lang_mode": "local_or_temp"}
     assert auto.wanted_episodes([season(1, ["unknown"])], eff, {(1, 1): {"language": "?"}}) == [(1, 1, "upgrade")]
+
+
+async def test_quality_overview_of_a_shows_episodes(db, monkeypatch):
+    import sys
+    from app.core.quality import Prefs
+    router = sys.modules["app.modules.series.router"]
+
+    async def profiles():
+        return [Profile(id=7, name="TV", kind="tv", is_default=True, min_resolution="720p")]
+    monkeypatch.setattr(router, "load_profiles", profiles)
+    sd = '{"width": 640, "height": 480, "video_codec": "XviD", "duration_s": 1300, "audio": []}'
+    hd = '{"width": 1920, "height": 1080, "video_codec": "HEVC", "duration_s": 1300, "audio": []}'
+    episodes = [(5, "cs", "e1.avi", 200_000_000, sd), (5, "cs", "e2.mkv", 900_000_000, hd), (5, "", "e3.mkv", 100, None)]
+    q = (await router._quality(episodes, {}, {"profile_id": None}, Prefs(local_langs=("cs",))))[5]
+    assert q["known"] == 2 and q["res"] == {"SD": 1, "1080p": 1} and q["below"] == 1
+    assert q["size"] == 1_100_000_100 and q["min_score"] <= q["avg_score"]

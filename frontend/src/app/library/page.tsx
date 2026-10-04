@@ -6,13 +6,13 @@ import BulkFilmSettings from "@/components/BulkFilmSettings";
 import SubtitlesPanel from "@/components/SubtitlesPanel";
 import { useRouter } from "next/navigation";
 import TvInventory from "@/components/TvInventory";
-import SeriesAutomation from "@/components/SeriesAuto";
 import TvRename from "@/components/TvRename";
 import Image from "next/image";
 import Link from "next/link";
 import {
   LibraryMovie,
   LibraryShow,
+  SeriesAutoShow,
   LibraryShowDetail,
   TMDBSearchResult,
   ScanStatus,
@@ -47,6 +47,7 @@ import {
   UpgradeJob,
   formatSize,
 } from "@/lib/api";
+import SeriesQuality from "@/components/SeriesQuality";
 import { useAuth } from "@/components/AuthGate";
 import RenameChecklist from "@/components/RenameChecklist";
 import { ON_BETTER } from "@/components/WatchedList";
@@ -215,6 +216,8 @@ export default function LibraryPage() {
   const [bulkSelected, setBulkSelected] = useState<Set<number>>(new Set());
   const [organizeResult, setOrganizeResult] = useState<OrganizeResult | null>(null);
   const [selectedShow, setSelectedShow] = useState<LibraryShowDetail | null>(null);
+  // Přehled kvality seriálů: the filtered / sorted shows (null = all by name) and each show's quality
+  const [showView, setShowView] = useState<{ ids: number[] | null; byId: Record<number, SeriesAutoShow> }>({ ids: null, byId: {} });
   const [showLoading, setShowLoading] = useState(false);
   const [fixingMovie, setFixingMovie] = useState<LibraryMovie | null>(null);
   // "Smazat tuto verzi": first click asks, second deletes (from disk, no trash)
@@ -576,7 +579,9 @@ export default function LibraryPage() {
         placeholder={tab === "filmy" ? "Hledat v knihovně — název, rok, soubor…" : "Hledat seriál…"}
         wrapperClassName="w-full max-w-md"
         className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-600" />
-      {tab === "serialy" && <SeriesAutomation canEdit={canEdit} canDownload={can("download")} query={librarySearch} />}
+      {tab === "serialy" && !selectedShow && (
+        <SeriesQuality canEdit={canEdit} query={librarySearch} onView={(ids, byId) => setShowView({ ids, byId })} />
+      )}
       {tab === "serialy" && <TvInventory />}
 
       {loading ? (
@@ -858,8 +863,11 @@ export default function LibraryPage() {
           </div>
         ) : (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-            {shows.filter((show) => !librarySearch.trim() || matches(librarySearch, show.title, String(show.year ?? "")))
-              .sort((a, b) => a.title.localeCompare(b.title, "cs", { sensitivity: "base", numeric: true })).map((show) => {
+            {(showView.ids
+              ? showView.ids.map((id) => shows.find((s) => s.tmdb_id === id)).filter((s): s is LibraryShow => !!s)
+              : shows.filter((show) => !librarySearch.trim() || matches(librarySearch, show.title, String(show.year ?? "")))
+                .sort((a, b) => a.title.localeCompare(b.title, "cs", { sensitivity: "base", numeric: true }))).map((show) => {
+              const q = showView.byId[show.tmdb_id]?.quality;
               const progress = show.total_episodes > 0
                 ? Math.round((show.owned_episodes / show.total_episodes) * 100)
                 : 0;
@@ -889,6 +897,7 @@ export default function LibraryPage() {
                     <div className="flex items-center gap-2 text-xs text-zinc-500 mt-0.5">
                       {show.year && <span>{show.year}</span>}
                       <span>{show.owned_episodes}/{show.total_episodes}</span>
+                      {q?.below ? <span className="text-orange-300" title="Dílů pod profilem kvality">⚠ {q.below}</span> : null}
                     </div>
                     <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden mt-1.5">
                       <div

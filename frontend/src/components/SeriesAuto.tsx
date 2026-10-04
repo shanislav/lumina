@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   saveSeriesSettings,
   SeriesAutoFrom, SeriesAutoMode, SeriesAutoOverview, SeriesAutoRecord, SeriesAutoShow, SeriesSettingValues,
@@ -219,15 +219,14 @@ export function WantedShows() {
   );
 }
 
-type Filter = "all" | "on" | "found" | "foreign";
+const isOn = (s: SeriesAutoShow) =>
+  s.effective.auto_new !== "off" || s.effective.auto_dub !== "off" || s.effective.auto_upgrade !== "off";
 
-/** Library → Seriály: every show's automation in one list, bulk settings, what waits for a click. */
-export default function SeriesAutomation({ canEdit, canDownload, query = "" }: { canEdit: boolean; canDownload: boolean; query?: string }) {
-  const [open, setOpen] = useState(false);
+/** The wanted page → "Hlídám lepší verzi": the library's shows the automation watches — where it is set, what it
+ *  found. Each show is set on its own page (Automatika); here only "check" and "switch all off". */
+export function WatchedShows({ canEdit, canDownload }: { canEdit: boolean; canDownload: boolean }) {
   const [data, setData] = useState<SeriesAutoOverview | null>(null);
-  const [filter, setFilter] = useState<Filter>("all");
-  const [picked, setPicked] = useState<Set<number>>(new Set());
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const load = useCallback(() => { getSeriesAutomation().then(setData).catch(() => {}); }, []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -235,151 +234,67 @@ export default function SeriesAutomation({ canEdit, canDownload, query = "" }: {
     const t = setTimeout(load, 4000);
     return () => clearTimeout(t);
   }, [data, load]);
-
-  const isOn = (s: SeriesAutoShow) => s.effective.auto_new !== "off" || s.effective.auto_dub !== "off" || s.effective.auto_upgrade !== "off";
-  const shows = useMemo(() => {
-    const q = query.trim().toLocaleLowerCase("cs");
-    return (data?.shows ?? []).filter((s) => (!q || s.title.toLocaleLowerCase("cs").includes(q)) && (
-      filter === "on" ? isOn(s) : filter === "found" ? s.found.some((r) => r.status === "found")
-        : filter === "foreign" ? s.foreign > 0 : true));
-  }, [data, filter, query]);
-  if (!data) return null;
-  const onCount = data.shows.filter(isOn).length;
-  const waiting = data.shows.filter((s) => s.found.some((r) => r.status === "found"));
-  const waitingCount = waiting.reduce((n, s) => n + s.found.filter((r) => r.status === "found").length, 0);
-
-  async function save(ids: number[], values: Partial<SeriesSettingValues>) {
-    setSaving(true);
-    try { await saveSeriesAutomationBulk(ids, values); load(); } finally { setSaving(false); }
-  }
-  const toggle = (id: number) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  if (!data) return <p className="text-zinc-500 animate-pulse">Načítám…</p>;
+  const shows = data.shows.filter((s) => s.in_library && isOn(s));
   const sched = data.scheduler;
-  const d = data.defaults;
+
+  async function allOff() {
+    if (!confirm(`Vypnout automatiku u všech ${shows.length} seriálů (nové díly, dabing i lepší kvalitu)?\n\n`
+      + "Seriály v knihovně zůstanou, jen se u nich přestane hledat. Zapnout jde znovu na stránce seriálu.")) return;
+    setBusy(true);
+    try {
+      await saveSeriesAutomationBulk(shows.map((s) => s.tmdb_id), { auto_new: "off", auto_dub: "off", auto_upgrade: "off" });
+      load();
+    } finally { setBusy(false); }
+  }
+  // "hledat a stáhnout (výchozí)" — the own choice, or the default it takes over
+  const setting = (s: SeriesAutoShow, key: "auto_new" | "auto_dub" | "auto_upgrade", list: [string, string][]) =>
+    `${label(list, s.effective[key])}${s.own[key] == null ? " (výchozí)" : ""}`;
 
   return (
-    <section className="rounded-xl border border-zinc-800 bg-zinc-900/50">
-      <button onClick={() => setOpen(!open)} className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm">
-        <span className="text-zinc-200">🤖 Automatika seriálů</span>
-        <span className="text-xs text-zinc-500">
-          {onCount ? `zapnutá u ${onCount}` : "u žádného seriálu"}
-          {waitingCount > 0 && <span className="text-amber-300"> · čeká {waitingCount}</span>}
-          {data.job.running && <span className="text-violet-300"> · kontroluje se {data.job.done}/{data.job.total}</span>}
-          {" "}{open ? "▲" : "▼"}
-        </span>
-      </button>
-      {open && (
-        <div className="space-y-3 px-4 pb-4 text-xs">
-          {/* when it runs */}
-          <div className="rounded-lg bg-zinc-950 border border-zinc-800/60 p-3 space-y-1 text-zinc-400">
-            {!sched.enabled ? (
-              <p className="text-amber-300">Plánovač je vypnutý — automatika poběží jen přes „Zkontrolovat teď“. Zapneš ho v Nastavení → Integrace → Plánovač.</p>
-            ) : !sched.series ? (
-              <p className="text-amber-300">V plánovači je vypnutá volba „Automatika seriálů“ (Nastavení → Integrace → Plánovač).</p>
-            ) : (
-              <p>Kontroluje se každou noc v {sched.time}{sched.last_run && <> · naposledy {sched.last_run.slice(0, 16)}</>}.</p>
-            )}
-            <p className="text-zinc-500">
-              Výchozí pro všechny seriály: nové díly — {label(AUTO_NEW, d.auto_new)}{d.auto_new !== "off" && ` (${label(AUTO_FROM, d.auto_from)})`},
-              dabing — {label(AUTO_DUB, d.auto_dub)}, lepší kvalita — {label(AUTO_UPGRADE, d.auto_upgrade)}. Mění se v Nastavení → Seriály; seriál s vlastní volbou ho nepřebírá.
-            </p>
-            <p className="text-zinc-500">Bere jen soubory, které jsou jistě daný díl a projdou profilem kvality seriálu; dabing jen s CZ/SK zvukem;
-              lepší kvalitu jen s vyšším skóre bez ztráty CZ/SK zvuku. AI nevolá.</p>
-            {canEdit && (
-              <button disabled={data.job.running || !onCount} onClick={async () => { await runSeriesAutomation(); load(); }}
-                className="mt-1 rounded bg-zinc-700 px-3 py-1 text-zinc-200 hover:bg-zinc-600 disabled:opacity-50">
-                {data.job.running ? `Kontroluje se ${data.job.done}/${data.job.total} — ${data.job.current}` : `Zkontrolovat teď (${onCount})`}
-              </button>
-            )}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-lg font-semibold text-zinc-100">Seriály <span className="text-sm font-normal text-zinc-500">({shows.length})</span></h2>
+        <div className="flex-1" />
+        {canEdit && shows.length > 0 && (data.job.running ? (
+          <span className="text-sm text-violet-300 animate-pulse">Kontroluji {data.job.done}/{data.job.total}{data.job.current && ` · ${data.job.current}`}</span>
+        ) : (
+          <button onClick={async () => { await runSeriesAutomation(shows.map((s) => s.tmdb_id)); load(); }}
+            className="rounded bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500">Zkontrolovat vše</button>
+        ))}
+        {canEdit && shows.length > 0 && (
+          <button disabled={busy} onClick={allOff} className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40">Odstranit vše</button>
+        )}
+      </div>
+      <p className="text-xs text-zinc-500 -mt-1">
+        Seriály z knihovny se zapnutou automatikou — hledá nové díly, CZ/SK dabing u dílů jen v EN a lepší kvalitu dílů pod profilem.
+        Nastavuje se u každého seriálu zvlášť (stránka seriálu → Automatika); „výchozí“ = převzato z Nastavení → Seriály.
+        {!sched.enabled ? <span className="text-amber-300"> Plánovač je vypnutý — kontroluje se jen ručně.</span>
+          : !sched.series ? <span className="text-amber-300"> V plánovači je vypnutá „Automatika seriálů“.</span>
+            : <> Kontrola každou noc v {sched.time}.</>}
+      </p>
+      {shows.length === 0 ? <p className="text-zinc-500">Žádný seriál se nehlídá.</p> : shows.map((s) => (
+        <div key={s.tmdb_id} className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 space-y-1.5 text-sm">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Link href={`/series?tmdb=${s.tmdb_id}`} className="text-zinc-100 font-medium hover:text-violet-300">{s.title || `TMDB ${s.tmdb_id}`}</Link>
+            {s.year && <span className="text-zinc-500">({s.year})</span>}
+            <span className="text-xs text-zinc-500">{s.owned} dílů{s.foreign > 0 && <span className="text-amber-300/80"> · {s.foreign} bez CZ/SK</span>}</span>
+            <Link href={`/series?tmdb=${s.tmdb_id}`} className="ml-auto text-xs text-violet-300 hover:text-violet-200">Nastavit ›</Link>
           </div>
-
-          {/* waiting for a click */}
-          {waiting.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-zinc-300">Nalezeno, čeká na tebe</p>
-              {waiting.map((s) => (
-                <div key={s.tmdb_id} className="rounded-lg border border-zinc-800 p-2 space-y-1">
-                  <Link href={`/series?tmdb=${s.tmdb_id}`} className="text-zinc-200 hover:text-violet-300">{s.title} {s.year && `(${s.year})`}</Link>
-                  <AutoFound tmdbId={s.tmdb_id} records={s.found} onChanged={load} canDownload={canDownload} />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* every show */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            {([["all", `všechny (${data.shows.length})`], ["on", `zapnuté (${onCount})`], ["found", `s nálezy (${waiting.length})`],
-               ["foreign", `mají EN díly (${data.shows.filter((s) => s.foreign > 0).length})`]] as [Filter, string][]).map(([f, l]) => (
-              <button key={f} onClick={() => setFilter(f)}
-                className={`rounded-full px-2.5 py-0.5 ${filter === f ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"}`}>{l}</button>
-            ))}
-          </div>
-
-          {canEdit && picked.size > 0 && (
-            <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-violet-800/60 bg-zinc-900 p-2">
-              <span className="text-zinc-300">Vybráno {picked.size}:</span>
-              <span className="text-zinc-500">nové díly</span>
-              <BulkSelect options={AUTO_NEW} disabled={saving} onPick={(v) => save([...picked], { auto_new: v })} />
-              <span className="text-zinc-500">které</span>
-              <BulkSelect options={AUTO_FROM} disabled={saving} onPick={(v) => save([...picked], { auto_from: v })} />
-              <span className="text-zinc-500">dabing</span>
-              <BulkSelect options={AUTO_DUB} disabled={saving} onPick={(v) => save([...picked], { auto_dub: v })} />
-              <span className="text-zinc-500">kvalita</span>
-              <BulkSelect options={AUTO_UPGRADE} disabled={saving} onPick={(v) => save([...picked], { auto_upgrade: v })} />
-              <button onClick={() => setPicked(new Set())} className="ml-auto text-zinc-500 hover:text-zinc-300">zrušit výběr</button>
-            </div>
-          )}
-
-          <div className="divide-y divide-zinc-800/70 rounded-lg border border-zinc-800">
-            {canEdit && shows.length > 0 && (
-              <label className="flex items-center gap-2 px-2 py-1.5 text-zinc-500">
-                <input type="checkbox" checked={shows.every((s) => picked.has(s.tmdb_id))}
-                  onChange={(e) => setPicked(e.target.checked ? new Set(shows.map((s) => s.tmdb_id)) : new Set())} />
-                vybrat všechny zobrazené
-              </label>
-            )}
-            {shows.map((s) => (
-              <div key={s.tmdb_id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-2 py-2">
-                {canEdit && <input type="checkbox" checked={picked.has(s.tmdb_id)} onChange={() => toggle(s.tmdb_id)} />}
-                <div className="min-w-[10rem] flex-1">
-                  <Link href={`/series?tmdb=${s.tmdb_id}`} className="text-zinc-200 hover:text-violet-300">{s.title || `TMDB ${s.tmdb_id}`}</Link>
-                  {s.year && <span className="text-zinc-600"> ({s.year})</span>}
-                  <p className="text-[11px] text-zinc-500">
-                    {s.owned} dílů{s.foreign > 0 && <span className="text-amber-300/80"> · {s.foreign} bez CZ/SK</span>}
-                    {s.checked && <> · kontrola {s.checked.checked_at.slice(5, 16)}{s.checked.note ? ` — ${s.checked.note}` : s.checked.found || s.checked.downloading ? ` — nalezeno ${s.checked.found}, stahuje ${s.checked.downloading}` : ""}</>}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-zinc-500">nové</span>
-                  <AutoSelect value={s.own.auto_new} options={AUTO_NEW} fallback={d.auto_new} disabled={!canEdit || saving}
-                    onChange={(v) => save([s.tmdb_id], { auto_new: v })} />
-                  {s.effective.auto_new !== "off" && (
-                    <AutoSelect value={s.own.auto_from} options={AUTO_FROM} fallback={d.auto_from} disabled={!canEdit || saving}
-                      onChange={(v) => save([s.tmdb_id], { auto_from: v })} />
-                  )}
-                  <span className="text-zinc-500">dabing</span>
-                  <AutoSelect value={s.own.auto_dub} options={AUTO_DUB} fallback={d.auto_dub} disabled={!canEdit || saving}
-                    onChange={(v) => save([s.tmdb_id], { auto_dub: v })} />
-                  <span className="text-zinc-500">kvalita</span>
-                  <AutoSelect value={s.own.auto_upgrade} options={AUTO_UPGRADE} fallback={d.auto_upgrade} disabled={!canEdit || saving}
-                    onChange={(v) => save([s.tmdb_id], { auto_upgrade: v })} />
-                </div>
-              </div>
-            ))}
-            {!shows.length && <p className="px-2 py-3 text-zinc-500">Nic.</p>}
-          </div>
+          <p className="text-xs text-zinc-400">
+            nové díly: <span className="text-zinc-300">{setting(s, "auto_new", AUTO_NEW)}</span>
+            {s.effective.auto_new !== "off" && <span className="text-zinc-500"> ({label(AUTO_FROM, s.effective.auto_from)})</span>}
+            {" · "}dabing: <span className="text-zinc-300">{setting(s, "auto_dub", AUTO_DUB)}</span>
+            {" · "}kvalita: <span className="text-zinc-300">{setting(s, "auto_upgrade", AUTO_UPGRADE)}</span>
+          </p>
+          <p className="text-xs text-zinc-500">
+            {s.checked ? `kontrola ${s.checked.checked_at.slice(0, 16)} — ${s.checked.note
+              || (s.checked.found || s.checked.downloading ? `nalezeno ${s.checked.found}, stahuje ${s.checked.downloading}` : "nic nechybí")}`
+              : "zatím nekontrolováno"}
+          </p>
+          <AutoFound tmdbId={s.tmdb_id} records={s.found} onChanged={load} canDownload={canDownload} />
         </div>
-      )}
-    </section>
-  );
-}
-
-function BulkSelect<T extends string>({ options, disabled, onPick }: { options: [T, string][]; disabled: boolean; onPick: (v: T | null) => void }) {
-  return (
-    <select disabled={disabled} value="__" className={field}
-      onChange={(e) => { if (e.target.value !== "__") onPick((e.target.value || null) as T | null); }}>
-      <option value="__">—</option>
-      <option value="">výchozí</option>
-      {options.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-    </select>
+      ))}
+    </div>
   );
 }

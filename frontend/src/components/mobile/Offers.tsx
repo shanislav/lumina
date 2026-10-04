@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { confirmCinema } from "@/lib/cinema";
 import { LibraryAction, MovieContext, OwnedVersion, ScoredFile, pickForProfile, startDownload, versionLabel } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 import { FILM_ORDER, Offer, isTorrent, keyOf, useVerifiedOffers } from "@/lib/offers";
@@ -179,7 +180,10 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
       setStates((s) => ({ ...s, [file.ident]: "error" }));
     }
   }
-  const download = (f: ScoredFile) => (owned.length && contentType === "movie" ? setChoosing(f) : run(f));
+  const download = (f: ScoredFile) => {
+    if (!confirmCinema(f)) return;
+    if (owned.length && contentType === "movie") setChoosing(f); else run(f);
+  };
 
   if (error) return <p className="py-6 text-red-400">{error}</p>;
   if (!files) return <Spinner text="Hledám soubory… (chvíli to trvá)" />;

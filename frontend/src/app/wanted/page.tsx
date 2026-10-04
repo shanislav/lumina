@@ -1,6 +1,6 @@
 "use client";
 
-import { WantedShows } from "@/components/SeriesAuto";
+import { WantedShows, WatchedShows } from "@/components/SeriesAuto";
 import { useCallback, useEffect, useState } from "react";
 import WatchedList from "@/components/WatchedList";
 import Image from "next/image";
@@ -100,7 +100,12 @@ export default function WantedPage() {
           </button>
         ))}
       </div>
-      {tab === "watched" ? <WatchedList profiles={profiles} /> : (<>
+      {tab === "watched" ? (
+        <div className="space-y-8">
+          <WatchedList profiles={profiles} />
+          <WatchedShows canEdit={can("library.edit")} canDownload={can("download")} />
+        </div>
+      ) : (<>
       <div className="flex flex-wrap items-center gap-4">
         <h1 className="text-2xl font-bold text-zinc-100">Chci</h1>
         <span className="text-sm text-zinc-500">{open.length} filmů čeká · {items.length - open.length} hotovo</span>

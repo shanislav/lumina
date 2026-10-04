@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
-  QualityProfile, WatchedFilm, checkUpgrades, downloadUpgrade, formatSize, getUpgradeJob, getWatched, setFilmSettings,
+  QualityProfile, WatchedFilm, checkUpgrades, downloadUpgrade, formatSize, getUpgradeJob, getWatched, setFilmSettings, setFilmSettingsBulk,
 } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 
@@ -49,6 +49,14 @@ export default function WatchedList({ profiles }: { profiles: QualityProfile[] }
     setFilms((prev) => prev?.filter((x) => x.tmdb_id !== f.tmdb_id) ?? null);
   }
 
+  async function stopAll() {
+    if (!films?.length || !confirm(`Přestat hlídat lepší verzi u všech ${films.length} filmů?\n\nFilmy v knihovně zůstanou, `
+      + "jen se pro ně přestane hledat lepší verze. Zapnout jde znovu v Knihovně u filmu.")) return;
+    await setFilmSettingsBulk({ tmdb_ids: films.map((f) => f.tmdb_id), keep_profile: true, profile_id: null,
+                                watch_upgrades: false, on_better: "", upgrade_once: false, check_now: false });
+    load();
+  }
+
   async function check(ids: number[]) {
     setChecking(true);
     await checkUpgrades(ids).catch(() => setChecking(false));
@@ -78,11 +86,8 @@ export default function WatchedList({ profiles }: { profiles: QualityProfile[] }
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <p className="text-xs text-zinc-500 flex-1">
-          Plánovač u těchto filmů hledá verzi lepší než tu, kterou máš, a jen takovou, kterou dovolí profil filmu.
-          Hlídání zapneš v Knihovně v detailu filmu. Co se stane s nalezenou verzí („když najde lepší“), platí pro noční
-          plánovač i pro „Zkontrolovat“.
-        </p>
+        <h2 className="text-lg font-semibold text-zinc-100">Filmy <span className="text-sm font-normal text-zinc-500">({films.length})</span></h2>
+        <div className="flex-1" />
         {edit && films.length > 0 && (checking ? (
           <span className="text-sm text-violet-300 animate-pulse">Kontroluji…</span>
         ) : (
@@ -91,6 +96,16 @@ export default function WatchedList({ profiles }: { profiles: QualityProfile[] }
             Zkontrolovat vše
           </button>
         ))}
+        {edit && films.length > 0 && (
+          <button onClick={stopAll} className="text-xs text-zinc-500 hover:text-red-400">Odstranit vše</button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-3 -mt-1">
+        <p className="text-xs text-zinc-500 flex-1">
+          Plánovač u těchto filmů hledá verzi lepší než tu, kterou máš, a jen takovou, kterou dovolí profil filmu.
+          Hlídání zapneš v Knihovně v detailu filmu. Co se stane s nalezenou verzí („když najde lepší“), platí pro noční
+          plánovač i pro „Zkontrolovat“.
+        </p>
       </div>
       {films.length === 0 ? (
         <p className="text-zinc-500">Nic se nehlídá.</p>
