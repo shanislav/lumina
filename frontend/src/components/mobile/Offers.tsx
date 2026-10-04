@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { confirmCinema } from "@/lib/cinema";
 import {
@@ -12,9 +12,10 @@ import { FILM_ORDER, Offer, isTorrent, keyOf, useVerifiedOffers } from "@/lib/of
 import { langName, size } from "@/lib/mobile";
 import { BigButton, ChoiceButton, Option, Sheet, Spinner, Tag } from "@/components/mobile/ui";
 
-/** Phone: the files of a film / an episode — the recommended one big on top, the others as cards; filters are
- *  buttons that open a choice (Profil ▾, Zvuk ▾, Kvalita ▾, Velikost ▾, Řadit ▾). The quality profile (as the
- *  computer's "výchozí profil ▾") picks the recommended file and hides what it would not take. */
+/** Phone: the files of a film / an episode. On top what the quality profile would take (its profile changed right
+ *  in that card, as the computer's "výchozí profil ▾" / 🎯), under it the classic recommendation (the best sure
+ *  file by the filters), then every other file; filters are buttons that open a choice (Zvuk ▾, Kvalita ▾,
+ *  Velikost ▾, Řadit ▾) — the profile hides nothing. */
 
 type Audio = "any" | "local" | "local_or_subs" | "custom";
 type Sort = "recommended" | "quality" | "small";
@@ -62,8 +63,8 @@ function FileFacts({ f }: { f: ScoredFile }) {
   );
 }
 
-export function OfferCard({ offer, featured, state, onDownload, canDownload }: {
-  offer: Offer; featured?: boolean; state?: string; onDownload: () => void; canDownload: boolean;
+export function OfferCard({ offer, featured, label, state, onDownload, canDownload }: {
+  offer: Offer; featured?: boolean; label?: ReactNode; state?: string; onDownload: () => void; canDownload: boolean;
 }) {
   const f = offer.file;
   const { head, tech } = describe(f);
@@ -71,7 +72,7 @@ export function OfferCard({ offer, featured, state, onDownload, canDownload }: {
   const src = Array.from(new Set(offer.copies.map((c) => SOURCE_NAMES[c.source] ?? c.source))).join(" + ");
   return (
     <div className={`space-y-2.5 rounded-2xl border p-4 ${featured ? "border-violet-600 bg-violet-950/20" : "border-zinc-800 bg-zinc-900/60"}`}>
-      {featured && <p className="text-sm font-medium text-violet-300">★ Doporučeno</p>}
+      {label ?? (featured && <p className="text-sm font-medium text-violet-300">★ Doporučeno</p>)}
       <div className="flex items-baseline justify-between gap-2">
         <p className="text-xl font-semibold text-zinc-100">{head}</p>
         <span className={`rounded-md px-2 py-0.5 text-sm font-medium ${f.quality_score >= 70 ? "bg-emerald-900/60 text-emerald-200"
@@ -113,7 +114,6 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
   const [pick, setPick] = useState<ProfilePick | null>(null);
   const [profiles, setProfiles] = useState<QualityProfile[]>([]);
   const [profile, setProfile] = useState<ProfileChoice>("");
-  const [outside, setOutside] = useState(false);          // show the files the profile would not take too
   void usePick;
 
   useEffect(() => {
@@ -125,7 +125,6 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
   }, [contentType]);
   const chooseProfile = (v: ProfileChoice) => {
     setProfile(v);
-    setOutside(false);
     try { localStorage.setItem(PROFILE_KEY(contentType), String(v)); } catch { /* private */ }
   };
 
@@ -149,7 +148,7 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
 
   const { offers, verify } = useVerifiedOffers(files ?? [], movie);
 
-  // what the chosen profile would take — the recommended file — and every file it allows
+  // what the chosen profile would take (the card on top)
   useEffect(() => {
     if (profile === "off") { setPick(null); return; }
     const cand = offers.map((o) => o.file).filter((f) => f.film === "yes" || f.film === "unsure");
@@ -160,8 +159,6 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
     return () => { alive = false; clearTimeout(t); };
   }, [offers, profile, contentType]);
   const pickKey = pick?.key ?? null;
-  const allowed = useMemo(() => (pick?.ok_keys ? new Set(pick.ok_keys) : null), [pick]);
-  const fitsProfile = (o: Offer) => !allowed || o.copies.some((c) => allowed.has(keyOf(c)));
 
   const langsAround = useMemo(() => {
     const count = new Map<string, number>();
@@ -183,26 +180,25 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
       }
       return true;
     };
-    return offers.filter((o) => pass(o.file) && (outside || profile === "off" || fitsProfile(o))).sort((x, y) => {
+    return offers.filter((o) => pass(o.file)).sort((x, y) => {
       const a = x.file, b = y.file;
       if (filters.sort === "small") return a.size - b.size;
       if (filters.sort === "quality") return b.quality_score - a.quality_score || a.size - b.size;
       return (FILM_ORDER[a.film] ?? 1) - (FILM_ORDER[b.film] ?? 1) || b.lang_tier - a.lang_tier
         || b.quality_score - a.quality_score || a.size - b.size;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [offers, filters, allowed, outside, profile]);
-  const hidden = profile !== "off" && !outside && allowed
-    ? offers.filter((o) => o.file.film !== "no" && !fitsProfile(o)).length : 0;
+  }, [offers, filters]);
   const defaultProfile = profiles.find((p) => p.is_default);
   const profileLabel = profile === "off" ? "žádný" : profile === ""
     ? `${defaultProfile?.name ?? "výchozí"}` : profiles.find((p) => p.id === profile)?.name ?? "—";
 
-  // the recommended one: the profile's pick when it passes the filters, else the first sure one
-  // never a cinema recording (before the digital release everything is one: nothing is recommended)
+  // the profile's pick (whatever the filters say — the profile is its own filter), then the classic recommendation:
+  // the first sure file by the filters, never a cinema recording (before the digital release everything is one)
   const recommendable = (o: Offer) => o.file.film === "yes" && !["likely", "suspect"].includes(o.file.cinema ?? "");
-  const featured = (pickKey && view.find((o) => o.copies.some((c) => keyOf(c) === pickKey))) || view.find(recommendable);
-  const rest = view.filter((o) => o !== featured);
+  const byProfile = profile !== "off" && pickKey ? offers.find((o) => o.copies.some((c) => keyOf(c) === pickKey)) : undefined;
+  const best = view.find(recommendable);
+  const featured = best !== byProfile ? best : undefined;        // the same file twice: shown once (🎯)
+  const rest = view.filter((o) => o !== featured && o !== byProfile);
   const shown = all ? rest : rest.slice(0, 6);
 
   async function run(file: ScoredFile, action?: LibraryAction) {
@@ -229,7 +225,6 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
   return (
     <div className="space-y-4">
       <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-        <ChoiceButton label="Profil" value={profileLabel} active={profile !== ""} onClick={() => setSheet("profile")} />
         <ChoiceButton label="Zvuk" value={audioLabel} active={filters.audio !== "any"} onClick={() => setSheet("audio")} />
         <ChoiceButton label="Kvalita" value={QUALITY.find(([k]) => k === filters.quality)?.[1] ?? ""} active={!!filters.quality} onClick={() => setSheet("quality")} />
         <ChoiceButton label="Velikost" value={SIZES.find(([k]) => k === filters.maxGb)?.[1] ?? ""} active={!!filters.maxGb} onClick={() => setSheet("size")} />
@@ -243,22 +238,29 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
         </p>
       )}
 
-      {featured ? (
-        <OfferCard offer={featured} featured state={states[featured.file.ident]} onDownload={() => download(featured.file)} canDownload={can("download")} />
+      {/* 🎯 what the profile would take — the profile changed right here */}
+      {byProfile ? (
+        <OfferCard offer={byProfile} featured state={states[byProfile.file.ident]} onDownload={() => download(byProfile.file)}
+          canDownload={can("download")} label={<ProfileLine label={profileLabel} onChange={() => setSheet("profile")} />} />
       ) : (
+        <div className="space-y-1.5 rounded-2xl border border-violet-900/60 bg-violet-950/10 p-4">
+          <ProfileLine label={profileLabel} onChange={() => setSheet("profile")} />
+          <p className="text-sm text-zinc-400">
+            {profile === "off" ? "Bez profilu — doporučení jen podle filtrů níž."
+              : !pick ? "Zjišťuji, co by profil vzal…"
+                : `Nic nesplňuje profil${pick.reasons?.length ? ` (${pick.reasons.map(([r]) => r).join(", ")})` : ""}.`}
+          </p>
+        </div>
+      )}
+
+      {/* ★ the classic recommendation: the best sure file by the filters */}
+      {featured ? (
+        <OfferCard offer={featured} state={states[featured.file.ident]} onDownload={() => download(featured.file)} canDownload={can("download")}
+          label={<p className="text-sm font-medium text-zinc-300">★ Doporučeno podle filtrů</p>} />
+      ) : !byProfile && (
         <p className="rounded-xl border border-zinc-800 p-4 text-zinc-400">
-          {movie?.pre_digital ? "Nic k doporučení — dokud film nevyjde digitálně, jsou soubory jen z kina."
-            : hidden && !view.length ? `Nic nesplňuje profil „${profileLabel}“.` : "S těmito filtry nic jistého. Zkus filtr povolit."}
+          {movie?.pre_digital ? "Nic k doporučení — dokud film nevyjde digitálně, jsou soubory jen z kina." : "S těmito filtry nic jistého. Zkus filtr povolit."}
         </p>
-      )}
-      {hidden > 0 && (
-        <button onClick={() => setOutside(true)} className="w-full rounded-xl border border-zinc-800 px-4 py-3 text-left text-sm text-zinc-400 active:bg-zinc-900">
-          Profil „{profileLabel}“ skryl {hidden} {hidden === 1 ? "soubor" : hidden < 5 ? "soubory" : "souborů"}
-          {pick?.reasons?.length ? ` (${pick.reasons.map(([r]) => r).join(", ")})` : ""} · <span className="text-violet-300">ukázat</span>
-        </button>
-      )}
-      {outside && profile !== "off" && (
-        <button onClick={() => setOutside(false)} className="text-sm text-violet-300">Skrýt soubory mimo profil</button>
       )}
       {rest.length > 0 && <p className="pt-2 text-sm text-zinc-500">Další soubory ({rest.length})</p>}
       {shown.map((o) => (
@@ -273,8 +275,8 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
         {profiles.map((p) => (
           <Option key={p.id} active={profile === p.id} onClick={() => { chooseProfile(p.id); setSheet(""); }}>{p.name}</Option>
         ))}
-        <Option active={profile === "off"} hint="nic neskrývat, doporučit podle skóre" onClick={() => { chooseProfile("off"); setSheet(""); }}>
-          Bez profilu — ukázat vše
+        <Option active={profile === "off"} hint="jen doporučení podle filtrů" onClick={() => { chooseProfile("off"); setSheet(""); }}>
+          Bez profilu
         </Option>
       </Sheet>
       <Sheet open={sheet === "audio"} title="Zvuk" onClose={() => setSheet("")}>
@@ -319,6 +321,19 @@ export default function Offers({ load, tmdbId, title, year, contentType, library
           </div>
         )}
       </Sheet>
+    </div>
+  );
+}
+
+/** "🎯 Podle profilu  [Standard ▾]" — the head of the profile's card. */
+function ProfileLine({ label, onChange }: { label: string; onChange: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-sm font-medium text-violet-300">🎯 Podle profilu</span>
+      <button onClick={onChange}
+        className="min-h-10 rounded-xl border border-violet-700 bg-violet-950/40 px-3 text-sm font-medium text-violet-100 active:bg-violet-900">
+        {label} ▾
+      </button>
     </div>
   );
 }
