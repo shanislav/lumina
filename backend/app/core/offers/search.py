@@ -12,7 +12,7 @@ from app.clients.groq_scorer import score_results
 from app.clients.tmdb import TMDBClient
 from app.core.offers.details import cached_details, get_details
 from app.core.episode_match import parse_episode
-from app.core.cinema import before_digital
+from app.core.cinema import before_digital, before_local_digital, out_by_files
 from app.core.offers.evaluate import RELEVANCE, MovieContext, evaluate, recommended_key, year_of
 from app.core.quality import Prefs, prefs_from_settings
 from app.core.text import clean_text
@@ -239,6 +239,7 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
                 ctx.year = full.get("year") or ctx.year
                 ctx.releases = full.get("releases") or {}
                 ctx.pre_digital = before_digital(ctx.releases)
+                ctx.pre_local = before_local_digital(ctx.releases)
                 ctx.titles = [full.get("title", ""), full.get("original_title", ""),
                               *(by_lang.get(l, "") for l in ("cs", "sk", "en")),
                               *full.get("alternative_titles", [])]
@@ -321,15 +322,25 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
             and (p := parse_episode(n)).season == season and p.episodes == [episode]
             for n, h in hits.items())
     known = await cached_details([(r.source_type.value, r.ident) for r in all_results])
-    rows: list[dict] = []
-    for r in all_results:
-        details = known.get((r.source_type.value, r.ident))
-        ev = evaluate(r.name, r.size, ctx, prefs, details, r.duration_s, r.width, r.height)
-        rows.append({
-            "ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
-            "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders,
-            "quality": ev["resolution"] or "unknown", "relevance_score": RELEVANCE[ev["film"]], **ev,
-        })
+
+    def judged() -> list[dict]:
+        rows = []
+        for r in all_results:
+            details = known.get((r.source_type.value, r.ident))
+            ev = evaluate(r.name, r.size, ctx, prefs, details, r.duration_s, r.width, r.height)
+            rows.append({
+                "ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
+                "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders,
+                "quality": ev["resolution"] or "unknown", "relevance_score": RELEVANCE[ev["film"]], **ev,
+            })
+        return rows
+
+    rows = judged()
+    if ctx.pre_digital and out_by_files([row["name"] for row in rows if row["film"] == "yes"]):
+        # TMDB lags: WEB / Blu-ray releases of several groups are here — the film is out digitally
+        logger.info("Search '%s': TMDB says not out digitally yet, the files say it is", query)
+        ctx.pre_digital = False
+        rows = judged()
 
     # AI only decides what the rules could not ("Dune Part Two" vs "Dune: Part One", odd names).
     unclear = [row for row in rows if row["film"] == "unsure"]

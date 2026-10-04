@@ -32,12 +32,14 @@ class MovieContext:
     episode: dict | None = None
     # the film has not come out digitally yet (core/cinema): every file is most likely a cinema recording
     pre_digital: bool = False
+    pre_local: bool = False      # not out digitally in CZ/SK yet: a CZ/SK dub in a file is recorded in a cinema
     releases: dict = field(default_factory=dict)            # {"theatrical": "2025-…", "digital": "…"}
 
     def as_dict(self) -> dict:
         return {"titles": self.titles, "year": self.year, "runtime": self.runtime,
                 "people": self.people, "other_parts": self.other_parts, "namesakes": self.namesakes,
-                "episode": self.episode, "pre_digital": self.pre_digital, "releases": self.releases}
+                "episode": self.episode, "pre_digital": self.pre_digital, "pre_local": self.pre_local,
+                "releases": self.releases}
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "MovieContext":
@@ -45,7 +47,8 @@ class MovieContext:
         return cls(titles=d.get("titles") or [], year=d.get("year"), runtime=d.get("runtime") or 0,
                    people=d.get("people") or [], other_parts=d.get("other_parts") or [],
                    namesakes=d.get("namesakes") or [], episode=d.get("episode") or None,
-                   pre_digital=bool(d.get("pre_digital")), releases=d.get("releases") or {})
+                   pre_digital=bool(d.get("pre_digital")), pre_local=bool(d.get("pre_local")),
+                   releases=d.get("releases") or {})
 
 
 def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dict | None = None,
@@ -88,7 +91,8 @@ def evaluate(name: str, size: int, ctx: MovieContext, prefs: Prefs, details: dic
         film, reasons = verdict.status, verdict.reasons
     # a cinema recording: a cinema picture is no file of the film for anyone; Czech/Slovak sound recorded in a
     # cinema is no dub (the language tier and the profiles see the file without it)
-    cin = cinema.judge(name, ctx.pre_digital and not ctx.episode)
+    film_ctx = not ctx.episode
+    cin = cinema.judge(name, ctx.pre_digital and film_ctx, ctx.pre_local and film_ctx, facts.audio_langs)
     recorded: list[str] = []
     if cin["cinema"] == "video" and film != "no":
         film, reasons = "no", [cin["reason"]]

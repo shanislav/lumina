@@ -9,6 +9,11 @@ Two signs:
   the date   a film that has not come out digitally yet (TMDB release dates: digital / disc / TV, any country)
              exists only as a cinema recording — whatever its name says ("1080p WEB-DL" before the WEB release
              is a fake). No digital date known: only a recent premiere (MAX_FRESH_DAYS) counts as before it.
+             TMDB lags behind (The Odyssey 2026: TMDB "digital 15. 11.", while AMZN WEB-DLs of several release
+             groups were out in September): WEB / Blu-ray releases of two or more groups prove it is out.
+  the dub    a Czech/Slovak dub exists only in Czech/Slovak cinemas until the film comes out digitally there
+             (TMDB's CZ/SK dates; none known: MAX_FRESH_DAYS from the CZ/SK premiere) — a file with it before
+             then has the sound recorded in a cinema over a WEB picture.
 """
 
 import re
@@ -52,18 +57,27 @@ def claims_retail(name: str) -> bool:
     return bool(_RETAIL.search(_words(name)))
 
 
+LOCAL_COUNTRIES = ("CZ", "SK")
+# the end of a name that is no release group ("WEB-DL", "x264-HEVC", "CZ-SK")
+_NOT_GROUPS = {"dl", "rip", "web", "hd", "sd", "cz", "sk", "en", "eng", "cze", "dabing", "tit", "titulky", "hevc", "x264",
+               "x265", "h264", "h265", "aac", "ac3", "dts", "atmos", "hdr", "dv", "4k", "1080p", "720p", "2160p", "remux"}
+
+
 def release_info(release_dates: list[dict]) -> dict:
     """TMDB's /release_dates (every country) → {"theatrical": the first cinema premiere, "digital": the first
-    digital / disc / TV release} as ISO dates ("" when unknown)."""
-    first: dict[str, str] = {"theatrical": "", "digital": ""}
+    digital / disc / TV release, "local_theatrical" / "local_digital": the same in Czechia / Slovakia} as ISO
+    dates ("" when unknown)."""
+    first: dict[str, str] = {"theatrical": "", "digital": "", "local_theatrical": "", "local_digital": ""}
     for country in release_dates or []:
+        local = country.get("iso_3166_1") in LOCAL_COUNTRIES
         for r in country.get("release_dates") or []:
             day = (r.get("release_date") or "")[:10]
             if not day:
                 continue
             kind = "theatrical" if r.get("type") in (1, 2, 3) else "digital" if r.get("type") in (4, 5, 6) else ""
-            if kind and (not first[kind] or day < first[kind]):
-                first[kind] = day
+            for key in ([kind, f"local_{kind}"] if local else [kind]) if kind else []:
+                if not first[key] or day < first[key]:
+                    first[key] = day
     return first
 
 
@@ -81,7 +95,31 @@ def before_digital(info: dict | None, today: date | None = None) -> bool:
     return theatrical > (today - timedelta(days=MAX_FRESH_DAYS)).isoformat()
 
 
-def judge(name: str, pre_digital: bool) -> dict:
+def before_local_digital(info: dict | None, today: date | None = None) -> bool:
+    """The film is not out digitally in Czechia / Slovakia yet: its Czech/Slovak dub is only in cinemas."""
+    if not info:
+        return False
+    local = {"digital": info.get("local_digital") or "",
+             "theatrical": info.get("local_theatrical") or info.get("theatrical") or ""}
+    return before_digital(local, today)
+
+
+def release_group(name: str) -> str:
+    """The group that made a release: "…H.264-Kitsune.mkv" → "kitsune", "…[YTS.BZ].mp4" → "yts.bz"."""
+    stem = re.sub(r"\.[A-Za-z0-9]{2,4}$", "", name or "").strip()
+    m = re.search(r"\[([^\]]+)\]\s*$", stem) or re.search(r"-([A-Za-z0-9]{2,15})$", stem)
+    group = m.group(1).strip().lower() if m else ""
+    return "" if group in _NOT_GROUPS else group
+
+
+def out_by_files(names: list[str]) -> bool:
+    """Releases from a WEB / Blu-ray source made by two or more groups: the film is out digitally (TMDB lags)."""
+    groups = {release_group(n) for n in names if claims_retail(n)}
+    groups.discard("")
+    return len(groups) >= 2
+
+
+def judge(name: str, pre_digital: bool, pre_local: bool = False, audio_langs: list[str] | None = None) -> dict:
     """The cinema verdict of a file: {"cinema": "video" | "audio" | "likely" | "suspect" | "", "langs": [...],
     "reason": "…"}. "video": a cinema picture (hidden); "audio": its Czech/Slovak sound is a recording, not a dub;
     "likely" / "suspect": the film is not out digitally yet, so the file is most likely a recording ("suspect":
@@ -91,6 +129,10 @@ def judge(name: str, pre_digital: bool) -> dict:
         return {"cinema": "video", "langs": [], "reason": "obraz z kina (CAM / TS)"}
     if m["audio"] == "strong":
         return {"cinema": "audio", "langs": m["langs"], "reason": "zvuk nahraný v kině"}
+    local = [l for l in (audio_langs or []) if l in ("cs", "sk")]
+    if pre_local and local:
+        return {"cinema": "audio", "langs": local,
+                "reason": "CZ/SK zvuk nejspíš z kina — v ČR/SK film zatím digitálně nevyšel"}
     if pre_digital:
         if claims_retail(name):
             return {"cinema": "suspect", "langs": [], "reason": "podezřelé — film ještě nevyšel digitálně"}
