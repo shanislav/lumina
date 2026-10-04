@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS wanted (
 """
 
 PAUSE_BETWEEN_FILMS_S = 5
-RECORD_EVERY_DAYS = 7          # a film waiting for its digital release: its cinema recordings remembered this often
+RECORD_EVERY_DAYS = 7          # a film waiting with no digital date known: its recordings remembered this often
 VERIFY_PER_FILM = 10
 BEST_FIELDS = ("name", "source", "source_id", "ident", "size", "magnet_url", "quality_score", "quality_summary",
                "resolution", "codec", "hdr", "lang_tier", "audio_langs", "verified", "video_bitrate")
@@ -129,9 +129,9 @@ async def check(wanted_id: int) -> dict | None:
         finally:
             await db.close()
         logger.info("Wanted '%s': %s", item["title"], waiting)
-        # once a week: what is out there now is a cinema recording — remembered for after the release day
-        last = await cinema_last_seen(item["tmdb_id"])
-        if not last or last < (datetime.now() - timedelta(days=RECORD_EVERY_DAYS)).strftime("%Y-%m-%d %H:%M:%S"):
+        # the day before the digital release: what is out there then is a cinema recording (fakes named "WEB-DL"
+        # too) — remembered for after the release day. No digital date known: once a week.
+        if await _remember_now(cfg, item["tmdb_id"]):
             try:
                 await find_offers(cfg, f"{item['title']} {item['year']}".strip(), original_title=item["original_title"] or "",
                                   tmdb_id=item["tmdb_id"], media_type="movie", use_ai=False)
@@ -161,6 +161,24 @@ async def check(wanted_id: int) -> dict | None:
                                            "title": item["title"], "year": item["year"], "profile": profile.name,
                                            "matches": len(suitable), "best": best})
     return {"status": status, "matches": len(suitable)}
+
+
+async def _remember_now(cfg: dict, tmdb_id: int) -> bool:
+    """Search a waiting film to remember its pre-release files: on the day before its digital release (once), or
+    weekly when TMDB knows no date."""
+    client = TMDBClient(cfg.get("tmdb_api_key", ""))
+    try:
+        digital = ((await client.get_movie_full(tmdb_id)).get("releases") or {}).get("digital") or ""
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        await client.close()
+    last = await cinema_last_seen(tmdb_id)
+    now = datetime.now()
+    if digital:
+        eve = (datetime.fromisoformat(digital) - timedelta(days=1)).strftime("%Y-%m-%d")
+        return now.strftime("%Y-%m-%d") >= eve and (not last or last[:10] < eve)
+    return not last or last < (now - timedelta(days=RECORD_EVERY_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 async def _waiting(cfg: dict, tmdb_id: int | None) -> str:

@@ -124,3 +124,30 @@ async def test_files_from_before_the_release_stay_recordings():
     torrent = {"source_id": 3, "ident": "t1", "size": 1, "source": "prowlarr", "published": "2026-09-20"}
     assert cinema.mark_before_release(ev, torrent, set(), set(), "2026-11-15")["cinema"] == "likely"
     assert cinema.mark_before_release(ev, {**torrent, "published": "2026-11-18"}, set(), set(), "2026-11-15")["cinema"] == ""
+
+
+async def test_wanted_remembers_on_the_eve_of_the_release_only(monkeypatch):
+    from datetime import timedelta
+    from app.core import registry
+    from app.db import init_db
+    from app.modules.wanted import store
+    await init_db(registry.discover())
+    digital = {"v": ""}
+
+    class Tmdb:
+        def __init__(self, key):
+            pass
+
+        async def get_movie_full(self, tmdb_id):
+            return {"releases": {"digital": digital["v"]}}
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(store, "TMDBClient", Tmdb)
+    digital["v"] = (date.today() + timedelta(days=20)).isoformat()
+    assert not await store._remember_now({}, 555)                      # weeks ahead: not yet
+    digital["v"] = (date.today() + timedelta(days=1)).isoformat()
+    assert await store._remember_now({}, 555)                          # the eve
+    await cinema.remember(555, [{"source_id": 1, "ident": "x", "size": 9, "film": "yes", "name": "x"}])
+    assert not await store._remember_now({}, 555)                      # once

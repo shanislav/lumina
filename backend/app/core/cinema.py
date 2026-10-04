@@ -141,6 +141,8 @@ CREATE TABLE IF NOT EXISTS pre_release_files (
 CREATE INDEX IF NOT EXISTS pre_release_files_size ON pre_release_files (tmdb_id, size);
 """
 TORRENTS = ("jackett", "prowlarr")
+FORGET_DAYS = 30        # a month after the last sighting before the release the official versions outscore the
+                        # recordings anyway — the memory forgets them
 
 
 async def remember(tmdb_id: int, rows: list[dict]) -> None:
@@ -152,8 +154,11 @@ async def remember(tmdb_id: int, rows: list[dict]) -> None:
     db = await get_db()
     try:
         await db.executemany(
-            "INSERT OR IGNORE INTO pre_release_files (tmdb_id, file_key, size, name, seen_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO pre_release_files (tmdb_id, file_key, size, name, seen_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(tmdb_id, file_key) DO UPDATE SET seen_at = excluded.seen_at",
             [(tmdb_id, f"{r['source_id']}:{r['ident']}", r.get("size") or 0, r.get("name") or "", now) for r in keep])
+        await db.execute("DELETE FROM pre_release_files WHERE seen_at < ?",
+                         ((datetime.now() - timedelta(days=FORGET_DAYS)).strftime("%Y-%m-%d %H:%M:%S"),))
         await db.commit()
     finally:
         await db.close()
@@ -165,7 +170,9 @@ async def remembered(tmdb_id: int) -> tuple[list[str], list[int]]:
         return [], []
     db = await get_db()
     try:
-        rows = await (await db.execute("SELECT file_key, size FROM pre_release_files WHERE tmdb_id = ?", (tmdb_id,))).fetchall()
+        since = (datetime.now() - timedelta(days=FORGET_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        rows = await (await db.execute("SELECT file_key, size FROM pre_release_files WHERE tmdb_id = ? AND seen_at >= ?",
+                                       (tmdb_id, since))).fetchall()
     except Exception:  # noqa: BLE001 — before the migration
         rows = []
     finally:
