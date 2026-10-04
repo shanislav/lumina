@@ -12,7 +12,7 @@ from app.clients.groq_scorer import score_results
 from app.clients.tmdb import TMDBClient
 from app.core.offers.details import cached_details, get_details
 from app.core.episode_match import parse_episode
-from app.core.cinema import before_digital, before_local_digital, out_by_files
+from app.core.cinema import before_digital, before_local_digital
 from app.core.offers.evaluate import RELEVANCE, MovieContext, evaluate, recommended_key, year_of
 from app.core.quality import Prefs, prefs_from_settings
 from app.core.text import clean_text
@@ -336,11 +336,6 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
         return rows
 
     rows = judged()
-    if ctx.pre_digital and out_by_files([row["name"] for row in rows if row["film"] == "yes"]):
-        # TMDB lags: WEB / Blu-ray releases of several groups are here — the film is out digitally
-        logger.info("Search '%s': TMDB says not out digitally yet, the files say it is", query)
-        ctx.pre_digital = False
-        rows = judged()
 
     # AI only decides what the rules could not ("Dune Part Two" vs "Dune: Part One", odd names).
     unclear = [row for row in rows if row["film"] == "unsure"]

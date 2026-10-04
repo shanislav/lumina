@@ -9,8 +9,8 @@ Two signs:
   the date   a film that has not come out digitally yet (TMDB release dates: digital / disc / TV, any country)
              exists only as a cinema recording — whatever its name says ("1080p WEB-DL" before the WEB release
              is a fake). No digital date known: only a recent premiere (MAX_FRESH_DAYS) counts as before it.
-             TMDB lags behind (The Odyssey 2026: TMDB "digital 15. 11.", while AMZN WEB-DLs of several release
-             groups were out in September): WEB / Blu-ray releases of two or more groups prove it is out.
+             Release names never prove a digital release: The Odyssey 2026 (digital 15. 11.) had "AMZN WEB-DL"
+             files of several "release groups" in September — all fakes over a cinema recording.
   the dub    a Czech/Slovak dub exists only in Czech/Slovak cinemas until the film comes out digitally there
              (TMDB's CZ/SK dates; none known: MAX_FRESH_DAYS from the CZ/SK premiere) — a file with it before
              then has the sound recorded in a cinema over a WEB picture.
@@ -58,9 +58,6 @@ def claims_retail(name: str) -> bool:
 
 
 LOCAL_COUNTRIES = ("CZ", "SK")
-# the end of a name that is no release group ("WEB-DL", "x264-HEVC", "CZ-SK")
-_NOT_GROUPS = {"dl", "rip", "web", "hd", "sd", "cz", "sk", "en", "eng", "cze", "dabing", "tit", "titulky", "hevc", "x264",
-               "x265", "h264", "h265", "aac", "ac3", "dts", "atmos", "hdr", "dv", "4k", "1080p", "720p", "2160p", "remux"}
 
 
 def release_info(release_dates: list[dict]) -> dict:
@@ -103,20 +100,6 @@ def before_local_digital(info: dict | None, today: date | None = None) -> bool:
              "theatrical": info.get("local_theatrical") or info.get("theatrical") or ""}
     return before_digital(local, today)
 
-
-def release_group(name: str) -> str:
-    """The group that made a release: "…H.264-Kitsune.mkv" → "kitsune", "…[YTS.BZ].mp4" → "yts.bz"."""
-    stem = re.sub(r"\.[A-Za-z0-9]{2,4}$", "", name or "").strip()
-    m = re.search(r"\[([^\]]+)\]\s*$", stem) or re.search(r"-([A-Za-z0-9]{2,15})$", stem)
-    group = m.group(1).strip().lower() if m else ""
-    return "" if group in _NOT_GROUPS else group
-
-
-def out_by_files(names: list[str]) -> bool:
-    """Releases from a WEB / Blu-ray source made by two or more groups: the film is out digitally (TMDB lags)."""
-    groups = {release_group(n) for n in names if claims_retail(n)}
-    groups.discard("")
-    return len(groups) >= 2
 
 
 def judge(name: str, pre_digital: bool, pre_local: bool = False, audio_langs: list[str] | None = None) -> dict:

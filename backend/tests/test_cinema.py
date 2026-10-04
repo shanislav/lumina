@@ -84,14 +84,9 @@ async def test_wanted_waits_for_the_digital_release(monkeypatch):
     assert (await store.get(wid))["waiting"] == out["waiting"]
 
 
-def test_the_files_prove_a_digital_release_and_a_fresh_dub_is_a_cinema_one():
-    """The Odyssey 2026: TMDB "digital 15. 11.", AMZN WEB-DLs of several groups out in September; its CZ dub
-    only in Czech cinemas (premiere 16. 7.) — a "1080p CZ dabing" file has the sound recorded there."""
-    assert cinema.release_group("The.Odyssey.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-Kitsune.mkv") == "kitsune"
-    assert cinema.release_group("The.Odyssey.2026.720p.WEBRip.x264.AAC-[YTS.GG - YTS.BZ].mp4") == "yts.gg - yts.bz"
-    assert not cinema.out_by_files(["The.Odyssey.2026.1080p.WEB-DL-Kitsune.mkv", "The Odyssey 2026 1080p WEB-DL.mkv"])
-    assert cinema.out_by_files(["The.Odyssey.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-Kitsune.mkv",
-                                "The.Odyssey.2026.iNTERNAL.1080p.WEB-DL.AAC.x264-LuCY.mkv"])
+def test_a_fresh_dub_is_a_cinema_one():
+    """The Odyssey 2026: digital 15. 11. (its September "AMZN WEB-DL" files were fakes over a cinema recording);
+    its CZ dub only in Czech cinemas (premiere 16. 7.) — a "1080p CZ dabing" file has the sound recorded there."""
     info = cinema.release_info([
         {"iso_3166_1": "US", "release_dates": [{"type": 3, "release_date": "2026-07-17"}, {"type": 4, "release_date": "2026-11-17"}]},
         {"iso_3166_1": "CZ", "release_dates": [{"type": 3, "release_date": "2026-07-16"}]}])
