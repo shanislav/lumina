@@ -72,8 +72,8 @@ export function UnseenBadge({ count, className = "" }: { count: number; classNam
   if (!count) return null;
   return (
     <span title={`Nově v Chci: ${count}`}
-      className={`inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold leading-[1.1rem] text-zinc-950 ${className}`}>
-      {count > 9 ? "9+" : count}
+      className={`min-w-[1rem] rounded-full bg-amber-600 px-1 text-center text-[10px] leading-4 text-white ${className}`}>
+      {count > 99 ? "99+" : count}
     </span>
   );
 }

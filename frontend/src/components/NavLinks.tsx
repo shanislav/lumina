@@ -32,9 +32,12 @@ export default function NavLinks() {
   return (
     <div className="flex flex-wrap items-center gap-3 sm:gap-4">
       {LINKS.filter((l) => (!l.module || !active || active.has(l.module)) && (!l.perms || l.perms.some(can))).map((l) => (
-        <Link key={l.href} href={l.href} className="flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
+        <Link key={l.href} href={l.href} title={l.href === "/wanted" && unseen ? `Nově v Chci: ${unseen}` : undefined}
+          className={`relative text-sm transition-colors ${l.href === "/wanted" && unseen
+            ? "rounded-full border border-amber-600 px-2.5 py-0.5 text-amber-300 hover:text-amber-200"
+            : "text-zinc-500 hover:text-zinc-300"}`}>
           {l.label}
-          {l.href === "/wanted" && <UnseenBadge count={unseen} />}
+          {l.href === "/wanted" && <UnseenBadge count={unseen} className="absolute -right-2 -top-2" />}
         </Link>
       ))}
       <NotifyButton />
