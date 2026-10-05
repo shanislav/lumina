@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthGate";
 import SubtitlesPanel from "@/components/SubtitlesPanel";
-import { EpisodeDetail, EpisodeVersion, deleteEpisodeFile, getEpisodeDetail, setAudioLanguage, setNoDub } from "@/lib/api";
+import { EpisodeDetail, EpisodeVersion, deleteEpisodeFile, getEpisodeDetail, setAudioLanguage, setFileSpan, setNoDub } from "@/lib/api";
 
 /**
  * The window of an owned episode (show page): its files with sound and subtitles, the player, subtitles from
@@ -123,6 +123,20 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
                       <input type="checkbox" checked={!!data.no_dub}
                         onChange={async (e) => { await setNoDub(data.show_tmdb_id, data.season, data.episode, e.target.checked); await load(); onChanged(); }} />
                       CZ dabing tohoto dílu nevznikl
+                    </label>
+                  )}
+                  {v.current && !v.part && data.in_file && data.in_file.choices.length > 1 && can("library.edit") && (
+                    <label className="mt-1 flex w-fit items-center gap-1.5 text-[11px] text-zinc-400"
+                      title="Když soubor obsahuje víc dílů (dvojdílná premiéra v jednom souboru) — počítá se za všechny a přejmenuje se na „E01-E02“">
+                      Díly v souboru:
+                      <select value={data.in_file.episodes.length}
+                        onChange={async (e) => { await setFileSpan(v.file_path, Number(e.target.value)); await load(); onChanged(); }}
+                        className={`rounded border bg-zinc-950 px-1 py-0.5 text-[11px] ${data.in_file.suggested && data.in_file.said == null ? "border-amber-600 text-amber-200" : "border-zinc-700 text-zinc-200"}`}>
+                        {data.in_file.choices.map((c) => <option key={c.count} value={c.count}>{c.label}</option>)}
+                      </select>
+                      {data.in_file.suggested && data.in_file.said == null && (
+                        <span className="text-amber-300">délka sedí na dva díly — obsahuje i E{String(data.in_file.suggested).padStart(2, "0")}?</span>
+                      )}
                     </label>
                   )}
                   {!!v.media.subtitles?.length && (

@@ -88,6 +88,16 @@ async def delete_file(db, ep: dict, path: str, root: str) -> list[str]:
                              (rest[0]["file_path"], rest[0]["filename"], rest[0]["size"], ep["id"]))
         else:
             await db.execute("UPDATE library_episodes SET has_file = 0, file_path = NULL, filename = NULL WHERE id = ?", (ep["id"],))
+    # a file of more episodes ("S04E01-E02") was the other episode's file too: it takes its own other version
+    for row in await (await db.execute("SELECT * FROM library_episodes WHERE file_path = ? AND id != ?",
+                                       (path, ep["id"]))).fetchall():
+        other = [v for v in await versions(db, dict(row)) if v["file_path"] != path]
+        if other:
+            await db.execute("UPDATE library_episodes SET file_path = ?, filename = ?, file_size = ? WHERE id = ?",
+                             (other[0]["file_path"], other[0]["filename"], other[0]["size"], row["id"]))
+        else:
+            await db.execute("UPDATE library_episodes SET has_file = 0, file_path = NULL, filename = NULL WHERE id = ?",
+                             (row["id"],))
     await db.execute("DELETE FROM tv_files WHERE file_path = ?", (path,))
     await db.execute("DELETE FROM tv_media WHERE file_path = ?", (path,))
     for p in deleted:
@@ -97,3 +107,86 @@ async def delete_file(db, ep: dict, path: str, root: str) -> list[str]:
     logger.info("Deleted episode file %s (%d files)", path, len(deleted))
     await events.emit("library.files_removed", {"folders": [os.path.dirname(path)]})
     return deleted
+
+
+async def apply_span(db, path: str, count: int | None) -> list[int]:
+    """The user's word on how many episodes a file holds, in the library now (the next scan says the same):
+    every one of them owned with this file, one it no longer holds takes its other version (or none). Returns
+    the episodes the file holds."""
+    from app.core.episode_match import parse_episode
+    from app.modules.library import tv_inventory
+    row = await (await db.execute("SELECT show_tmdb_id, season, episodes, status, facts FROM tv_files WHERE file_path = ?",
+                                  (path,))).fetchone()
+    if not row or row["season"] is None:
+        return []
+    before = json.loads(row["episodes"] or "[]")
+    if not before:
+        return []
+    name = parse_episode(os.path.basename(path))
+    held = tv_inventory.file_episodes(before[0], name.episodes if name.season == row["season"] else [], count)
+    src = await (await db.execute("SELECT filename, file_size, quality, language FROM library_episodes "
+                                  "WHERE show_tmdb_id = ? AND season = ? AND episode = ?",
+                                  (row["show_tmdb_id"], row["season"], before[0]))).fetchone()
+    values = (src["filename"], src["file_size"], src["quality"], src["language"]) if src else \
+        (os.path.basename(path), os.path.getsize(path), "", "")
+    for e in held:
+        # an episode with a file of its own keeps it (this one is another version of it)
+        await db.execute("UPDATE library_episodes SET has_file = 1, file_path = ?, filename = ?, file_size = ?, "
+                         "quality = ?, language = ? WHERE show_tmdb_id = ? AND season = ? AND episode = ? "
+                         "AND (episode = ? OR has_file = 0 OR file_path IS NULL OR file_path = ?)",
+                         (path, *values, row["show_tmdb_id"], row["season"], e, held[0], path))
+    for e in before:
+        if e in held:
+            continue
+        ep = await (await db.execute("SELECT * FROM library_episodes WHERE show_tmdb_id = ? AND season = ? AND episode = ? "
+                                     "AND file_path = ?", (row["show_tmdb_id"], row["season"], e, path))).fetchone()
+        if not ep:
+            continue
+        other = [v for v in await versions(db, {**dict(ep), "file_path": None}) if v["file_path"] != path]
+        if other:
+            await db.execute("UPDATE library_episodes SET file_path = ?, filename = ?, file_size = ? WHERE id = ?",
+                             (other[0]["file_path"], other[0]["filename"], other[0]["size"], ep["id"]))
+        else:
+            await db.execute("UPDATE library_episodes SET has_file = 0, file_path = NULL, filename = NULL WHERE id = ?",
+                             (ep["id"],))
+    facts = json.loads(row["facts"] or "{}")
+    facts.pop("two_parts", None)
+    if count:
+        facts["span"] = count
+    else:
+        facts.pop("span", None)
+    status = "ok" if row["status"] == "two_parts" else row["status"]
+    await db.execute("UPDATE tv_files SET episodes = ?, facts = ?, status = ?, note = CASE WHEN ? = 'ok' AND status = "
+                     "'two_parts' THEN '' ELSE note END WHERE file_path = ?",
+                     (json.dumps(held), json.dumps(facts), status, status, path))
+    await db.commit()
+    logger.info("%s holds S%02d%s (the user's word)", os.path.basename(path), row["season"],
+                "".join(f"E{e:02d}" for e in held))
+    return held
+
+
+async def in_file(db, ep: dict) -> dict | None:
+    """Which episodes the episode's current file holds, for "Díly v tomto souboru" in its window: {first,
+    episodes, said (the user's count or None), suggested (the scan's next-episode guess), choices: [{count, label}]}."""
+    from app.modules.library import tv_inventory
+    path = ep.get("file_path")
+    row = await (await db.execute("SELECT episodes, facts FROM tv_files WHERE file_path = ?", (path,))).fetchone() \
+        if path else None
+    if not row:
+        return None
+    held = json.loads(row["episodes"] or "[]") or [ep["episode"]]
+    facts = json.loads(row["facts"] or "{}")
+    first = held[0]
+    titles = {r[0]: r[1] or "" for r in await (await db.execute(
+        "SELECT episode, episode_title FROM library_episodes WHERE show_tmdb_id = ? AND season = ? AND episode BETWEEN ? AND ?",
+        (ep["show_tmdb_id"], ep["season"], first, first + tv_inventory.MAX_SPAN - 1))).fetchall()}
+    choices = []
+    for n in range(1, tv_inventory.MAX_SPAN):
+        last = first + n - 1
+        if n > 1 and last not in titles:
+            break
+        label = f"jen E{first:02d}" if n == 1 else f"E{first:02d}–E{last:02d}"
+        choices.append({"count": n, "label": label + (f" ({titles[last]})" if n > 1 and titles.get(last) else "")})
+    spans = await tv_inventory.file_spans(db)
+    return {"first": first, "episodes": held, "said": spans.get(path), "suggested": facts.get("two_parts"),
+            "choices": choices}

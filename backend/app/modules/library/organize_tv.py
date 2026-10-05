@@ -108,7 +108,16 @@ def _pt(path: str) -> int:
 
 def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]) -> tuple[int, list[int], str, tuple]:
     """(season, episodes, the episode's name, order key) of an inventory file. row: tv_files row with
-    "facts" parsed and "episodes" a list."""
+    "facts" parsed and "episodes" a list. A file the user said holds more episodes (a two-part premiere stored
+    whole) is named by all of them ("S01E01-E02" — Plex lists it under each)."""
+    season, episodes, title, order = _episode_target(row, mode, tmdb_titles)
+    span = row["facts"].get("span") or 0
+    if span > 1 and len(episodes) == 1:
+        episodes = [episodes[0] + i for i in range(span)]
+    return season, episodes, title, order
+
+
+def _episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]) -> tuple[int, list[int], str, tuple]:
     facts = row["facts"]
     plex = facts.get("plex")
     file_season, file_eps = facts.get("file") or [row["season"], row["episodes"]]
@@ -135,7 +144,7 @@ def episode_target(row: dict, mode: str, tmdb_titles: dict[tuple[int, int], str]
             return season, [facts["tmdb_episode"]], tmdb_title(season, facts["tmdb_episode"]) or file_title, order
         # an episode keeping its number keeps its name too (never TMDB's name of that number: South Park
         # "S02E04 Ikova obřízka" is not TMDB's E04 "Milovník slepic")
-        return episode_target(row, "files", tmdb_titles)
+        return _episode_target(row, "files", tmdb_titles)
 
     if facts.get("absolute"):
         season, episodes = scan[0], list(scan[1])                   # numbered through: TMDB's season split

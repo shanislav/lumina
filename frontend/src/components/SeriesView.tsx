@@ -335,6 +335,12 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
                     <span className="flex min-w-0 flex-1 items-center gap-2">
                       <button onClick={() => onOpen(ep.file!.id!)} title={`${ep.overview}\n\nOtevřít díl: soubory, přehrát, titulky`.trim()}
                         className="min-w-0 truncate text-left text-zinc-200 hover:text-violet-300 hover:underline">{ep.name || "—"}</button>
+                      {!!ep.file.shared?.length && (
+                        <span className="flex-shrink-0 rounded border border-zinc-700 px-1.5 text-[10px] text-zinc-400"
+                          title={`${ep.file.filename}\nJeden soubor obsahuje víc dílů`}>
+                          v souboru s {ep.file.shared.map(([s, e]) => se(s, e)).join(", ")}
+                        </span>
+                      )}
                       {(ep.file.parts?.length ?? 0) > 1 && ep.file.parts!.map((n) => (
                         <button key={n} onClick={() => onOpen(ep.file!.id!)} title={`Dvojdíl — ${n}. část (soubor „- pt${n}“)`}
                           className="flex-shrink-0 rounded border border-violet-800/70 px-1.5 text-[10px] text-violet-200 hover:bg-violet-900/40">

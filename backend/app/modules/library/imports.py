@@ -665,7 +665,7 @@ async def import_episode(payload: dict) -> None:
                 stem, ext = os.path.splitext(owned_path)
                 first = _unique_path(f"{stem} - pt1{ext}")
                 _move_with_subtitles(owned_path, first)
-                for table in ("library_episodes", "tv_media", "tv_episode_overrides"):
+                for table in ("library_episodes", "tv_media", "tv_episode_overrides", "tv_file_spans"):
                     try:
                         await db.execute(f"UPDATE {table} SET file_path = ? WHERE file_path = ?", (first, owned_path))
                     except Exception:  # noqa: BLE001 — a table of a module switched off
@@ -681,10 +681,20 @@ async def import_episode(payload: dict) -> None:
                 continue
             picked = (_int(action.get("season")), [_int(action.get("episode"))]) if action.get("episode") else None
             # "replace" was for the episode the user picked: a file that turned out another one replaces nothing
-            if dub_over or (action.get("replace") and path == src and picked in (None, (season, episodes)))                     or (path != src and action.get("replace_owned")):
+            # (a file of more episodes holding the picked one replaces it: "S04E01-E02" for E01)
+            picked_here = picked is None or (picked[0] == season and picked[1][0] in episodes)
+            if dub_over or (action.get("replace") and path == src and picked_here) \
+                    or (path != src and action.get("replace_owned")):
                 for ep in episodes:
                     old = owned.get((season, ep))
                     if old and old != target and os.path.exists(old):
+                        # a file of more episodes ("S04E01-E02") goes only when the new one holds them all — else
+                        # the other episode would be lost; the old file stays its file
+                        keeps = sorted(e for (s, e), p in owned.items() if p == old and (s != season or e not in episodes))
+                        if keeps:
+                            logger.info("S%02dE%02d: %s kept — it holds E%s too", season, ep, os.path.basename(old),
+                                        ", E".join(f"{e:02d}" for e in keeps))
+                            continue
                         deleted = _delete_version(old, target)
                         logger.info("Replaced S%02dE%02d: deleted %s", season, ep, deleted)
             if (season, episodes) != file_numbers and len(episodes) == 1:

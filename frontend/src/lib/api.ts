@@ -1722,6 +1722,7 @@ export interface SeriesEpisodeFile {
   quality: string;
   languages: string[];
   parts?: number[];          // a two-part episode stored as "- pt1" / "- pt2"
+  shared?: [number, number][];   // a file of more episodes ("S04E01-E02"): the other episodes in it
 }
 
 export interface SeriesEpisode {
@@ -1993,6 +1994,9 @@ export interface EpisodeDetail {
   file_path: string;
   no_dub?: boolean;         // the user marked it: a Czech dub was never made
   versions: EpisodeVersion[];
+  /** the episodes the current file holds ("S04E01-E02"); said = the user's count, suggested = the scan's guess */
+  in_file?: { first: number; episodes: number[]; said: number | null; suggested: number | null;
+              choices: { count: number; label: string }[] } | null;
 }
 
 export async function getEpisodeDetail(id: number): Promise<EpisodeDetail> {
@@ -2072,6 +2076,15 @@ export async function setNoDub(tmdbId: number, season: number, episode: number, 
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }),
   });
   if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
+}
+
+/** How many episodes one file holds (a two-part premiere stored whole); null = the name decides again. */
+export async function setFileSpan(filePath: string, count: number | null): Promise<number[]> {
+  const res = await apiFetch(`${API_BASE}/api/library/tv/file-span`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file_path: filePath, count }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Uložení selhalo: ${res.status}`);
+  return (await res.json()).episodes;
 }
 
 export async function setEpisodeOverride(file: string, season: number | null, episode: number | null, note = ""): Promise<void> {

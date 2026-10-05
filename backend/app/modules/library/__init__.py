@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS tmdb_movies (
 );
 """
 
-from app.modules.library.tv_inventory import TV_INVENTORY, TV_MANUAL, TV_RENAME  # noqa: E402
+from app.modules.library.tv_inventory import TV_INVENTORY, TV_MANUAL, TV_RENAME, TV_SPAN  # noqa: E402
 from app.modules.library.episode_names import TMDB_EPISODES  # noqa: E402
 
 module = Module(
@@ -115,6 +115,8 @@ module = Module(
         TMDB_EPISODES,
         # which episode a file is, said by the user
         TV_MANUAL,
+        # how many episodes one file holds, said by the user (a two-part premiere stored whole)
+        TV_SPAN,
     ],
     tasks=[TaskSource(tasks.read, "library.view")],
 )

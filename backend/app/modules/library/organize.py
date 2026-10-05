@@ -375,6 +375,10 @@ async def path_moved(db, src: str, dst: str) -> None:
     await db.execute("UPDATE OR REPLACE tv_files SET file_path = ? WHERE file_path = ?", (dst, src))
     await db.execute("UPDATE OR REPLACE tv_media SET file_path = ? WHERE file_path = ?", (dst, src))
     await db.execute("UPDATE OR REPLACE tv_episode_overrides SET file_path = ? WHERE file_path = ?", (dst, src))
+    try:
+        await db.execute("UPDATE OR REPLACE tv_file_spans SET file_path = ? WHERE file_path = ?", (dst, src))
+    except Exception:  # noqa: BLE001 — before the migration
+        pass
 
 
 async def apply_plan(db, plan: dict, root: str, batch_id: str | None = None) -> str:

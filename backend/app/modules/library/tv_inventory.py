@@ -9,6 +9,7 @@ and Plex disagree. Every file: which episode, and what is wrong with it:
     not_in_tmdb  TMDB does not list the episode (another numbering than the user's files and Plex)
     not_in_plex  Plex does not know the file (not scanned yet, or it skipped it)
     unknown      neither the name nor Plex tell the episode
+    two_parts    one episode's file as long as it and the next one, TMDB's "(1)"/"(2)" — the user says if it holds both
     unmatched    the show was found neither in TMDB nor in Plex
 """
 
@@ -59,6 +60,64 @@ CREATE TABLE IF NOT EXISTS tv_episode_overrides (
     updated_at TEXT
 );
 """
+
+
+# The user's word on how many episodes one file holds — a two-part premiere stored whole ("S04E01" of 86 min
+# = E01 and E02): count 2 = this episode and the next one, 1 = only this one (a suggestion said no).
+# Goes with the file when it is renamed.
+TV_SPAN = """
+CREATE TABLE IF NOT EXISTS tv_file_spans (
+    file_path TEXT PRIMARY KEY,
+    count INTEGER NOT NULL,
+    updated_at TEXT
+);
+"""
+MAX_SPAN = 4
+
+
+async def file_spans(db) -> dict[str, int]:
+    try:
+        rows = await (await db.execute("SELECT file_path, count FROM tv_file_spans")).fetchall()
+    except Exception:  # noqa: BLE001 — before the migration
+        return {}
+    return {r[0]: r[1] for r in rows}
+
+
+async def set_file_span(db, path: str, count: int | None) -> None:
+    """count None forgets the user's word (the name decides again)."""
+    if count is None:
+        await db.execute("DELETE FROM tv_file_spans WHERE file_path = ?", (path,))
+    else:
+        await db.execute("INSERT OR REPLACE INTO tv_file_spans (file_path, count, updated_at) VALUES (?, ?, ?)",
+                         (path, max(1, min(MAX_SPAN, count)), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    await db.commit()
+
+
+def file_episodes(first: int, name_episodes: list[int], span: int | None) -> list[int]:
+    """The episodes one file holds, from its first one (the scan's number): the user's word, else the
+    name's own range ("S04E01-E02" — moved along when the scan numbered the file otherwise)."""
+    if span:
+        return [first + i for i in range(span)]
+    if len(name_episodes) > 1:
+        return [first + (e - name_episodes[0]) for e in name_episodes]
+    return [first]
+
+
+def two_parts(cat: dict, season: int, episode: int, duration_s: int, owned: set[tuple[int, int]]) -> int | None:
+    """The next episode a file of one episode seems to hold too: TMDB's "X (1)" / "X (2)" (or "část 1/2"), the
+    next one not owned, and the file as long as both together (±15 %). None when not."""
+    here, nxt = cat.get((season, episode)), cat.get((season, episode + 1))
+    if not here or not nxt or (season, episode + 1) in owned or not duration_s:
+        return None
+    a, b = here.get("runtime") or 0, nxt.get("runtime") or 0
+    if not a or not b or not 0.85 * (a + b) <= duration_s / 60 <= 1.15 * (a + b):
+        return None
+    for key in ("en", "cs"):
+        x, y = here.get(key) or "", nxt.get(key) or ""
+        if x and y and _part(x) == 1 and _part(y) == 2 \
+                and same_episode(_PART.sub("", x), _PART.sub("", y), strict=True):
+            return episode + 1
+    return None
 
 
 async def episode_overrides(db) -> dict[str, tuple[int, int, str]]:
@@ -123,6 +182,7 @@ STATUS_LABELS = {
     "not_in_tmdb": "TMDB díl nezná",
     "not_in_plex": "Plex soubor nezná",
     "unknown": "neznámý díl",
+    "two_parts": "nejspíš dva díly v jednom souboru",
     "unmatched": "seriál nenalezen",
 }
 

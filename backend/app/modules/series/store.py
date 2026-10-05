@@ -155,7 +155,14 @@ async def owned_episodes(tmdb_id: int) -> dict[tuple[int, int], dict]:
         from app.modules.library.episodes import parts_of
     except Exception:  # noqa: BLE001
         parts_of = lambda _p: []   # noqa: E731
+    # a file of more episodes ("S04E01-E02"): each of them names the others it shares the file with
+    by_path: dict[str, list[tuple[int, int]]] = {}
+    for r in rows:
+        if r["file_path"]:
+            by_path.setdefault(r["file_path"], []).append((r["season"], r["episode"]))
     return {(r["season"], r["episode"]): {"id": r["id"], "filename": r["filename"], "file_path": r["file_path"],
+                                          "shared": [list(k) for k in sorted(by_path.get(r["file_path"]) or [])
+                                                     if k != (r["season"], r["episode"])],
                                           "size": r["file_size"] or 0, "quality": r["quality"] or "",
                                           "languages": languages_of(r["language"]),
                                           # a two-part episode stored as "- pt1" / "- pt2"

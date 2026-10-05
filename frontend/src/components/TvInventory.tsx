@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthGate";
 import EpisodeMapper from "@/components/EpisodeMapper";
-import { Suggestion, TvInventory as Inventory, TvInventoryFolder, getTvInventory, setTvOverride, suggest } from "@/lib/api";
+import { Suggestion, TvInventory as Inventory, TvInventoryFolder, getTvInventory, setFileSpan, setTvOverride, suggest } from "@/lib/api";
 
 /**
  * Kontrola knihovny seriálů (backend modules/library/tv_inventory): what the last scan found in each show
@@ -131,6 +131,15 @@ function Folder({ f, labels, problems, canEdit, expanded, toggle, onChanged }: {
               <span className="w-40 text-amber-300">{labels[p.status] ?? p.status}</span>
               <span className="min-w-0 flex-1 truncate text-zinc-400" title={`${p.file}\n${p.note}`}>{p.file.split("/").slice(-2).join("/")}</span>
               {p.note && <span className="hidden w-64 truncate text-zinc-500 lg:block" title={p.note}>{p.note}</span>}
+              {p.status === "two_parts" && canEdit && (
+                <span className="flex flex-shrink-0 gap-1.5 text-[11px]">
+                  <button onClick={async () => { await setFileSpan(p.file, 2); onChanged(); }}
+                    title={`${p.note}\nSoubor se bude počítat za oba díly a přejmenuje se na „E01-E02“`}
+                    className="rounded border border-violet-700 px-1.5 text-violet-200 hover:bg-violet-900/40">oba díly</button>
+                  <button onClick={async () => { await setFileSpan(p.file, 1); onChanged(); }}
+                    className="rounded border border-zinc-700 px-1.5 text-zinc-400 hover:border-zinc-500">jen jeden</button>
+                </span>
+              )}
             </div>
           ))}
         </div>

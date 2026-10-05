@@ -533,6 +533,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                                    {"paths": [f["file_path"] for f in tv_files], "hints": {}}))["hints"]
         overrides = await tv_inventory.overrides(db)
         manual = await tv_inventory.episode_overrides(db)
+        spans = await tv_inventory.file_spans(db)       # the user's word on how many episodes a file holds
         unknown: list[dict] = []
 
         # Group by show name — try episode NFO first for season/episode info
@@ -733,19 +734,32 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                     ep_data["season"], ep_data["episode"], ep_data["manual"] = ms, me, mnote
                     ep_data.pop("absolute", None)
 
+            # the episodes each file holds: the user's word, else the name's range ("S04E01-E02" — both are
+            # owned, not only the first one)
+            for ep_data in episodes:
+                ep_data["holds"] = tv_inventory.file_episodes(
+                    ep_data["episode"], ep_data.get("file_episodes") or [], spans.get(ep_data["file_path"]))
+            held = {(d["season"], e) for d in episodes for e in d["holds"]}
+            own_file = {(d["season"], d["episode"]) for d in episodes}    # episodes with a file of their own
+
             # Mark episodes we have on disk
             for ep_data in episodes:
-                marked.add((tmdb_id, ep_data["season"], ep_data["episode"]))
                 matched_paths.add(ep_data["file_path"])
-                cursor = await db.execute(
-                    """UPDATE library_episodes
-                    SET has_file = 1, filename = ?, file_path = ?,
-                        file_size = ?, quality = ?, language = ?
-                    WHERE show_tmdb_id = ? AND season = ? AND episode = ?""",
-                    (ep_data["filename"], ep_data["file_path"],
-                     ep_data["file_size"], ep_data["quality"], ep_data["language"],
-                     tmdb_id, ep_data["season"], ep_data["episode"]),
-                )
+                for n, e in enumerate(ep_data["holds"]):
+                    if n and (ep_data["season"], e) in own_file:
+                        continue                # E02 has a file of its own: the "E01-E02" file is another version
+                    marked.add((tmdb_id, ep_data["season"], e))
+                    found = await db.execute(
+                        """UPDATE library_episodes
+                        SET has_file = 1, filename = ?, file_path = ?,
+                            file_size = ?, quality = ?, language = ?
+                        WHERE show_tmdb_id = ? AND season = ? AND episode = ?""",
+                        (ep_data["filename"], ep_data["file_path"],
+                         ep_data["file_size"], ep_data["quality"], ep_data["language"],
+                         tmdb_id, ep_data["season"], e),
+                    )
+                    if not n:
+                        cursor = found
                 stats["episodes_matched"] += 1
                 hint = ep_data.get("hint") or {}
                 # the file's own name ("S01E02 Posilovač 4000", "02.Panika v Oblázkovém městě"), from its first name
@@ -785,8 +799,18 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
                         facts["tmdb_sure"] = other[2]
                 elif not hint and plex_votes:
                     status, note = "not_in_plex", "Plex soubor nezná"
-                inventory.file(ep_data["file_path"], folder or show_name, tmdb_id, ep_data["season"],
-                               [ep_data["episode"]], status, note, facts)
+                fpath = ep_data["file_path"]
+                if fpath in spans:
+                    facts["span"] = spans[fpath]
+                elif status == "ok" and len(ep_data["holds"]) == 1 \
+                        and (nxt := tv_inventory.two_parts(cat, ep_data["season"], ep_data["episode"],
+                                                           lengths.get(fpath, 0), held)):
+                    # a two-part premiere stored whole ("S01E01" of 86 min, TMDB "Rising (1)" / "(2)"): the user says
+                    status, note = "two_parts", f"obsahuje nejspíš i díl S{ep_data['season']:02d}E{nxt:02d} " \
+                                                f"({round(lengths[fpath] / 60)} min = dva díly)"
+                    facts["two_parts"] = nxt
+                inventory.file(fpath, folder or show_name, tmdb_id, ep_data["season"],
+                               ep_data["holds"], status, note, facts)
 
         # a file this scan put under a show belongs to no other one (an earlier scan's wrong match:
         # "SGA" episodes under "Sgauth") — a show TMDB could not be asked about now keeps its files

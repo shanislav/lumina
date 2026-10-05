@@ -656,6 +656,31 @@ async def tv_episode_override(body: TvEpisodeOverride) -> dict:
     return {"ok": True}
 
 
+class TvFileSpan(BaseModel):
+    file: str = ""                    # the file, relative to the TV library …
+    file_path: str = ""               # … or its full path (the episode window)
+    count: int | None = None          # episodes the file holds from its first one; None = the name decides again
+
+
+@router.put("/tv/file-span", dependencies=[Depends(require("library.edit"))])
+async def tv_file_span(body: TvFileSpan) -> dict:
+    """The user says how many episodes one file holds (a two-part premiere stored whole: "S04E01" = E01 + E02).
+    The library takes it at once; the renamer names the file by all of them ("S04E01-E02")."""
+    from app.config import tv_library_dir
+    from app.modules.library import episodes, tv_inventory
+    root = tv_library_dir(await get_effective_settings())
+    path = os.path.normpath(body.file_path or os.path.join(root, body.file))
+    if not root or not path.startswith(os.path.normpath(root) + os.sep) or not os.path.isfile(path):
+        raise HTTPException(400, "Soubor v knihovně seriálů není")
+    db = await get_db()
+    try:
+        await tv_inventory.set_file_span(db, path, body.count)
+        held = await episodes.apply_span(db, path, body.count)
+    finally:
+        await db.close()
+    return {"ok": True, "episodes": held}
+
+
 class TvNaming(BaseModel):
     tmdb_id: int
     numbering: Literal["files", "tmdb"]
@@ -772,7 +797,8 @@ async def episode_detail(episode_id: int) -> dict:
             pass
         return {"id": ep["id"], "show_tmdb_id": ep["show_tmdb_id"], "show_title": ep["show_title"], "season": ep["season"],
                 "episode": ep["episode"], "episode_title": ep["episode_title"], "air_date": ep["air_date"],
-                "file_path": ep["file_path"], "no_dub": no_dub, "versions": await episodes.versions(db, ep)}
+                "file_path": ep["file_path"], "no_dub": no_dub, "versions": await episodes.versions(db, ep),
+                "in_file": await episodes.in_file(db, ep)}
     finally:
         await db.close()
 
