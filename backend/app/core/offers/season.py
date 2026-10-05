@@ -185,6 +185,12 @@ async def _verify_samples(out: SeasonOffers, titles: list[str], runtime: int) ->
     return changed
 
 
+def _as_written(titles: list[str]) -> list[str]:
+    """A title of letters with dots / stars as it is written ("M*A*S*H") — a tracker finds its packs by it, not by
+    "MASH" (that brings "Masha and the Bear") nor "M A S H"."""
+    return [t for t in _unique_names(titles) if _collapse_acronyms(t) != t][:1]
+
+
 def season_queries(titles: list[str], season: int) -> tuple[list[str], list[str]]:
     """WebShare finds a whole season by "Show S03" (measured: Sex Education S03 — all 8 episodes in
     100 results); FastShare answers the plain name; trackers name packs "Show 1. - S03", "komplet"."""
@@ -197,7 +203,7 @@ def season_queries(titles: list[str], season: int) -> tuple[list[str], list[str]
     # the local name first, then the English one (trackers know shows by it) — not every translation
     latin = next((n for n in names if n.isascii() and re.search(r"[A-Za-z]", n)), names[0])
     ddl = _unique_names([f"{names[0]} {ss}", f"{latin} {ss}"]) + [names[0]]
-    return ddl, [f"{latin} {ss}", latin]
+    return ddl, _unique_names([f"{latin} {ss}", latin, *(f"{t} {ss}" for t in _as_written(titles))])
 
 
 async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[int] | None = None,
@@ -295,7 +301,7 @@ async def find_show_packs(cfg: dict, tmdb_id: int) -> dict:
     if not names:
         return {"seasons": tmdb_seasons, "packs": []}
     latin = next((n for n in names if n.isascii() and re.search(r"[A-Za-z]", n)), names[0])
-    queries = _unique_names([latin, f"{latin} komplet", f"{latin} complete", names[0]])
+    queries = _unique_names([latin, f"{latin} komplet", f"{latin} complete", names[0], *_as_written(titles)])
     sources = [s for s in SourceRegistry.get().sources if s.source_type.value in TORRENT_SOURCES]
     results = await search_sources(sources, [], queries)
     runtime = show.get("episode_runtime") or 0
