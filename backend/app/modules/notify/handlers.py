@@ -98,8 +98,10 @@ async def on_offers_found(p: dict) -> None:
     if p.get("kind") == "upgrade":
         await store.add("upgrade", f"Lepší verze: {_name(p)}", what, link=_film(p), permission="library.view",
                         dedup=f"upgrade:{p.get('tmdb_id')}:{best.get('ident')}")
-    else:
-        await store.add("wanted", f"Chci — nalezeno: {_name(p)}", what, level="ok", link="/wanted", permission="wanted",
+    elif not p.get("first"):
+        # found right after adding: Chci shows it (its top bar mark) — the bell only for what turns up later;
+        # who may not download does not get it (it leads to the offers)
+        await store.add("wanted", f"Chci — nalezeno: {_name(p)}", what, level="ok", link="/wanted", permission="download",
                         dedup=f"wanted:{p.get('tmdb_id')}:{best.get('ident')}")
 
 

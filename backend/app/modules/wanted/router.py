@@ -106,6 +106,7 @@ async def add_wanted(body: WantedAdd, user: User = Depends(require("wanted"))):
             # asked for again after it was done: new again (the top bar marks it)
             await db.execute("UPDATE wanted SET profile_id = ?, "
                              "added_at = CASE WHEN status = 'done' THEN ? ELSE added_at END, "
+                             "checked_at = CASE WHEN status = 'done' THEN NULL ELSE checked_at END, "
                              "added_by = CASE WHEN status = 'done' OR added_by = '' OR added_by IS NULL THEN ? ELSE added_by END, "
                              "auto = CASE WHEN status = 'done' THEN ? ELSE auto END, "
                              "status = CASE WHEN status = 'done' THEN 'wanted' ELSE status END "

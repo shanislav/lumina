@@ -165,7 +165,9 @@ async def check(wanted_id: int) -> dict | None:
         await db.close()
     logger.info("Wanted '%s' (%s): %d suitable of %d offers", item["title"], profile.name, len(suitable), len(offers.rows))
     if suitable:
+        # first: the check right after it was added — its result is seen in Chci (no bell for it)
         await events.emit("offers.found", {"kind": "wanted", "wanted_id": wanted_id, "tmdb_id": item["tmdb_id"],
+                                           "first": not item.get("checked_at"),
                                            "title": item["title"], "year": item["year"], "profile": profile.name,
                                            "matches": len(suitable), "best": best})
     return {"status": status, "matches": len(suitable)}

@@ -62,3 +62,15 @@ async def test_the_admin_clears_the_history_repeats_stay_out(db):
 def test_only_an_admin_clears():
     from app.core.auth import ADMIN_ONLY
     assert ADMIN.can(ADMIN_ONLY) and not VIEWER.can(ADMIN_ONLY)
+
+
+async def test_a_wanted_film_found_right_after_adding_rings_no_bell(db):
+    """Chci shows it then (its top bar mark); the bell is for a film that turns up later — and not for who may not
+    download (it leads to the offers)."""
+    p = {"kind": "wanted", "tmdb_id": 7, "title": "Film", "year": "2000", "best": {"ident": "a"}}
+    await handlers.on_offers_found({**p, "first": True})
+    assert (await store.listing(ADMIN))["items"] == []
+    await handlers.on_offers_found({**p, "first": False})
+    assert [i["title"] for i in (await store.listing(ADMIN))["items"]] == ["Chci — nalezeno: Film (2000)"]
+    kid = User(9, "ema", "user", frozenset({"search", "wanted"}))
+    assert (await store.listing(kid))["items"] == []

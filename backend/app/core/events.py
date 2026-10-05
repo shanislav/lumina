@@ -19,7 +19,8 @@ Known events:
                            files came into film folders besides an import (subtitles) — Plex rescans
     library.files_removed  {folders: [path, ...]}
                            files of the library were deleted (a version, a whole movie folder) — Plex rescans
-    offers.found           {kind: "wanted" | "upgrade", wanted_id, tmdb_id, title, year, profile, matches, best}
+    offers.found           {kind: "wanted" | "upgrade", wanted_id, tmdb_id, title, year, profile, matches, best,
+                            first (wanted: the check right after adding)}
                            a check found offers the profile allows (for a future notification module)
     download.failed        {download_id, tmdb_id, title, year, content_type, library_action, reason} — a download
                            ended with an error (not a cancel)
