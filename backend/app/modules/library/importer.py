@@ -457,9 +457,15 @@ def _absolute_episode(order: list[tuple[int, int]], number: int) -> tuple[int, i
     return order[number - 1] if 0 < number <= len(order) else None
 
 
-async def _lumina_show(client: TMDBClient, db, episodes: list[dict], show_name: str, year) -> tuple[int | None, str]:
-    """(TMDB id, title) of the show by Lumina's own means: the library, NFO files, TMDB search by the
-    folder's and the files' names (a title that really is the name first)."""
+async def _lumina_show(client: TMDBClient, db, episodes: list[dict], show_name: str, year,
+                       folder: str = "") -> tuple[int | None, str]:
+    """(TMDB id, title) of the show by Lumina's own means: the folder's "{tmdb-ID}" (Lumina and its renamer name
+    a show's folder so — "MASH (1972) {tmdb-918}" is M*A*S*H, never a search's "Mash Up"), the library, NFO
+    files, TMDB search by the folder's and the files' names (a title that really is the name first)."""
+    m = re.search(r"\{tmdb-(\d+)\}", folder or "")
+    if m:
+        row = await (await db.execute("SELECT title FROM library_shows WHERE tmdb_id = ?", (int(m.group(1)),))).fetchone()
+        return int(m.group(1)), (row[0] if row else "")
     counts: dict[str, int] = {}
     for ep in episodes:
         n = ep.get("file_show_name") or ""
@@ -632,7 +638,7 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
 
             # who says which show it is: the user (a fix in the inventory), Plex (its matches were often
             # fixed by hand), Lumina (folder and file names → TMDB)
-            lumina_id, lumina_title = await _lumina_show(client, db, episodes, show_name, year)
+            lumina_id, lumina_title = await _lumina_show(client, db, episodes, show_name, year, folder)
             plex_votes: dict[int, int] = {}
             for ep in episodes:
                 if (ep.get("hint") or {}).get("tmdb_id"):

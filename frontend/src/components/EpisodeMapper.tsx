@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   TvAiSuggestion, TvCatalogEpisode, TvFolderDetail, TvFolderFile, getScanStatus, getTvFolder, scanLibrary,
-  setEpisodeOverride, suggestEpisodesAi,
+  applyEpisodeOverrides, setEpisodeOverride, suggestEpisodesAi,
 } from "@/lib/api";
 
 /**
@@ -43,6 +43,7 @@ export default function EpisodeMapper({ folder, title, onClose, onSaved }: {
   const [ai, setAi] = useState<Record<string, TvAiSuggestion>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [saved, setSaved] = useState<number | null>(null);
+  const [renamed, setRenamed] = useState<{ renamed: number; asked: number } | null>(null);
 
   async function load() {
     try {
@@ -119,6 +120,9 @@ export default function EpisodeMapper({ folder, title, onClose, onSaved }: {
         }
       }
       setSaved(changes.length);
+      // the new names at once (Plex learns from them), the library list by a scan in the background
+      const set = changes.filter(([, v]) => v).map(([file]) => file);
+      setRenamed(set.length ? await applyEpisodeOverrides(set).catch(() => null) : null);
       await load();
       onSaved?.();
     } catch (e) {
@@ -210,7 +214,10 @@ export default function EpisodeMapper({ folder, title, onClose, onSaved }: {
 
         {saved !== null && (
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-emerald-800 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-200">
-            Uloženo {saved} změn. Projeví se po skenu knihovny, na disku pak přes „Opravit názvy seriálů“.
+            Uloženo {saved} změn.
+            {renamed && renamed.renamed > 0 ? ` Přejmenováno ${renamed.renamed} souborů — Plex je hned načte, knihovna se přeskenuje.`
+              : renamed && renamed.asked ? " Názvy souborů se teď změnit nedaly (kolize nebo vypnutý renamer) — „Opravit názvy seriálů“."
+              : " Projeví se po skenu knihovny."}
             <button onClick={rescan} disabled={!!busy} className="rounded bg-emerald-700 px-2 py-0.5 text-white hover:bg-emerald-600 disabled:opacity-50">
               {busy === "scan" ? "Skenuji…" : "Skenovat teď"}
             </button>

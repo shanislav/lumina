@@ -676,9 +676,48 @@ async def tv_file_span(body: TvFileSpan) -> dict:
     try:
         await tv_inventory.set_file_span(db, path, body.count)
         held = await episodes.apply_span(db, path, body.count)
+        new = (await _rename_now(db, [path])).get(path)         # "S01E01-E02": Plex lists it under each
     finally:
         await db.close()
-    return {"ok": True, "episodes": held}
+    return {"ok": True, "episodes": held, "renamed": os.path.basename(new) if new else None}
+
+
+class TvApplyOverrides(BaseModel):
+    files: list[str]                  # relative to the TV library: the files whose episode the user just set
+
+
+@router.post("/tv/apply-overrides", dependencies=[Depends(require("library.edit"))])
+async def tv_apply_overrides(body: TvApplyOverrides) -> dict:
+    """After "Upravit díly" saved the user's word on which episode each file is: those files get their new names
+    at once, together (two files trading numbers too) — Plex scans their folder; the library list follows by a
+    scan in the background."""
+    import json as _json
+    from app.config import tv_library_dir
+    from app.modules.library import tv_inventory
+    root = tv_library_dir(await get_effective_settings())
+    db = await get_db()
+    try:
+        manual = await tv_inventory.episode_overrides(db)
+        paths = []
+        for rel in body.files[:500]:
+            path = os.path.normpath(os.path.join(root, rel))
+            if not path.startswith(os.path.normpath(root) + os.sep) or path not in manual:
+                continue
+            season, episode, note = manual[path]
+            row = await (await db.execute("SELECT facts FROM tv_files WHERE file_path = ?", (path,))).fetchone()
+            if not row:
+                continue
+            facts = _json.loads(row[0] or "{}")
+            facts["manual"] = [season, episode, note]
+            await db.execute("UPDATE tv_files SET season = ?, episodes = ?, facts = ? WHERE file_path = ?",
+                             (season, _json.dumps([episode]), _json.dumps(facts), path))
+            paths.append(path)
+        await db.commit()
+        renamed = await _rename_now(db, paths)
+    finally:
+        await db.close()
+    importer.start_scan(False)                  # the library's episodes by the new names
+    return {"renamed": len(renamed), "asked": len(paths)}
 
 
 class TvNaming(BaseModel):
@@ -976,7 +1015,7 @@ async def tv_audio_language(body: AudioLanguage) -> dict:
             except (ValueError, RuntimeError, OSError) as e:
                 errors.append(f"{os.path.basename(path)}: {e}")
         # the new language in the file's name too ("[SK]"), as the renamer names an imported episode
-        renamed = await _tv_names_after_language(db, [d["path"] for d in done if d["tracks"]])
+        renamed = await _rename_now(db, [d["path"] for d in done if d["tracks"]])
         for d in done:
             new = renamed.get(d.pop("path"))
             if new:
@@ -986,7 +1025,10 @@ async def tv_audio_language(body: AudioLanguage) -> dict:
     return {"done": done, "errors": errors}
 
 
-async def _tv_names_after_language(db, paths: list[str]) -> dict[str, str]:
+async def _rename_now(db, paths: list[str]) -> dict[str, str]:
+    """The user changed something of these files (their sound language, how many episodes one holds, which
+    episode it is): their new names at once — Plex learns it only from a file's name, the renamer's folder scan
+    of Plex follows (organize_tv.rename_files). Only with the renamer on."""
     from app.config import tv_library_dir
     from app.db import get_automation
     from app.modules.library import organize_tv
@@ -997,8 +1039,8 @@ async def _tv_names_after_language(db, paths: list[str]) -> dict[str, str]:
     client = TMDBClient(cfg.get("tmdb_api_key", ""))
     try:
         return await organize_tv.rename_files(db, client, tv_library_dir(cfg), paths)
-    except Exception as e:  # noqa: BLE001 — the language is in the file already; the name waits for the renamer
-        logger.warning("Renaming after a sound language change failed: %s", e)
+    except Exception as e:  # noqa: BLE001 — the change is in Lumina already; the name waits for the renamer
+        logger.warning("Renaming after the user's change failed: %s", e)
         return {}
     finally:
         await client.close()

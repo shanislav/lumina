@@ -132,7 +132,11 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
                       title="Když soubor obsahuje víc dílů (dvojdílná premiéra v jednom souboru) — počítá se za všechny a přejmenuje se na „E01-E02“">
                       Díly v souboru:
                       <select value={data.in_file.episodes.length}
-                        onChange={async (e) => { await setFileSpan(v.file_path, Number(e.target.value)); await load(); onChanged(); }}
+                        onChange={async (e) => {
+                          const r = await setFileSpan(v.file_path, Number(e.target.value));
+                          setLangMsg(r.renamed ? `přejmenováno na ${r.renamed}` : "uloženo");
+                          await load(); onChanged();
+                        }}
                         className={`rounded border bg-zinc-950 px-1 py-0.5 text-[11px] ${data.in_file.suggested && data.in_file.said == null ? "border-amber-600 text-amber-200" : "border-zinc-700 text-zinc-200"}`}>
                         {data.in_file.choices.map((c) => <option key={c.count} value={c.count}>{c.label}</option>)}
                       </select>

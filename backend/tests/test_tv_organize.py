@@ -406,3 +406,15 @@ async def test_a_new_sound_language_goes_into_the_name_in_place(db_tv):
     assert os.path.exists(other)                                                       # only the file asked for
     ep = await (await db.execute("SELECT file_path FROM library_episodes WHERE episode = 3")).fetchone()
     assert ep[0] == new
+
+
+def test_a_shows_folder_name_stays_when_it_is_one_of_its_names():
+    """M*A*S*H imported before Plex knew it: "MASH" (no stars in a file name). Plex then calls it "M.A.S.H." —
+    the renamer does not rename the whole show for that."""
+    details = {"title": "M*A*S*H", "original_title": "M*A*S*H", "original_language": "en",
+               "titles_by_lang": {"en": "M*A*S*H", "fr": "M.A.S.H."}}
+    st = {"language": "cs", "keep_local_original": True}
+    assert organize_tv.folder_title("MASH (1972) {tmdb-918}") == "MASH"
+    assert organize_tv.show_title(details, st, "M.A.S.H.", "MASH") == "M*A*S*H"
+    assert organize_tv.show_title(details, st, "M.A.S.H.", "") == "M.A.S.H."           # a new show: Plex's name
+    assert organize_tv.show_title(details, st, "", "Něco jiného") == "M*A*S*H"

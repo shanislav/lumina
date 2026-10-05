@@ -88,13 +88,28 @@ def _named(title: str) -> str:
     return title if naming.episode_title(title or "") else ""
 
 
-def show_title(details: dict, settings: dict, plex_title: str = "") -> str:
+def folder_title(folder: str) -> str:
+    """The show's name in its folder's name: "MASH (1972) {tmdb-918}" → "MASH"."""
+    name = re.sub(r"\s*\{tmdb-\d+\}", "", os.path.basename(folder or ""))
+    return re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", name).strip()
+
+
+def show_title(details: dict, settings: dict, plex_title: str = "", current: str = "") -> str:
+    """The show's name in the library: the renamer's language (TMDB), Plex's name when it is one of the show's
+    own; and the name its folder has already when that is one of them too ("MASH" = "M*A*S*H" without the stars
+    a file name can not have) — a show is not renamed once Plex has scanned it under its own name."""
     tmdb = naming.pick_title(details.get("titles_by_lang") or {}, details.get("original_language", ""),
                              details.get("original_title", ""), settings["language"], settings["keep_local_original"]) \
         or details.get("title", "")
-    known = {t.casefold() for t in [*(details.get("titles_by_lang") or {}).values(), details.get("original_title") or "",
-                                    details.get("title") or "", *(details.get("titles") or [])] if t}
-    return plex_title if plex_title and plex_title.casefold() in known else tmdb
+    names = [*(details.get("titles_by_lang") or {}).values(), details.get("original_title") or "",
+             details.get("title") or "", *(details.get("titles") or [])]
+    known = {t.casefold() for t in names if t}
+    chosen = plex_title if plex_title and plex_title.casefold() in known else tmdb
+    if current and naming.sanitize(chosen).casefold() != current.casefold():
+        for name in [tmdb, *names]:
+            if name and naming.sanitize(name).casefold() == current.casefold():
+                return name
+    return chosen
 
 
 _PT = re.compile(r"(?i)[ ._-]+(?:pt|part|cd)\s?(\d)\s*$")
@@ -450,7 +465,7 @@ async def plan_show(db, client, folder: str, root: str, settings: dict | None = 
     if not details:
         raise OrganizeError("Nelze načíst údaje seriálu z TMDB")
     settings = settings or await naming_settings()
-    title = show_title(details, settings, f["plex_title"] or "")
+    title = show_title(details, settings, f["plex_title"] or "", folder_title(folder))
     media = {r[0]: json.loads(r[1] or "{}") for r in await (await db.execute(
         "SELECT file_path, media FROM tv_media WHERE file_path IN (SELECT file_path FROM tv_files WHERE folder = ?)",
         (folder,))).fetchall()}

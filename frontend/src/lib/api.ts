@@ -2080,12 +2080,21 @@ export async function setNoDub(tmdbId: number, season: number, episode: number, 
 }
 
 /** How many episodes one file holds (a two-part premiere stored whole); null = the name decides again. */
-export async function setFileSpan(filePath: string, count: number | null): Promise<number[]> {
+export async function setFileSpan(filePath: string, count: number | null): Promise<{ episodes: number[]; renamed: string | null }> {
   const res = await apiFetch(`${API_BASE}/api/library/tv/file-span`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file_path: filePath, count }),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Uložení selhalo: ${res.status}`);
-  return (await res.json()).episodes;
+  return res.json();
+}
+
+/** After "Upravit díly" saved: the files get their new names at once (Plex scans them), the library a scan. */
+export async function applyEpisodeOverrides(files: string[]): Promise<{ renamed: number; asked: number }> {
+  const res = await apiFetch(`${API_BASE}/api/library/tv/apply-overrides`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ files }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+  return res.json();
 }
 
 export async function setEpisodeOverride(file: string, season: number | null, episode: number | null, note = ""): Promise<void> {

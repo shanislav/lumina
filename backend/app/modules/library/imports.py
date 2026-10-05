@@ -306,7 +306,7 @@ async def _ensure_show(db, tmdb_id: int, title: str, year: str) -> None:
                      tuple(values.values()))
 
 
-async def _tv_names(db, tmdb_id: int, title: str, year: str) -> dict | None:
+async def _tv_names(db, tmdb_id: int, title: str, year: str, show_root: str | None = None) -> dict | None:
     """What a new episode is named by when the renamer is on: the TV templates, the show's title in the
     renamer's language, TMDB's episode names — as the TV renamer names the library."""
     from app.modules.library import organize_tv
@@ -320,7 +320,9 @@ async def _tv_names(db, tmdb_id: int, title: str, year: str) -> dict | None:
     settings = await naming_settings()
     plex = await (await db.execute("SELECT plex_title FROM tv_folders WHERE tmdb_id = ? AND plex_title != '' LIMIT 1",
                                    (tmdb_id,))).fetchone()
-    show_title = organize_tv.show_title(details, settings, plex[0] if plex else "") or title
+    # an episode of a show the library has: the name its folder has (no "M.A.S.H." files in "MASH")
+    current = organize_tv.folder_title(show_root) if show_root else ""
+    show_title = organize_tv.show_title(details, settings, plex[0] if plex else "", current) or title
     titles = {(r[0], r[1]): r[2] or "" for r in await (await db.execute(
         "SELECT season, episode, episode_title FROM library_episodes WHERE show_tmdb_id = ?", (tmdb_id,))).fetchall()}
     return {"settings": settings, "title": show_title, "info": {"tmdb_id": tmdb_id, "year": details.get("year") or year},
@@ -576,7 +578,7 @@ async def import_episode(payload: dict) -> None:
                 "ORDER BY season, episode", (tmdb_id,))).fetchall()
         show_root, season_dirs = _show_folders(root, rows)
         renamer = await get_automation("renamer")
-        names = await _tv_names(db, tmdb_id, title, year) if tmdb_id and renamer and renamer["enabled"] else None
+        names = await _tv_names(db, tmdb_id, title, year, show_root) if tmdb_id and renamer and renamer["enabled"] else None
         if not show_root and names:
             folder_rel, _s, _f = naming.episode_paths(names["info"], 1, [1], {}, "", names["title"], ".mkv",
                                                       folder_format=names["settings"]["tv_folder_format"])
