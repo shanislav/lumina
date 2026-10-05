@@ -59,7 +59,7 @@ async def show_with_seasons(tmdb_id: int, fresh: bool = False) -> tuple[dict, di
     return show, episodes
 
 
-@router.get("/{tmdb_id}", dependencies=[Depends(require("search"))])
+@router.get("/{tmdb_id:int}", dependencies=[Depends(require("search"))])
 async def series_detail(tmdb_id: int, fresh: bool = False) -> dict:
     """A TV show's page: the show, its settings, and every season with the state of each episode
     (owned / temp = owned without CZ/SK, waits for the dub / missing / upcoming)."""
@@ -106,7 +106,7 @@ class NoDub(BaseModel):
     on: bool = True
 
 
-@router.put("/{tmdb_id}/episode/{season}/{episode}/no-dub", dependencies=[Depends(require("library.edit"))])
+@router.put("/{tmdb_id:int}/episode/{season}/{episode}/no-dub", dependencies=[Depends(require("library.edit"))])
 async def episode_no_dub(tmdb_id: int, season: int, episode: int, body: NoDub) -> dict:
     """The user knows the episode never got a dub (South Park S14E05–06): it waits for none."""
     await store.set_no_dub(tmdb_id, season, episode, body.on)
@@ -117,7 +117,7 @@ class SettingsBody(BaseModel):
     values: dict              # only the keys to change: profile_id, lang_mode, torrent, auto_new, auto_from, auto_dub (None = default)
 
 
-@router.put("/{tmdb_id}/settings", dependencies=[Depends(require("library.edit"))])
+@router.put("/{tmdb_id:int}/settings", dependencies=[Depends(require("library.edit"))])
 async def series_settings(tmdb_id: int, body: SettingsBody) -> dict:
     show = {}
     try:
@@ -149,7 +149,7 @@ async def search_season(tmdb_id: int, season: int, wanted: list[int], torrent: b
     return await find_season_offers(cfg, tmdb_id, season, wanted, torrent=torrent, by_name=by_name, alt=alt)
 
 
-@router.get("/{tmdb_id}/season/{season}/offers", dependencies=[Depends(require("search"))])
+@router.get("/{tmdb_id:int}/season/{season}/offers", dependencies=[Depends(require("search"))])
 async def season_offers(tmdb_id: int, season: int, episodes: str = "") -> dict:
     """Files of a whole season grouped into releases, torrent packs, and a plan: a file for each wanted
     episode (default: the missing ones and the ones waiting for a dub)."""
@@ -171,7 +171,7 @@ async def season_offers(tmdb_id: int, season: int, episodes: str = "") -> dict:
             "plan": offers.plan, "movie": offers.ctx.as_dict()}
 
 
-@router.get("/{tmdb_id}/packs", dependencies=[Depends(require("search"))])
+@router.get("/{tmdb_id:int}/packs", dependencies=[Depends(require("search"))])
 async def show_packs(tmdb_id: int) -> dict:
     """Torrents of the whole show ("komplet", "1-26. série", "S01-S10") — beside the season search."""
     from app.core.offers.season import find_show_packs
@@ -188,7 +188,7 @@ class PackDownload(BaseModel):
     replace_owned: bool = False  # episodes the user has go for the pack's (else the pack's copies stay out)
 
 
-@router.post("/{tmdb_id}/pack/download", dependencies=[Depends(require("download"))])
+@router.post("/{tmdb_id:int}/pack/download", dependencies=[Depends(require("download"))])
 async def pack_download(tmdb_id: int, body: PackDownload) -> dict:
     """Download a pack of the whole show: every episode goes to its season; what the user has stays, unless
     ``replace_owned``; files that are no episode (a film, extras) stay in the downloads."""
@@ -248,7 +248,7 @@ async def _verify_packs(found: dict, seasons: dict[int, int]) -> list[dict]:
     return packs
 
 
-@router.post("/{tmdb_id}/want", dependencies=[Depends(require("library.edit"))])
+@router.post("/{tmdb_id:int}/want", dependencies=[Depends(require("library.edit"))])
 async def want_show(tmdb_id: int, body: WantBody) -> dict:
     """"Chci" of a show not owned — fully automatic: the quality profile and the sound chosen, Lumina decides
     where from. A pack of the whole show on a torrent (one uploader, everything at once) when a fitting one exists —
@@ -293,14 +293,14 @@ async def want_show(tmdb_id: int, body: WantBody) -> dict:
     return {"way": "episodes", "why": why, "job": job}
 
 
-@router.get("/{tmdb_id}/overview", dependencies=[Depends(require("search"))])
+@router.get("/{tmdb_id:int}/overview", dependencies=[Depends(require("search"))])
 async def get_overview(tmdb_id: int) -> dict:
     """Přehled zdrojů: the last overview of the show (or none) and whether one is being built."""
     from app.modules.series import overview
     return {"data": await overview.stored(tmdb_id), "job": overview.job_status(tmdb_id)}
 
 
-@router.post("/{tmdb_id}/overview", dependencies=[Depends(require("search"))])
+@router.post("/{tmdb_id:int}/overview", dependencies=[Depends(require("search"))])
 async def start_overview(tmdb_id: int) -> dict:
     """Build the overview in the background (a season search each, gently to WebShare / FastShare)."""
     from app.modules.series import overview
@@ -312,7 +312,7 @@ class SeasonDownload(BaseModel):
     replace_owned: bool = True # owned episodes (EN waiting for the dub) are replaced by the new files
 
 
-@router.post("/{tmdb_id}/season/{season}/download", dependencies=[Depends(require("download"))])
+@router.post("/{tmdb_id:int}/season/{season}/download", dependencies=[Depends(require("download"))])
 async def season_download(tmdb_id: int, season: int, body: SeasonDownload) -> dict:
     """Download the chosen files of a season (the plan, or a pack) — each like "Download" in the file table."""
     show, _ = await show_with_seasons(tmdb_id)
@@ -480,7 +480,7 @@ async def automation_run(body: AutoRun) -> dict:
     return auto.enqueue(ids) if ids else auto.job_status()
 
 
-@router.get("/{tmdb_id}/automation", dependencies=[Depends(require("search"))])
+@router.get("/{tmdb_id:int}/automation", dependencies=[Depends(require("search"))])
 async def show_automation(tmdb_id: int) -> dict:
     from app.modules.series import auto
     return {"records": [r for r in await auto.records(tmdb_id) if r["status"] != "dismissed"],
@@ -491,7 +491,7 @@ class FoundItems(BaseModel):
     keys: list[list]          # [[season, episode, kind]]
 
 
-@router.post("/{tmdb_id}/automation/download", dependencies=[Depends(require("download"))])
+@router.post("/{tmdb_id:int}/automation/download", dependencies=[Depends(require("download"))])
 async def automation_download(tmdb_id: int, body: FoundItems) -> dict:
     from app.modules.series import auto
     return await auto.download_found(tmdb_id, [(int(k[0]), int(k[1]), str(k[2])) for k in body.keys])
@@ -501,13 +501,13 @@ class CancelAll(BaseModel):
     stop: bool = True          # also switch the show's automation off
 
 
-@router.post("/{tmdb_id}/automation/cancel", dependencies=[Depends(require("library.edit")), Depends(require("download"))])
+@router.post("/{tmdb_id:int}/automation/cancel", dependencies=[Depends(require("library.edit")), Depends(require("download"))])
 async def automation_cancel(tmdb_id: int, body: CancelAll) -> dict:
     from app.modules.series import auto
     return await auto.cancel_all(tmdb_id, body.stop)
 
 
-@router.post("/{tmdb_id}/automation/dismiss", dependencies=[Depends(require("library.edit"))])
+@router.post("/{tmdb_id:int}/automation/dismiss", dependencies=[Depends(require("library.edit"))])
 async def automation_dismiss(tmdb_id: int, body: FoundItems) -> dict:
     from app.modules.series import auto
     for k in body.keys:
