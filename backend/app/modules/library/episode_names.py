@@ -270,6 +270,33 @@ def release_titles(name: str, show_names=()) -> list[str]:
     return out
 
 
+def part_episode(title: str, cat: dict[tuple[int, int], dict], season: int | None
+                 ) -> tuple[tuple[int, int] | None, int | None]:
+    """A part of a two-part episode, which TMDB names otherwise (the season's episodes only):
+    - "Sbohem Radare" (no part) when TMDB has "Sbohem Radare, 1. část" and "2. část": the 1st one;
+    - "Vítej v Koreji II" when TMDB has one "Vítej v Koreji" of double length: that episode, part 2
+      (the file is stored as its "- pt2", Plex plays the parts as one).
+    (key, the file's part when it is a part of one TMDB episode, else None) — (None, None) when nothing fits."""
+    if season is None:
+        return None, None
+    part = tv_inventory._part(title)
+    base = tv_inventory.without_part(title) if part else title
+    here = {k: v for k, v in cat.items() if k[0] == season}
+    runtimes = sorted(v.get("runtime") or 0 for v in here.values() if v.get("runtime"))
+    typical = runtimes[len(runtimes) // 2] if runtimes else 0
+
+    def fits(a: str, b: str) -> bool:
+        return tv_inventory.title_match(a, b)[0] >= tv_inventory.STRONG
+
+    if part is None:
+        firsts = [k for k, v in here.items() if any(tv_inventory._part(n) == 1 and fits(title, tv_inventory.without_part(n))
+                                                     for n in _names(v))]
+        return (firsts[0], None) if len(firsts) == 1 else (None, None)
+    doubles = [k for k, v in here.items() if any(tv_inventory._part(n) is None and fits(base, n) for n in _names(v))
+               and (not typical or (v.get("runtime") or 0) >= 1.5 * typical)]
+    return (doubles[0], part) if len(doubles) == 1 else (None, None)
+
+
 def release_episode(name: str, cat: dict[tuple[int, int], dict], season: int | None, show_names=()
                     ) -> tuple[tuple[int, int], bool, str] | None:
     """(the TMDB episode a release's own episode name is, sure, the name) — None without a name TMDB knows.
@@ -277,6 +304,12 @@ def release_episode(name: str, cat: dict[tuple[int, int], dict], season: int | N
     unsure = None
     for title in release_titles(name, show_names):
         key, sure = best(title, cat, season)
+        if key and season is not None and key[0] != season:
+            # a part of the season's two-part episode before a name of another season ("Kamarádi ve zbrani":
+            # S06 "…, 1. část", not S04 "Zbraň")
+            own, _part = part_episode(title, cat, season)
+            if own:
+                return own, True, title
         if key and sure and len(tv_inventory.normalized(title).split()) == 1 \
                 and tv_inventory.normalized(title) not in {tv_inventory.normalized(t) for t in _names(cat[key])}:
             sure = False                 # one word ("speciál") inside a longer name ("Vietnamský speciál"): any
@@ -284,6 +317,11 @@ def release_episode(name: str, cat: dict[tuple[int, int], dict], season: int | N
             return key, True, title
         if key and not unsure:
             unsure = (key, False, title)                    # "speciál" fits many — a surer name may follow
+    if not unsure:
+        for title in release_titles(name, show_names):     # a two-part episode TMDB names otherwise
+            key, _part = part_episode(title, cat, season)
+            if key:
+                return key, True, title
     return unsure
 
 

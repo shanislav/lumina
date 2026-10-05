@@ -61,3 +61,17 @@ def test_the_scan_and_the_import_read_the_same_names():
     assert importer._bare_title is episode_names.bare_title
     assert "Davný protivník" in episode_names.release_titles("37.Davný protivník.avi")
     assert episode_names.absolute_in_name("[CNT]_Naruto_153_[1080p].mkv") == 153
+
+
+def test_mash_two_parts_and_letters():
+    from app.modules.library import episode_names as en
+    cat = {(4, 13): {"cs": "Zbraň", "en": "The Gun", "runtime": 25},
+           (6, 11): {"cs": "Hrobař", "en": "The Grave", "runtime": 25},
+           (6, 12): {"cs": "Kamarádi ve zbrani, 1. část", "en": "Comrades in Arms: Part 1", "runtime": 25},
+           (6, 13): {"cs": "Kamarádi ve zbrani, 2. část", "en": "Comrades in Arms: Part 2", "runtime": 25},
+           (7, 20): {"cs": "J*E*S*K*Y*N*Ě", "en": "C*A*V*E", "runtime": 25},
+           (7, 21): {"cs": "Pozor na Flagga, chlapci!", "en": "Hot Lips Is Back in Town", "runtime": 25}}
+    hit = lambda n, s: en.release_episode(n, cat, s, ["M*A*S*H"])[:2]          # noqa: E731
+    assert hit("S06E13[135].Kamarádi ve zbrani.mkv", 6) == ((6, 12), True)        # the 1st part, not S04 "Zbraň"
+    assert hit("S06E14[136].Kamarádi ve zbrani.II.mkv", 6) == ((6, 13), True)
+    assert hit("S07E21[168].J.E.S.K.Y.N.Ě.mkv", 7) == ((7, 20), True)

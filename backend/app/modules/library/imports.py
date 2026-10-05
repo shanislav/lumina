@@ -349,6 +349,19 @@ def _in_pack(path: str, season: int | None, episodes: list[int], pack_season: in
 
 
 UNSORTED_DIR = "Nezařazeno"
+_PT = re.compile(r"(?i) - pt(\d)\.[a-z0-9]{2,4}$")
+
+
+def file_part(name: str, cat: dict, season: int | None, episodes: list[int], show_names=()) -> int | None:
+    """The part of a two-part episode TMDB keeps as one, which this file is ("Vítej v Koreji II" → 2) — None
+    for a whole episode."""
+    if season is None or len(episodes) != 1 or not cat:
+        return None
+    for title in episode_names.release_titles(name, show_names):
+        key, part = episode_names.part_episode(title, cat, season)
+        if key == (season, episodes[0]) and part:
+            return part
+    return None
 
 
 def is_episode_length(duration_s: int, cat: dict) -> bool:
@@ -576,6 +589,11 @@ async def import_episode(payload: dict) -> None:
             season, episodes, why = _which_episode(os.path.basename(path), season, episodes, cat,
                                                    action if path == src and not extras else {}, [title])
             dub_over = False
+            # a part of a two-part episode TMDB keeps as one ("Vítej v Koreji II"): "- pt2" next to the first part
+            part = file_part(os.path.basename(path), cat, season, episodes, [title])
+            owned_path = owned.get((season, episodes[0])) if season is not None and episodes else None
+            if part is None and owned_path and _PT.search(owned_path) and _PT.search(owned_path).group(1) != "1":
+                part = 1                                    # the 2nd part came first: this one is the 1st
             if (path != src or pack) and season is not None and episodes and not action.get("replace_owned", True) \
                     and all((season, ep) in owned for ep in episodes) and all((season, ep) in owned_foreign for ep in episodes):
                 new_langs = {a["lang"] for a in _lang_from_release(await probe_async(path), action.get("release") or
@@ -584,7 +602,7 @@ async def import_episode(payload: dict) -> None:
                 if dub_over:
                     logger.info("%s: S%02dE%02d owned only without CZ/SK — the dub takes its place", path, season, episodes[0])
             if (path != src or pack) and season is not None and episodes and not action.get("replace_owned", True) \
-                    and all((season, ep) in owned for ep in episodes) and not dub_over:
+                    and all((season, ep) in owned for ep in episodes) and not dub_over and part is None:
                 logger.info("%s: S%02dE%02d is owned already — left in downloads", path, season, episodes[0])
                 left.append([os.path.basename(path), f"S{season:02d}E{episodes[0]:02d} už máš"])
                 continue
@@ -599,7 +617,22 @@ async def import_episode(payload: dict) -> None:
                 folder = season_dirs.get(season) or os.path.join(show_root, season_rel)
             else:
                 folder = season_dirs.get(season) or (os.path.join(show_root, f"Season {season:02d}") if season else show_root)
+            if part and not _PT.search(name):
+                name = f"{os.path.splitext(name)[0]} - pt{part}{os.path.splitext(name)[1]}"
             _ensure_dir(folder)
+            if part and part >= 2 and owned_path and os.path.exists(owned_path) and not _PT.search(owned_path):
+                # the first part was imported as the whole episode: it becomes "- pt1"
+                stem, ext = os.path.splitext(owned_path)
+                first = _unique_path(f"{stem} - pt1{ext}")
+                _move_with_subtitles(owned_path, first)
+                for table in ("library_episodes", "tv_media", "tv_episode_overrides"):
+                    try:
+                        await db.execute(f"UPDATE {table} SET file_path = ? WHERE file_path = ?", (first, owned_path))
+                    except Exception:  # noqa: BLE001 — a table of a module switched off
+                        pass
+                await db.execute("UPDATE library_episodes SET filename = ? WHERE file_path = ?", (os.path.basename(first), first))
+                owned[(season, episodes[0])] = owned_path = first
+                logger.info("S%02dE%02d: two parts — %s", season, episodes[0], os.path.basename(first))
             target = _unique_path(os.path.join(folder, name))
             _move_with_subtitles(path, target)
             targets.append(target)
@@ -626,7 +659,7 @@ async def import_episode(payload: dict) -> None:
                              (target, stat.st_size, stat.st_mtime, json.dumps(media or {})))
             values = (os.path.basename(target), target, stat.st_size, naming.resolution_label(media) or "",
                       ",".join(sorted({a["lang"].upper() for a in media.get("audio", []) if a.get("lang")})))
-            for ep in episodes:
+            for ep in episodes if not (part and part >= 2 and owned_path) else []:     # the 1st part stays the episode's file
                 await db.execute(
                     "INSERT INTO library_episodes (show_tmdb_id, season, episode, filename, file_path, file_size, quality, "
                     "language, has_file) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) "

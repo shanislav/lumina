@@ -200,11 +200,25 @@ def title_score(a: str, b: str) -> float:
     return title_match(a, b)[0]
 
 
+_LETTERS = re.compile(r"\b(?:\w[.*\s]){2,}\w\b\.?")
+
+
+def join_letters(text: str) -> str:
+    """ "J.E.S.K.Y.N.Ě" / "J*E*S*K*Y*N*Ě" / "J E S K Y N Ě" → "JESKYNĚ" (single letters of one word)."""
+    return _LETTERS.sub(lambda m: re.sub(r"[.*\s]", "", m.group(0)), text or "")
+
+
+def without_part(name: str) -> str:
+    """The name without its part ("Sbohem Radare, 1. část" → "Sbohem Radare", "Vítej v Koreji II" → "Vítej v Koreji")."""
+    return re.sub(r"[\s,.:;(-]+$", "", _PART.sub("", name or "")).strip()
+
+
 def title_match(a: str, b: str) -> tuple[float, int]:
     """(title_score, words in common) — of two equally sure names the one sharing more words wins
     ("Davný protivník": TMDB "Dávný protivník" before "Protivníci")."""
     from app.core.naming import episode_title
     from app.utils.tv_parser import normalize_for_search
+    a, b = join_letters(a), join_letters(b)
     wa = {w for w in normalize_for_search(episode_title(a or "")).split() if len(w) > 2} - _COMMON
     wb = {w for w in normalize_for_search(episode_title(b or "")).split() if len(w) > 2} - _COMMON
     if not wa or not wb:
