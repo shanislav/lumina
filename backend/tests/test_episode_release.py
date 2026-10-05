@@ -379,3 +379,26 @@ async def test_the_second_part_of_a_double_episode_is_its_pt2(tmp_path, monkeypa
     assert got[(4, 1)].endswith(" - pt1.mkv")
     s4 = [p.name for p in (tmp_path / "Serials" / "South Park" / "Season 04").iterdir()]
     assert any(n.endswith(" - pt2.mkv") for n in s4) and len(s4) == 3
+
+
+async def test_both_parts_in_one_batch(tmp_path, monkeypatch):
+    """A whole pack at once (its end): the 1st part imported a moment ago becomes "- pt1" too."""
+    from app.modules.library import episode_names
+    season, owned, dl = await _setup(tmp_path, monkeypatch)
+    cat = {(4, 1): {"cs": "Vítej v Koreji", "en": "Welcome to Korea", "runtime": 46, "air": ""},
+           (4, 2): {"cs": "Změna velení", "en": "Change of Command", "runtime": 25, "air": ""},
+           (4, 3): {"cs": "Stalo se jedné noci", "en": "It Happened One Night", "runtime": 25, "air": ""}}
+
+    async def checker(key, tmdb_id, season, show_names=()):
+        return (lambda name: episode_names.release_episode(name, cat, season, show_names)), cat
+    monkeypatch.setattr(episode_names, "release_checker", checker)
+    pack = dl / "MASH" / "S04"
+    pack.mkdir(parents=True)
+    files = [pack / "S04E01[073].Vítej v Koreji.mkv", pack / "S04E02[074].Vítej v Koreji.II.mkv"]
+    for f in files:
+        f.write_bytes(b"x" * 30)
+    await events.emit("download.completed", {
+        "download_id": "p", "tmdb_id": 2190, "title": "South Park", "year": "1997", "content_type": "tv",
+        "path": str(files[0]), "extra_paths": [str(files[1])], "library_action": {"mode": "pack", "replace_owned": False}})
+    s4 = sorted(p.name for p in (tmp_path / "Serials" / "South Park" / "Season 04").iterdir())
+    assert len(s4) == 2 and s4[0].endswith(" - pt1.mkv") and s4[1].endswith(" - pt2.mkv"), s4

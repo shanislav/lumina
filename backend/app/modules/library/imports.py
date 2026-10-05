@@ -669,6 +669,9 @@ async def import_episode(payload: dict) -> None:
                     (tmdb_id, season, ep, *values))
             logger.info("Imported episode S%02d%s → %s", season, "".join(f"E{e:02d}" for e in episodes), target)
             placed.append(f"S{season:02d}" + "".join(f"E{e:02d}" for e in episodes))
+            if not (part and part >= 2):
+                for ep in episodes:                     # the next files of this batch see it (its 2nd part)
+                    owned[(season, ep)] = target
         if tmdb_id and targets:
             await _ensure_show(db, tmdb_id, title, year)
         await db.commit()
