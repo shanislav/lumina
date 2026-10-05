@@ -189,23 +189,32 @@ _TITLE_NOISE = re.compile(r"(?i)\[[^\]]*\]|\([^)]*\)|\b(?:\d{3,4}p|x26[45]|h\.?2
                           r"ai-?upscale|upscale|dvb-?[ct]|sdtv|full ?hd|xvid|divx|dvd|fs)\b.*$")
 
 
+_PART_SUFFIX = re.compile(r"(?i)\s*-\s*pt\s?\d\s*$")
+
+
+def _clean_title(raw: str) -> str:
+    """A name out of the rest of a file name: dots are separators only in a dotted release name
+    ("Dr.Winchester.a.Mr.Hyde" — a name with spaces keeps its "Dr." and "B.J."), no tags, no "- pt2" (the part
+    of a two-part episode stored as two files, not its name)."""
+    raw = _PART_SUFFIX.sub("", raw)
+    text = raw.replace("_", " ")
+    if " " not in text.strip():
+        text = text.replace(".", " ")
+    title = re.sub(r"\s+", " ", _PART_SUFFIX.sub("", _TITLE_NOISE.sub("", text))).strip(" -")
+    return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
+
+
 def title_in_name(filename: str) -> str:
     """The episode's name a file carries after its number ("S12E24 Stockholmský syndrom.mkv")."""
     stem = os.path.splitext(filename)[0]
     m = _TITLE_AFTER.search(stem)
-    if not m:
-        return ""
-    title = _TITLE_NOISE.sub("", m.group(1).replace(".", " ").replace("_", " ")).strip(" -")
-    return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
+    return _clean_title(m.group(1)) if m else ""
 
 
 def bare_title(filename: str) -> str:
     """The episode's name after a bare number ("37.Davný protivník.avi" → "Davný protivník")."""
     m = re.match(r"\s*\d{1,3}\s*[._ -]+\s*(.+)$", os.path.splitext(filename)[0])
-    if not m:
-        return ""
-    title = _TITLE_NOISE.sub("", m.group(1).replace(".", " ").replace("_", " ")).strip(" -")
-    return title if len(re.sub(r"[^A-Za-zÀ-ž]", "", title)) >= 3 else ""
+    return _clean_title(m.group(1)) if m else ""
 
 
 _ABSOLUTE = re.compile(r"(?<![0-9])(\d{3})(?![0-9]|p\b|i\b|\s?kbps)")

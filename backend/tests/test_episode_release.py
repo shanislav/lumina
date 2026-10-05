@@ -433,3 +433,12 @@ async def test_the_import_follows_the_packs_plan(tmp_path, monkeypatch):
     assert (show / "Nezařazeno" / "S04E09.mkv").exists()
     got = {r[:2]: os.path.basename(r[2]) for r in _episodes() if r[0] == 4}
     assert got[(4, 1)].endswith(" - pt1.mkv") and (4, 2) in got
+
+
+def test_a_files_own_episode_name_keeps_its_abbreviations_and_drops_the_part():
+    from app.modules.library.episode_names import bare_title, title_in_name
+    assert title_in_name("MASH - S06E23 - Dr. Winchester a Mr. Hyde [1080p x265] [CS+EN].mkv") == "Dr. Winchester a Mr. Hyde"
+    assert title_in_name("MASH - S07E15 - B.J. Papa San [1080p x265] [CS+EN].mkv") == "B.J. Papa San"
+    assert title_in_name("MASH - S10E01 - To je showbyznys [1080p x265] [CS+EN] - pt2.mkv") == "To je showbyznys"
+    assert title_in_name("Show.S01E02.Dr.Winchester.a.Mr.Hyde.720p.mkv") == "Dr Winchester a Mr Hyde"   # a dotted release
+    assert bare_title("02.Panika.v.Oblázkovém.městě.avi") == "Panika v Oblázkovém městě"
