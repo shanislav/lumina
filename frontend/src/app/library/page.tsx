@@ -866,7 +866,6 @@ export default function LibraryPage() {
               ? showView.ids.map((id) => shows.find((s) => s.tmdb_id === id)).filter((s): s is LibraryShow => !!s)
               : shows.filter((show) => !librarySearch.trim() || matches(librarySearch, show.title, String(show.year ?? "")))
                 .sort((a, b) => a.title.localeCompare(b.title, "cs", { sensitivity: "base", numeric: true }))).map((show) => {
-              const q = showView.byId[show.tmdb_id]?.quality;
               const progress = show.total_episodes > 0
                 ? Math.round((show.owned_episodes / (show.aired_episodes || show.total_episodes)) * 100)
                 : 0;
@@ -899,7 +898,6 @@ export default function LibraryPage() {
                         {show.owned_episodes}/{show.aired_episodes || show.total_episodes}
                       </span>
                       {show.next_air && <span className="text-sky-400/80">· {new Date(show.next_air).toLocaleDateString("cs-CZ", { day: "numeric", month: "numeric" })}</span>}
-                      {q?.below ? <span className="text-orange-300" title="Dílů pod profilem kvality">⚠ {q.below}</span> : null}
                     </div>
                     <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden mt-1.5">
                       <div

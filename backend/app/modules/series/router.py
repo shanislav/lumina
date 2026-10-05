@@ -99,7 +99,39 @@ async def series_detail(tmdb_id: int, fresh: bool = False) -> dict:
     profile = pick_profile(profiles, settings["effective"]["profile_id"], "tv")
     return {"show": show, "settings": settings, "profile": {"id": profile.id, "name": profile.name},
             "seasons": seasons, "totals": totals, "local_langs": local,
-            "in_library": bool(owned)}
+            "in_library": bool(owned), "below": await _below_profile(owned, profile, prefs_from_settings(cfg))}
+
+
+async def _below_profile(owned: dict, profile, prefs) -> list[list[int]]:
+    """The owned episodes whose file does not meet the show's quality profile (by its MediaInfo) — shown on the
+    show's page (the library's tiles stay quiet)."""
+    import json
+
+    from app.core.profiles import block, reached_cutoff, row_from_media
+    paths: dict[str, list[tuple[int, int]]] = {}        # a file of more episodes counts for each of them
+    for key, f in owned.items():
+        if f.get("file_path"):
+            paths.setdefault(f["file_path"], []).append(key)
+    if not paths:
+        return []
+    db = await get_db()
+    try:
+        rows = await (await db.execute(
+            f"SELECT file_path, media FROM tv_media WHERE file_path IN ({','.join('?' * len(paths))})",
+            list(paths))).fetchall()
+    except Exception:  # noqa: BLE001 — the library module off
+        rows = []
+    finally:
+        await db.close()
+    out = []
+    for path, media in rows:
+        if not media or media == "{}":
+            continue
+        f = owned[paths[path][0]]
+        row = row_from_media(json.loads(media), f.get("filename") or "", f.get("size") or 0, prefs)
+        if block(row, profile) is not None or (profile.cutoff and not reached_cutoff(row, profile)):
+            out.extend([s, e] for s, e in paths[path])
+    return sorted(out)
 
 
 class NoDub(BaseModel):

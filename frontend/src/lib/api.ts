@@ -1760,6 +1760,7 @@ export interface SeriesDetail {
   totals: { owned: number; temp: number; unknown: number; missing: number; upcoming: number };
   local_langs: string[];
   in_library: boolean;
+  below?: [number, number][];   // owned episodes whose file does not meet the show's quality profile
 }
 
 export async function getSeries(tmdbId: number, fresh = false): Promise<SeriesDetail> {

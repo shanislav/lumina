@@ -125,6 +125,12 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
             {totals.unknown > 0 && <span className="text-sky-300" title="Zvuková stopa nemá v souboru jazyk — nevím, jestli je česky"> · zvuk nezjištěn {totals.unknown}</span>}
             <span className="text-red-300"> · chybí {totals.missing}</span>
             {totals.upcoming > 0 && <span className="text-zinc-500"> · nevyšlo {totals.upcoming}</span>}
+            {!!data.below?.length && (
+              <span className="text-orange-300/90" title={`Soubory, které nesplňují profil kvality „${data.profile.name}“:\n`
+                + data.below.map(([s, e]) => se(s, e)).join(", ")}>
+                {" "}· pod profilem kvality {data.below.length}
+              </span>
+            )}
             {show.next_episode && (
               <span className="text-zinc-400"> · další díl {se(show.next_episode.season, show.next_episode.episode)} {czDate(show.next_episode.air_date)}</span>
             )}
