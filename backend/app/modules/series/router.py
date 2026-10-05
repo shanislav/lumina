@@ -181,7 +181,7 @@ async def search_season(tmdb_id: int, season: int, wanted: list[int], torrent: b
     return await find_season_offers(cfg, tmdb_id, season, wanted, torrent=torrent, by_name=by_name, alt=alt)
 
 
-@router.get("/{tmdb_id:int}/season/{season}/offers", dependencies=[Depends(require("search"))])
+@router.get("/{tmdb_id:int}/season/{season}/offers", dependencies=[Depends(require("download"))])
 async def season_offers(tmdb_id: int, season: int, episodes: str = "") -> dict:
     """Files of a whole season grouped into releases, torrent packs, and a plan: a file for each wanted
     episode (default: the missing ones and the ones waiting for a dub)."""
@@ -203,7 +203,7 @@ async def season_offers(tmdb_id: int, season: int, episodes: str = "") -> dict:
             "plan": offers.plan, "movie": offers.ctx.as_dict()}
 
 
-@router.get("/{tmdb_id:int}/packs", dependencies=[Depends(require("search"))])
+@router.get("/{tmdb_id:int}/packs", dependencies=[Depends(require("download"))])
 async def show_packs(tmdb_id: int) -> dict:
     """Torrents of the whole show ("komplet", "1-26. série", "S01-S10") — beside the season search."""
     from app.core.offers.season import find_show_packs
@@ -292,7 +292,9 @@ async def want_show(tmdb_id: int, body: WantBody) -> dict:
     show, episodes = await show_with_seasons(tmdb_id)
     meta = {"title": show.get("title") or "", "year": show.get("year") or "", "poster_url": show.get("poster_url")}
     await store.save_settings(tmdb_id, {"profile_id": body.profile_id, "lang_mode": body.lang_mode}, meta)
-    eff = (await store.get_settings(tmdb_id))["effective"]
+    from app.modules.wanted import store as wanted
+    await wanted.show_wanted(tmdb_id)          # someone asked for it in Chci: decided now
+    eff =(await store.get_settings(tmdb_id))["effective"]
     pack, why = None, ""
     if mode == "download" and eff.get("torrent"):
         try:
@@ -332,7 +334,7 @@ async def get_overview(tmdb_id: int) -> dict:
     return {"data": await overview.stored(tmdb_id), "job": overview.job_status(tmdb_id)}
 
 
-@router.post("/{tmdb_id:int}/overview", dependencies=[Depends(require("search"))])
+@router.post("/{tmdb_id:int}/overview", dependencies=[Depends(require("download"))])
 async def start_overview(tmdb_id: int) -> dict:
     """Build the overview in the background (a season search each, gently to WebShare / FastShare)."""
     from app.modules.series import overview

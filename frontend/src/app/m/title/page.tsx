@@ -6,11 +6,14 @@ import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { OwnedVersion, getOwned, searchFiles, versionLabel } from "@/lib/api";
 import Offers from "@/components/mobile/Offers";
+import WantButton from "@/components/WantButton";
+import { useAuth } from "@/components/AuthGate";
 
 /** Phone: a film — what is owned already, and its files (the recommended one big on top). */
 function Title() {
   const p = useSearchParams();
   const router = useRouter();
+  const { can } = useAuth();
   const tmdb = Number(p.get("tmdb") || 0);
   const title = p.get("title") || "";
   const year = p.get("year") || "";
@@ -38,9 +41,15 @@ function Title() {
         </div>
       </div>
       <WantedBanner big movie={{ tmdb_id: tmdb, wikidata_id: wd, title, original_title: orig, year, overview: "", poster_url: poster || null }} />
-      <Offers key={`${tmdb}-${title}`} tmdbId={tmdb || undefined} title={title} year={Number(year) || undefined}
+      {/* who may not download (a child's account) sees no offers — only "Chci" (the admin decides) */}
+      {!can("download") ? (
+        owned.length === 0 && (tmdb || wd) ? (
+          <WantButton big movie={{ tmdb_id: tmdb, wikidata_id: wd, title, original_title: orig, year, overview: "",
+            poster_url: poster || null }} />
+        ) : null
+      ) : <Offers key={`${tmdb}-${title}`} tmdbId={tmdb || undefined} title={title} year={Number(year) || undefined}
         contentType="movie" owned={owned} usePick
-        load={() => searchFiles(year ? `${title} ${year}` : title, undefined, orig, tmdb || undefined, "movie", wd)} />
+        load={() => searchFiles(year ? `${title} ${year}` : title, undefined, orig, tmdb || undefined, "movie", wd)} />}
     </main>
   );
 }

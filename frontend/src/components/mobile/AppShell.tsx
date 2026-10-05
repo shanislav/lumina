@@ -7,6 +7,8 @@ import { usePathname, useRouter } from "next/navigation";
 import NavLinks from "@/components/NavLinks";
 import NotifyButton from "@/components/NotifyButton";
 import { setPro, useMobile } from "@/lib/mobile";
+import { useAuth } from "@/components/AuthGate";
+import { UnseenBadge, useWantedUnseen } from "@/components/WantedMark";
 
 /** Where a page of one version lives in the other (the phone version under /m). */
 const TO_MOBILE: Record<string, string> = { "/": "/m", "/series": "/m/series" };
@@ -27,6 +29,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const m = useMobile();
   const path = usePathname() || "/";
   const router = useRouter();
+  const { can } = useAuth();
+  const unseen = useWantedUnseen(!!m?.mobile && can("wanted"));
 
   useEffect(() => {
     if (!m) return;
@@ -73,7 +77,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
           const on = t.match.includes(path);
           return (
             <Link key={t.href} href={t.href}
-              className={`flex flex-col items-center gap-0.5 py-2.5 text-xs ${on ? "text-violet-300" : "text-zinc-500"}`}>
+              className={`relative flex flex-col items-center gap-0.5 py-2.5 text-xs ${on ? "text-violet-300" : "text-zinc-500"}`}>
+              {t.href === "/m/more" && <UnseenBadge count={unseen} className="absolute right-[calc(50%-1.4rem)] top-1.5" />}
               <svg aria-hidden viewBox="0 0 24 24" className="h-6 w-6" fill={t.label === "Sleduji" && on ? "currentColor" : "none"}
                 stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={t.icon} /></svg>
               {t.label}

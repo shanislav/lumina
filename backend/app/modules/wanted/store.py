@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS wanted (
 );
 """
 
+# when each user last looked at the list — the top bar marks what others added since
+WANTED_SEEN = """
+CREATE TABLE IF NOT EXISTS wanted_seen (
+    user_id INTEGER PRIMARY KEY,
+    seen_at TEXT NOT NULL
+);
+"""
+
 PAUSE_BETWEEN_FILMS_S = 5
 RECORD_EVERY_DAYS = 7          # a film waiting with no digital date known: its recordings remembered this often
 VERIFY_PER_FILM = 10
@@ -72,7 +80,7 @@ async def _run() -> None:
             try:
                 if (await check(wanted_id) or {}).get("status") == "found":
                     _state["found"] += 1
-                    if wanted_id in _auto_download:
+                    if wanted_id in _auto_download and (await get(wanted_id) or {}).get("auto", 1):
                         await request_download(wanted_id)
                 _auto_download.discard(wanted_id)
             except Exception as e:   # one film must not stop the job
@@ -94,7 +102,7 @@ async def on_download_cancelled(payload: dict) -> None:
         return
     db = await get_db()
     try:
-        await db.execute(f"UPDATE wanted SET status = 'found' WHERE status = 'downloading' "
+        await db.execute(f"UPDATE wanted SET status = 'found' WHERE status = 'downloading' AND media_type != 'tv' "
                          f"AND tmdb_id IN ({','.join('?' * len(ids))})", ids)
         await db.commit()
     finally:
@@ -114,8 +122,8 @@ async def get(wanted_id: int) -> dict | None:
 async def check(wanted_id: int) -> dict | None:
     """Search the sources for the film, keep what the profile allows, remember the best."""
     item = await get(wanted_id)
-    if not item or item["status"] == "done":
-        return None
+    if not item or item["status"] == "done" or item.get("media_type") == "tv":
+        return None             # a show asked for: the admin decides what to get (nothing searched)
     _state["current"] = item["title"]
     cfg = await get_effective_settings()
     waiting = await _waiting(cfg, item["tmdb_id"])
@@ -229,7 +237,7 @@ async def on_scheduler_run(payload: dict) -> None:
         return
     db = await get_db()
     try:
-        cursor = await db.execute("SELECT id FROM wanted WHERE status IN ('wanted', 'found') "
+        cursor = await db.execute("SELECT id FROM wanted WHERE status IN ('wanted', 'found') AND media_type != 'tv' "
                                   "ORDER BY checked_at IS NOT NULL, checked_at")
         ids = [r[0] for r in await cursor.fetchall()]
     finally:
@@ -245,8 +253,51 @@ async def on_movie_updated(payload: dict) -> None:
         return
     db = await get_db()
     try:
-        await db.execute("UPDATE wanted SET status = 'done', done_at = ? WHERE tmdb_id = ? AND status != 'done'",
+        await db.execute("UPDATE wanted SET status = 'done', done_at = ? WHERE tmdb_id = ? AND media_type != 'tv' "
+                         "AND status != 'done'",
                          (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), tmdb_id))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def show_wanted(tmdb_id: int) -> None:
+    """The admin set the show to be got (series "Chci"): its request in Chci is done."""
+    db = await get_db()
+    try:
+        await db.execute("UPDATE wanted SET status = 'done', done_at = ? WHERE tmdb_id = ? AND media_type = 'tv' "
+                         "AND status != 'done'", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), tmdb_id))
+        await db.commit()
+    except Exception:  # noqa: BLE001 — the wanted module off (no table)
+        pass
+    finally:
+        await db.close()
+
+
+async def unseen(user_id: int, username: str) -> tuple[int, str]:
+    """How many open items others added since the user last looked at the list (the first look: none), and since
+    when."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db = await get_db()
+    try:
+        row = await (await db.execute("SELECT seen_at FROM wanted_seen WHERE user_id = ?", (user_id,))).fetchone()
+        if not row:
+            await db.execute("INSERT INTO wanted_seen (user_id, seen_at) VALUES (?, ?)", (user_id, now))
+            await db.commit()
+            return 0, now
+        cursor = await db.execute("SELECT COUNT(*) FROM wanted WHERE status != 'done' AND added_at > ? "
+                                  "AND COALESCE(added_by, '') != ? COLLATE NOCASE", (row[0], username))
+        return (await cursor.fetchone())[0], row[0]
+    finally:
+        await db.close()
+
+
+async def seen(user_id: int) -> None:
+    db = await get_db()
+    try:
+        await db.execute("INSERT INTO wanted_seen (user_id, seen_at) VALUES (?, ?) "
+                         "ON CONFLICT(user_id) DO UPDATE SET seen_at = excluded.seen_at",
+                         (user_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         await db.commit()
     finally:
         await db.close()

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { logout } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 import { setPro } from "@/lib/mobile";
+import { UnseenBadge, useWantedUnseen } from "@/components/WantedMark";
 
 /** Phone: "Více" — the rest of Lumina (pages of the full app) and the switch to it. */
 const LINKS: { href: string; label: string; hint: string; perm?: string }[] = [
@@ -14,13 +15,14 @@ const LINKS: { href: string; label: string; hint: string; perm?: string }[] = [
 
 export default function MobileMore() {
   const { user, can } = useAuth();
+  const unseen = useWantedUnseen(can("wanted"));
   return (
     <main className="space-y-4 px-4 py-4">
       <h1 className="text-xl font-semibold text-zinc-100">Více</h1>
       <div className="divide-y divide-zinc-800 rounded-2xl border border-zinc-800 bg-zinc-900/60">
         {LINKS.filter((l) => !l.perm || can(l.perm)).map((l) => (
           <Link key={l.href} href={l.href} className="flex min-h-14 items-center justify-between px-4 py-3 active:bg-zinc-800">
-            <span><span className="block text-base text-zinc-100">{l.label}</span><span className="text-sm text-zinc-500">{l.hint}</span></span>
+            <span><span className="flex items-center gap-2 text-base text-zinc-100">{l.label}{l.href === "/wanted" && <UnseenBadge count={unseen} />}</span><span className="text-sm text-zinc-500">{l.hint}</span></span>
             <span className="text-xl text-zinc-600">›</span>
           </Link>
         ))}

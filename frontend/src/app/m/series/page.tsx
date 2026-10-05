@@ -1,6 +1,7 @@
 "use client";
 
 import { WantShow } from "@/components/SeriesAuto";
+import WantButton from "@/components/WantButton";
 import SeriesSources from "@/components/SeriesSources";
 import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
@@ -150,7 +151,11 @@ function Series() {
       {!data.in_library && can("library.edit") && data.settings.effective.auto_new === "off" && (
         <WantShow big tmdbId={tmdb} aired={totals.missing} onDone={load} langDefault={data.settings.defaults.lang_mode} />
       )}
-      {can("search") && <SeriesSources tmdbId={tmdb} canStart />}
+      {!can("download") && !data.in_library && (
+        <WantButton big movie={{ tmdb_id: tmdb, title: show.title, original_title: show.original_title || "",
+          year: show.year ? String(show.year) : "", overview: "", poster_url: show.poster_url, media_type: "tv" }} />
+      )}
+      {can("download") && <SeriesSources tmdbId={tmdb} canStart />}
       <div className="space-y-2">
         {data.seasons.map((s) => (
           <Season key={s.season_number} data={data} season={s} open={!!open[s.season_number]}

@@ -6,6 +6,7 @@ import { getModules } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 import TasksButton from "@/components/TasksButton";
 import NotifyButton from "@/components/NotifyButton";
+import { UnseenBadge, useWantedUnseen } from "@/components/WantedMark";
 
 /** Top navigation — a page is shown only when the backend module behind it runs
  *  and the user may use it. */
@@ -20,6 +21,7 @@ export default function NavLinks() {
   const { user, can } = useAuth();
   // until the modules are known, show everything (no flicker for the usual setup)
   const [active, setActive] = useState<Set<string> | null>(null);
+  const unseen = useWantedUnseen(can("wanted"));
 
   useEffect(() => {
     getModules()
@@ -30,8 +32,9 @@ export default function NavLinks() {
   return (
     <div className="flex flex-wrap items-center gap-3 sm:gap-4">
       {LINKS.filter((l) => (!l.module || !active || active.has(l.module)) && (!l.perms || l.perms.some(can))).map((l) => (
-        <Link key={l.href} href={l.href} className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
+        <Link key={l.href} href={l.href} className="flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
           {l.label}
+          {l.href === "/wanted" && <UnseenBadge count={unseen} />}
         </Link>
       ))}
       <NotifyButton />

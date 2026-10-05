@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { TMDBMovie, WantedMark, getWantedOf } from "@/lib/api";
+import { TMDBMovie, WantedMark, getWantedOf, getWantedUnseen } from "@/lib/api";
 
 /** "Already on the wanted list" (backend search.mark_known / wanted/of): on posters, in lists, on a film's page —
  *  so nobody adds it again or downloads it by hand meanwhile. */
 
 const STATUS: Record<string, string> = {
   wanted: "hledá se", found: "nalezeno, čeká na stažení", downloading: "stahuje se", auto: "automatika hledá díly",
+  request: "čeká, až rozhodne správce",
 };
 
 const day = (at: string) => {
@@ -47,5 +48,32 @@ export function WantedBanner({ movie, big = false }: { movie: TMDBMovie; big?: b
       <span className="font-semibold">★ Už je v Chci</span>
       <span className={`text-amber-200/80 ${big ? "text-sm" : "text-xs"}`}>{wantedDetail(w)} ›</span>
     </Link>
+  );
+}
+
+/** How many items others added to Chci since this user last looked (the top bar's mark) — asked every minute,
+ *  cleared when the list is opened. */
+export function useWantedUnseen(enabled: boolean): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    const ask = () => getWantedUnseen().then((u) => { if (live) setCount(u.count); }).catch(() => {});
+    const clear = () => setCount(0);
+    ask();
+    const t = setInterval(() => { if (document.visibilityState === "visible") ask(); }, 60_000);
+    window.addEventListener("lumina:wanted-seen", clear);
+    return () => { live = false; clearInterval(t); window.removeEventListener("lumina:wanted-seen", clear); };
+  }, [enabled]);
+  return count;
+}
+
+export function UnseenBadge({ count, className = "" }: { count: number; className?: string }) {
+  if (!count) return null;
+  return (
+    <span title={`Nově v Chci: ${count}`}
+      className={`inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold leading-[1.1rem] text-zinc-950 ${className}`}>
+      {count > 9 ? "9+" : count}
+    </span>
   );
 }

@@ -107,8 +107,8 @@ export interface TMDBMovie {
 export interface WantedMark { status: string; added_by: string; added_at: string }
 
 /** The film on the wanted list (not done yet), or null. */
-export async function getWantedOf(tmdbId: number, wikidataId?: string | null): Promise<WantedMark | null> {
-  const q = tmdbId ? `tmdb_id=${tmdbId}` : `wikidata_id=${encodeURIComponent(wikidataId ?? "")}`;
+export async function getWantedOf(tmdbId: number, wikidataId?: string | null, mediaType: "movie" | "tv" = "movie"): Promise<WantedMark | null> {
+  const q = (tmdbId ? `tmdb_id=${tmdbId}` : `wikidata_id=${encodeURIComponent(wikidataId ?? "")}`) + (mediaType === "tv" ? "&media_type=tv" : "");
   const res = await apiFetch(`${API_BASE}/api/wanted/of?${q}`);
   if (!res.ok) return null;
   return res.json();
@@ -616,6 +616,8 @@ export interface WantedItem {
   added_by?: string;
   checked_at: string | null;
   done_at: string | null;
+  media_type?: "movie" | "tv";   // "tv": a show asked for (nothing searched) — the admin decides
+  auto?: number;                 // 0: never downloaded automatically (asked for by someone who may not download)
 }
 
 export interface SchedulerStatus {
@@ -647,7 +649,7 @@ export async function getWanted(): Promise<WantedItem[]> {
 
 export async function addWanted(item: {
   tmdb_id: number | null; wikidata_id: string | null; title: string; original_title: string; year: string;
-  poster_url: string | null; profile_id: number | null;
+  poster_url: string | null; profile_id: number | null; media_type?: "movie" | "tv";
 }): Promise<WantedItem> {
   const res = await apiFetch(`${API_BASE}/api/wanted`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(item),
@@ -659,12 +661,24 @@ export async function addWanted(item: {
   return res.json();
 }
 
-export async function updateWanted(id: number, data: { profile_id?: number | null; note?: string; status?: string }): Promise<WantedItem> {
+export async function updateWanted(id: number, data: { profile_id?: number | null; note?: string; status?: string; auto?: boolean }): Promise<WantedItem> {
   const res = await apiFetch(`${API_BASE}/api/wanted/${id}`, {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error(`Uložení selhalo: ${res.status}`);
   return res.json();
+}
+
+/** What others added to Chci since this user last looked (the top bar's mark). */
+export async function getWantedUnseen(): Promise<{ count: number; since: string }> {
+  const res = await apiFetch(`${API_BASE}/api/wanted/unseen`);
+  if (!res.ok) return { count: 0, since: "" };
+  return res.json();
+}
+
+export async function markWantedSeen(): Promise<void> {
+  await apiFetch(`${API_BASE}/api/wanted/seen`, { method: "POST" });
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("lumina:wanted-seen"));
 }
 
 export async function removeWanted(id: number): Promise<void> {

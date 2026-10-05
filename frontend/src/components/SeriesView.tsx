@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
+import WantButton from "@/components/WantButton";
 import ShowPacks from "@/components/ShowPacks";
 import EpisodeWindow from "@/components/EpisodeWindow";
 import SeriesSources from "@/components/SeriesSources";
@@ -145,12 +146,17 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
           onDone={() => { watchDownloads(); load(); }} />
       )}
       <SettingsPanel data={data} onSaved={() => load()} editable={can("library.edit")} />
-      {can("search") && <SeriesSources tmdbId={tmdbId} canStart={can("search")} />}
+      {/* who may not download (a child's account) only asks for the show: the admin decides */}
+      {!can("download") && !data.in_library && (
+        <WantButton movie={{ tmdb_id: tmdbId, title: show.title, original_title: show.original_title || "", year: show.year ? String(show.year) : "",
+          overview: "", poster_url: show.poster_url, media_type: "tv" }} />
+      )}
+      {can("download") && <SeriesSources tmdbId={tmdbId} canStart />}
       <ShowAutomation tmdbId={tmdbId} canDownload={can("download")} canEdit={can("library.edit")}
         on={[data.settings.effective.auto_new, data.settings.effective.auto_dub, data.settings.effective.auto_upgrade]
           .some((v) => v && v !== "off")} />
 
-      {can("search") && data.settings.effective.torrent && (
+      {can("download") && data.settings.effective.torrent && (
         <ShowPacks tmdbId={tmdbId} onStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }} />
       )}
 
@@ -160,7 +166,7 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
             onStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }}
             season={s} open={!!open[s.season_number]}
             toggle={() => setOpen((o) => ({ ...o, [s.season_number]: !o[s.season_number] }))}
-            canSearch={can("search")} canEdit={can("library.edit")} onChanged={() => load()}
+            canSearch={can("download")} canEdit={can("library.edit")} onChanged={() => load()}
             searching={searching} onOpen={setEpisodeWindow}
             onSearch={(episode) => setSearching(searching?.season === s.season_number && searching.episode === episode
               ? null : { season: s.season_number, episode })}>

@@ -10,7 +10,7 @@ from app.core.migrations import add_column
 from app.core.module import Module, Permission, Subscription, TaskSource
 from app.modules.wanted import tasks
 from app.modules.wanted.router import router
-from app.modules.wanted.store import WANTED, on_download_cancelled, on_movie_updated, on_scheduler_run
+from app.modules.wanted.store import WANTED, WANTED_SEEN, on_download_cancelled, on_movie_updated, on_scheduler_run
 
 module = Module(
     name="wanted",
@@ -19,7 +19,11 @@ module = Module(
     routers=[router],
     permissions=[Permission("wanted", "Přidávat a spravovat filmy v Chci", default=True)],
     migrations=[WANTED, add_column("wanted", "waiting", "TEXT DEFAULT ''"),
-                add_column("wanted", "added_by", "TEXT DEFAULT ''")],
+                add_column("wanted", "added_by", "TEXT DEFAULT ''"),
+                # a show asked for (media_type 'tv') and the items of someone who may not download (auto 0)
+                # wait for the admin — never downloaded automatically
+                add_column("wanted", "media_type", "TEXT DEFAULT 'movie'"),
+                add_column("wanted", "auto", "INTEGER DEFAULT 1"), WANTED_SEEN],
     subscriptions=[Subscription("library.movie_updated", on_movie_updated, priority=80),
                    Subscription("scheduler.run", on_scheduler_run),
                    Subscription("download.cancelled", on_download_cancelled)],

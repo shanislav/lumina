@@ -4,6 +4,7 @@ import { WantedShows, WatchedShows } from "@/components/SeriesAuto";
 import { useCallback, useEffect, useState } from "react";
 import WatchedList from "@/components/WatchedList";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthGate";
 import {
@@ -16,6 +17,8 @@ import {
   getProfiles,
   getWanted,
   getWantedJob,
+  getWantedUnseen,
+  markWantedSeen,
   removeWanted,
   startDownload,
   updateWanted,
@@ -30,8 +33,11 @@ const STATUS: Record<WantedItem["status"], { label: string; cls: string }> = {
 
 export default function WantedPage() {
   const router = useRouter();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const manage = can("wanted");
+  // who may not download (a child's account) only asks: no profiles, searches or downloads here
+  const admin = can("download");
+  const [since, setSince] = useState("");     // what others added after this: marked "nové"
   const [items, setItems] = useState<WantedItem[]>([]);
   const [profiles, setProfiles] = useState<QualityProfile[]>([]);
   const [job, setJob] = useState<WantedJob | null>(null);
@@ -49,6 +55,7 @@ export default function WantedPage() {
 
   useEffect(() => {
     load();
+    if (manage) getWantedUnseen().then((u) => { if (u.count) setSince(u.since); markWantedSeen(); }).catch(() => {});
     getProfiles().then(setProfiles).catch(() => {});
     getWantedJob().then(setJob).catch(() => {});
   }, [load]);
@@ -92,14 +99,14 @@ export default function WantedPage() {
 
   return (
     <main className="flex flex-col gap-6 px-4 py-8 max-w-5xl mx-auto">
-      <div className="flex gap-1 bg-zinc-900 p-1 rounded-lg w-fit">
+      {admin && <div className="flex gap-1 bg-zinc-900 p-1 rounded-lg w-fit">
         {([["wanted", "Chci"], ["watched", "Hlídám lepší verzi"]] as const).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
             className={`px-4 py-1.5 rounded-md text-sm font-medium ${tab === key ? "bg-violet-600 text-white" : "text-zinc-400 hover:text-zinc-200"}`}>
             {label}
           </button>
         ))}
-      </div>
+      </div>}
       {tab === "watched" ? (
         <div className="space-y-8">
           <WatchedList profiles={profiles} />
@@ -108,23 +115,30 @@ export default function WantedPage() {
       ) : (<>
       <div className="flex flex-wrap items-center gap-4">
         <h1 className="text-2xl font-bold text-zinc-100">Chci</h1>
-        <span className="text-sm text-zinc-500">{open.length} filmů čeká · {items.length - open.length} hotovo</span>
+        <span className="text-sm text-zinc-500">{open.length} čeká · {items.length - open.length} hotovo</span>
         <div className="flex-1" />
         {job?.running ? (
           <span className="text-sm text-violet-300 animate-pulse">
             Hledám {job.done}/{job.total}{job.current ? ` · ${job.current}` : ""} · nalezeno {job.found}
           </span>
-        ) : manage && (
+        ) : manage && admin && (
           <button disabled={!open.length} onClick={async () => setJob(await checkWanted())}
             className="rounded bg-violet-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-40">
             Zkontrolovat vše
           </button>
         )}
       </div>
+      {!admin ? (
+        <p className="text-xs text-zinc-500 -mt-3">
+          Co chceš vidět, přidáš tlačítkem „★ Chci“ u filmu nebo seriálu. Správce uvidí, že to chceš, a postará se o to.
+        </p>
+      ) : (
       <p className="text-xs text-zinc-500 -mt-3">
         Film přidáš tlačítkem „+ Chci“ u hledaného filmu, seriál tlačítkem „Chci“ na jeho stránce. Lumina hledá postupně (šetrně k WS/FS) a ukáže nejlepší soubor,
-        který splní profil. Až bude film v knihovně, přesune se do „hotovo“.
+        který splní profil. Až bude film v knihovně, přesune se do „hotovo“. Co přidá účet bez práva stahovat,
+        Lumina sama nestáhne (ani se zapnutou automatikou) — rozhodneš ty.
       </p>
+      )}
       <WantedShows />
 
       {loading ? (
@@ -133,8 +147,12 @@ export default function WantedPage() {
         <p className="text-zinc-500">Seznam je prázdný.</p>
       ) : (
         <div className="space-y-3">
-          {items.map((item) => (
-            <div key={item.id} className={`flex gap-4 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 ${item.status === "done" ? "opacity-60" : ""}`}>
+          {items.map((item) => {
+            const tv = item.media_type === "tv";
+            const mine = (item.added_by || "").toLowerCase() === user.username.toLowerCase();
+            const fresh = !!since && item.status !== "done" && item.added_at > since && !mine;
+            return (
+            <div key={item.id} className={`flex gap-4 rounded-xl border bg-zinc-900/50 p-3 ${fresh ? "border-amber-600/80" : "border-zinc-800"} ${item.status === "done" ? "opacity-60" : ""}`}>
               <div className="w-16 h-24 relative flex-shrink-0 rounded overflow-hidden bg-zinc-800">
                 {item.poster_url && (
                   <Image src={item.poster_url} alt="" fill sizes="64px" className="object-cover" unoptimized={!!item.wikidata_id} />
@@ -142,12 +160,19 @@ export default function WantedPage() {
               </div>
               <div className="flex-1 min-w-0 space-y-1.5">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-zinc-100 font-medium">{item.title}</span>
+                  {tv && item.tmdb_id ? (
+                    <Link href={`/series?tmdb=${item.tmdb_id}`} className="text-zinc-100 font-medium hover:text-violet-300">{item.title}</Link>
+                  ) : <span className="text-zinc-100 font-medium">{item.title}</span>}
                   {item.year && <span className="text-zinc-500">({item.year})</span>}
-                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${STATUS[item.status].cls}`}>{STATUS[item.status].label}</span>
+                  {tv && <span className="rounded px-1.5 py-0.5 text-[10px] bg-sky-900/70 text-sky-200">seriál</span>}
+                  {fresh && <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-amber-600 text-amber-50">nové</span>}
+                  {tv && item.status !== "done" ? (
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-amber-900/70 text-amber-200">Čeká na správce</span>
+                  ) : <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${STATUS[item.status].cls}`}>{STATUS[item.status].label}</span>}
                   {item.wikidata_id && <span className="rounded px-1.5 py-0.5 text-[10px] bg-zinc-700 text-zinc-200">Wikidata</span>}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
+                  {tv ? (admin && <span>Otevři seriál a nastav „Chci“ (profil, zvuk) — žádost se tím vyřídí.</span>) : admin && <>
                   Profil:
                   <select disabled={!manage} value={item.profile_id ?? ""} className="rounded bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 text-zinc-300"
                     onChange={async (e) => {
@@ -157,6 +182,13 @@ export default function WantedPage() {
                     <option value="">výchozí ({defaultProfile?.name ?? "—"})</option>
                     {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
+                  <label title="Plánovač se zapnutým automatickým stahováním ho stáhne sám, jakmile ho najde"
+                    className={`flex items-center gap-1 ${item.auto === 0 ? "text-amber-300" : ""}`}>
+                    <input type="checkbox" checked={item.auto !== 0}
+                      onChange={async (e) => { await updateWanted(item.id, { auto: e.target.checked }); load(); }} />
+                    stáhnout automaticky
+                  </label>
+                  </>}
                   {item.added_by && <span className="text-zinc-500">přidal {item.added_by}</span>}
                   {item.checked_at && <span className="text-zinc-600">kontrola {item.checked_at}</span>}
                 </div>
@@ -183,23 +215,31 @@ export default function WantedPage() {
                     </button>
                   )
                 )}
-                {item.status === "downloading" && manage && (
+                {item.status === "downloading" && manage && admin && (
                   <button title="Stahování se nepovedlo? Vrátit mezi hledané" className="text-zinc-400 hover:text-zinc-200"
                     onClick={async () => { await updateWanted(item.id, { status: "wanted" }); load(); }}>
                     Znovu hledat
                   </button>
                 )}
-                {item.status !== "done" && (
+                {item.status !== "done" && tv && !!item.tmdb_id && (
+                  <Link href={`/series?tmdb=${item.tmdb_id}`} className="text-violet-300 hover:text-violet-200">Otevřít seriál</Link>
+                )}
+                {item.status !== "done" && !tv && admin && (
                   <>
                     <button onClick={() => openOffers(item)} className="text-violet-300 hover:text-violet-200">Všechny nabídky</button>
                     {manage && <button disabled={!!job?.running} onClick={async () => setJob(await checkWanted([item.id]))}
                       className="text-zinc-400 hover:text-zinc-200 disabled:opacity-40">Hledat teď</button>}
                   </>
                 )}
-                {manage && <button onClick={async () => { await removeWanted(item.id); load(); }} className="text-zinc-600 hover:text-red-400">Odebrat</button>}
+                {manage && (admin || mine) && (
+                  <button onClick={async () => { await removeWanted(item.id); load(); }} className="text-zinc-600 hover:text-red-400">
+                    {tv && admin ? "Vyřízeno / odebrat" : "Odebrat"}
+                  </button>
+                )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       </>)}

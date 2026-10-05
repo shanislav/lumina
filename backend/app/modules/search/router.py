@@ -75,15 +75,20 @@ async def mark_known(items: list) -> list:
         return items
     from app.db import get_db
     q = lambda n: ",".join("?" * n)  # noqa: E731
-    owned_films, owned_shows, wanted, wanted_wd, auto = set(), set(), {}, {}, set()
+    owned_films, owned_shows, wanted, wanted_wd, wanted_tv, auto = set(), set(), {}, {}, {}, set()
     db = await get_db()
     try:
         for sql, args, fn in (
             (f"SELECT DISTINCT tmdb_id FROM library_movies WHERE tmdb_id IN ({q(len(films))})", films,
              lambda r: owned_films.add(r[0])),
             (f"SELECT tmdb_id FROM library_shows WHERE tmdb_id IN ({q(len(shows))})", shows, lambda r: owned_shows.add(r[0])),
-            (f"SELECT tmdb_id, status, added_by, added_at FROM wanted WHERE status != 'done' AND tmdb_id IN ({q(len(films))})",
+            (f"SELECT tmdb_id, status, added_by, added_at FROM wanted WHERE status != 'done' AND media_type != 'tv' "
+             f"AND tmdb_id IN ({q(len(films))})",
              films, lambda r: wanted.setdefault(r[0], {"status": r[1], "added_by": r[2] or "", "added_at": r[3] or ""})),
+            # a show asked for in Chci by someone who may not download: the admin decides
+            (f"SELECT tmdb_id, added_by, added_at FROM wanted WHERE status != 'done' AND media_type = 'tv' "
+             f"AND tmdb_id IN ({q(len(shows))})",
+             shows, lambda r: wanted_tv.setdefault(r[0], {"status": "request", "added_by": r[1] or "", "added_at": r[2] or ""})),
             (f"SELECT wikidata_id, status, added_by, added_at FROM wanted WHERE status != 'done' AND wikidata_id IN ({q(len(wd))})",
              wd, lambda r: wanted_wd.setdefault(r[0], {"status": r[1], "added_by": r[2] or "", "added_at": r[3] or ""})),
             (f"SELECT tmdb_id FROM series_settings WHERE auto_new IN ('notify', 'download') AND tmdb_id IN ({q(len(shows))})",
@@ -101,7 +106,7 @@ async def mark_known(items: list) -> list:
     for x in items:
         tv, tid = get(x, "media_type") == "tv", get(x, "tmdb_id")
         lib = tid in (owned_shows if tv else owned_films)
-        w = ({"status": "auto", "added_by": "", "added_at": ""} if tid in auto and not lib else None) if tv \
+        w = ({"status": "auto", "added_by": "", "added_at": ""} if tid in auto and not lib else wanted_tv.get(tid)) if tv \
             else wanted.get(tid) or wanted_wd.get(get(x, "wikidata_id") or "")
         if isinstance(x, dict):
             x["in_library"], x["wanted"] = lib, w
@@ -271,7 +276,7 @@ class SearchFilesResponse(BaseModel):
     files: list[ScoredFile]
 
 
-@router.get("/search/files", dependencies=[Depends(require("search"))], response_model=SearchFilesResponse)
+@router.get("/search/files", dependencies=[Depends(require("download"))], response_model=SearchFilesResponse)
 async def search_files(
     query: str,
     language: str | None = None,

@@ -70,7 +70,12 @@ function HomeContent() {
   }, [upgradeId, selectedMovie]);
   const [preferLocal, setPreferLocal] = useState(true);
 
-  function showFiles(res: { files: ScoredFile[]; movie: MovieContext; prefer_local_audio: boolean }) {
+  // who may not download (a child's account) sees no offers at all — only "Chci"
+  const mayDownload = can("download");
+  const findFiles = (...args: Parameters<typeof searchFiles>) =>
+    mayDownload ? searchFiles(...args) : Promise.resolve({ files: [] as ScoredFile[], movie: null, prefer_local_audio: true });
+
+  function showFiles(res: { files: ScoredFile[]; movie: MovieContext | null; prefer_local_audio: boolean }) {
     setFiles(res.files);
     setMovieCtx(res.movie);
     setPreferLocal(res.prefer_local_audio);
@@ -115,7 +120,7 @@ function HomeContent() {
       const query = movie.year
         ? `${movie.title} ${movie.year}`
         : movie.title;
-      showFiles(await searchFiles(query, undefined, movie.original_title, movie.tmdb_id, movie.media_type, movie.wikidata_id));
+      showFiles(await findFiles(query, undefined, movie.original_title, movie.tmdb_id, movie.media_type, movie.wikidata_id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "File search error");
     } finally {
@@ -149,7 +154,7 @@ function HomeContent() {
       setFiles([]);
       setFilesLoading(true);
       setError(null);
-      searchFiles(qParam, undefined, origTitle, tmdbId, mediaType)
+      findFiles(qParam, undefined, origTitle, tmdbId, mediaType)
         .then(showFiles)
         .catch((e) => setError(e instanceof Error ? e.message : "Search error"))
         .finally(() => setFilesLoading(false));
@@ -188,7 +193,7 @@ function HomeContent() {
     setFilesLoading(true);
     setError(null);
     try {
-      showFiles(await searchFiles(lastQuery));
+      showFiles(await findFiles(lastQuery));
     } catch (e) {
       setError(e instanceof Error ? e.message : "File search error");
     } finally {
@@ -210,7 +215,7 @@ function HomeContent() {
       const query = movie.year
         ? `${movie.title} ${movie.year}`
         : movie.title;
-      showFiles(await searchFiles(query, searchLang, movie.original_title, movie.tmdb_id, movie.media_type, movie.wikidata_id));
+      showFiles(await findFiles(query, searchLang, movie.original_title, movie.tmdb_id, movie.media_type, movie.wikidata_id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "File search error");
     } finally {
@@ -265,10 +270,10 @@ function HomeContent() {
               ✨ Hledáš podle děje? Zeptej se AI
             </button>
           )}
-          <button onClick={handleDirectSearch} className="text-violet-300 hover:text-violet-200 underline-offset-2 hover:underline">
+          {mayDownload && <button onClick={handleDirectSearch} className="text-violet-300 hover:text-violet-200 underline-offset-2 hover:underline">
             {movies.length ? "Není mezi výsledky? " : ""}Hledat přímo v souborech: „{lastQuery}“
-          </button>
-          {movies.length === 0 && (
+          </button>}
+          {movies.length === 0 && mayDownload && (
             <p className="mt-1 text-xs text-zinc-500">Po stažení se uloží do knihovny pod tímto názvem (bez údajů z TMDB).</p>
           )}
         </div>
@@ -300,7 +305,7 @@ function HomeContent() {
                 </span>
               )}
             </h2>
-            {selectedMovie.media_type !== "tv" && <ProfileSelect value={profileId} onChange={setProfileId} />}
+            {selectedMovie.media_type !== "tv" && mayDownload && <ProfileSelect value={profileId} onChange={setProfileId} />}
             {!filesLoading && files.length > 0 && <PickOfferView offer={pick} canDownload={can("download")} />}
             {/* "+ Chci" = look for it later: when nothing here suits the profile */}
             {!filesLoading && files.length > 0 && pick && !pick.pick.key && (
@@ -332,7 +337,8 @@ function HomeContent() {
           )}
           {!filesLoading && files.length === 0 && selectedMovie.media_type !== "tv" && (selectedMovie.tmdb_id || selectedMovie.wikidata_id) ? (
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-300 flex flex-wrap items-center gap-3">
-              <span>Zatím nic ke stažení. Přidej si ho do Chci — Lumina ho bude hledat, až se objeví:</span>
+              <span>{mayDownload ? "Zatím nic ke stažení. Přidej si ho do Chci — Lumina ho bude hledat, až se objeví:"
+                : "Chceš ho vidět? Dej ho do Chci — správce uvidí, že ho chceš:"}</span>
               <WantButton movie={selectedMovie} profileId={profileId} onProfileChange={setProfileId} />
             </div>
           ) : null}
@@ -349,7 +355,7 @@ function HomeContent() {
               ))}
             </div>
           )}
-          {!resultsCollapsed && (
+          {!resultsCollapsed && mayDownload && (
             <FileTable
             owned={selectedOwned}
             upgradeFrom={selectedOwned.find((v) => v.id === upgradeId) ?? null}
