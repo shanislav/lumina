@@ -571,4 +571,8 @@ async def rename_files(db, client, root: str, paths: list[str]) -> dict[str, str
             continue
         await apply_plan(db, {**plan, "ops": ops, "conflicts": []}, root)
         out.update({op["src"]: op["dst"] for op in ops if op["kind"] == "video"})
+    if out:
+        from app.core import events
+        # Plex: the new names (each in the folder it was in — Plex keeps its items)
+        await events.emit("library.files_added", {"folders": sorted({os.path.dirname(p) for p in out.values()})})
     return out
