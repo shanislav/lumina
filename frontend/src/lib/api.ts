@@ -924,6 +924,8 @@ export interface LibraryShow {
   total_seasons: number;
   total_episodes: number;
   owned_episodes: number;
+  aired_episodes?: number;   // the episodes out already (an announced one is not missing)
+  next_air?: string;         // the next one's air date ("2026-12-08"), "" when none is announced
 }
 
 export interface LibraryEpisode {

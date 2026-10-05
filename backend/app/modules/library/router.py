@@ -255,7 +255,12 @@ async def get_library_shows():
         cursor = await db.execute(
             """SELECT s.tmdb_id, s.title, s.original_title, s.year, s.poster_url,
                       s.total_seasons, s.total_episodes,
-                      COUNT(CASE WHEN e.has_file = 1 THEN 1 END) as owned_episodes
+                      COUNT(CASE WHEN e.has_file = 1 THEN 1 END) as owned_episodes,
+                      -- aired (or owned) regular episodes: one announced for December is not "missing"
+                      -- (an owned special counts too: Columbo's pilots are S00)
+                      COUNT(CASE WHEN e.has_file = 1 OR (e.season > 0 AND e.air_date != '' AND e.air_date <= date('now'))
+                                 THEN 1 END) as aired_episodes,
+                      MIN(CASE WHEN e.has_file = 0 AND e.air_date > date('now') THEN e.air_date END) as next_air
             FROM library_shows s
             LEFT JOIN library_episodes e ON e.show_tmdb_id = s.tmdb_id
             GROUP BY s.tmdb_id
@@ -268,6 +273,7 @@ async def get_library_shows():
                 "year": r[3], "poster_url": r[4],
                 "total_seasons": r[5], "total_episodes": r[6],
                 "owned_episodes": r[7],
+                "aired_episodes": r[8] or r[6], "next_air": r[9] or "",
             }
             for r in rows
         ]

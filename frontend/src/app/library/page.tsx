@@ -868,7 +868,7 @@ export default function LibraryPage() {
                 .sort((a, b) => a.title.localeCompare(b.title, "cs", { sensitivity: "base", numeric: true }))).map((show) => {
               const q = showView.byId[show.tmdb_id]?.quality;
               const progress = show.total_episodes > 0
-                ? Math.round((show.owned_episodes / show.total_episodes) * 100)
+                ? Math.round((show.owned_episodes / (show.aired_episodes || show.total_episodes)) * 100)
                 : 0;
               return (
                 <button
@@ -895,7 +895,10 @@ export default function LibraryPage() {
                     <p className="text-sm font-medium text-zinc-100 truncate">{show.title}</p>
                     <div className="flex items-center gap-2 text-xs text-zinc-500 mt-0.5">
                       {show.year && <span>{show.year}</span>}
-                      <span>{show.owned_episodes}/{show.total_episodes}</span>
+                      <span title={show.next_air ? `další díl ${new Date(show.next_air).toLocaleDateString("cs-CZ")}` : undefined}>
+                        {show.owned_episodes}/{show.aired_episodes || show.total_episodes}
+                      </span>
+                      {show.next_air && <span className="text-sky-400/80">· {new Date(show.next_air).toLocaleDateString("cs-CZ", { day: "numeric", month: "numeric" })}</span>}
                       {q?.below ? <span className="text-orange-300" title="Dílů pod profilem kvality">⚠ {q.below}</span> : null}
                     </div>
                     <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden mt-1.5">
