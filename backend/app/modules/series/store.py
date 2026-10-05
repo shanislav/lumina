@@ -151,9 +151,16 @@ async def owned_episodes(tmdb_id: int) -> dict[tuple[int, int], dict]:
         rows = []
     finally:
         await db.close()
+    try:
+        from app.modules.library.episodes import parts_of
+    except Exception:  # noqa: BLE001
+        parts_of = lambda _p: []   # noqa: E731
     return {(r["season"], r["episode"]): {"id": r["id"], "filename": r["filename"], "file_path": r["file_path"],
                                           "size": r["file_size"] or 0, "quality": r["quality"] or "",
-                                          "languages": languages_of(r["language"])} for r in rows}
+                                          "languages": languages_of(r["language"]),
+                                          # a two-part episode stored as "- pt1" / "- pt2"
+                                          "parts": [n for n, _ in parts_of(r["file_path"])] if " - pt" in (r["file_path"] or "") else []}
+            for r in rows}
 
 
 async def no_dub(tmdb_id: int) -> set[tuple[int, int]]:

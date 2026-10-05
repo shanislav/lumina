@@ -1444,13 +1444,14 @@ async function playerCall<T>(path: string, init?: RequestInit): Promise<T> {
 export type MediaKind = "movie" | "episode";
 const playerPath = (id: number, kind: MediaKind) => (kind === "episode" ? `/episode/${id}` : `/${id}`);
 
-export const getPlayerInfo = (movieId: number, kind: MediaKind = "movie") => playerCall<PlayerInfo>(`${playerPath(movieId, kind)}/info`);
+export const getPlayerInfo = (movieId: number, kind: MediaKind = "movie", part?: number | null) =>
+  playerCall<PlayerInfo>(`${playerPath(movieId, kind)}/info${part ? `?part=${part}` : ""}`);
 export type PlayerMode = "auto" | "original" | "transcode";
 
 export const startPlayer = (movieId: number, at: number, audio: number, mode: PlayerMode,
-                            caps: { hevc: boolean; dv5: boolean }, kind: MediaKind = "movie") =>
+                            caps: { hevc: boolean; dv5: boolean }, kind: MediaKind = "movie", part?: number | null) =>
   playerCall<{ session: string; start: number; audio: number; mode: "original" | "transcode"; reason: string }>(
-    `${playerPath(movieId, kind)}/start`, {
+    `${playerPath(movieId, kind)}/start${part ? `?part=${part}` : ""}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ at, audio, mode, ...caps }),
     });
@@ -1720,6 +1721,7 @@ export interface SeriesEpisodeFile {
   size: number;
   quality: string;
   languages: string[];
+  parts?: number[];          // a two-part episode stored as "- pt1" / "- pt2"
 }
 
 export interface SeriesEpisode {
@@ -1977,6 +1979,7 @@ export interface EpisodeVersion {
   media: { width?: number; height?: number; video_codec?: string; hdr?: string; bitrate?: number; duration_s?: number;
            audio?: { lang?: string; codec?: string; channels?: number }[]; subtitles?: string[] };
   current: boolean;
+  part?: number | null;      // a two-part episode's part ("- pt1" / "- pt2")
 }
 
 export interface EpisodeDetail {

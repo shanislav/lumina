@@ -41,6 +41,7 @@ function Player() {
   const params = useSearchParams();
   const movieId = Number(params.get("id"));
   const kind = params.get("kind") === "episode" ? "episode" : "movie";
+  const part = Number(params.get("part") || 0) || null;           // a two-part episode's part
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -62,7 +63,7 @@ function Player() {
     setError("");
     try {
       if (sessionRef.current) stopPlayer(sessionRef.current);
-      const s = await startPlayer(movieId, at, track, wanted, caps.current, kind);
+      const s = await startPlayer(movieId, at, track, wanted, caps.current, kind, part);
       setRunning({ mode: s.mode, reason: s.reason });
       sessionRef.current = s.session;
       setStart(s.start);
@@ -92,7 +93,7 @@ function Player() {
     if (!movieId) return;
     caps.current = browserCaps();
     setCanHevc(caps.current.hevc);
-    getPlayerInfo(movieId, kind).then((i) => {
+    getPlayerInfo(movieId, kind, part).then((i) => {
       setInfo(i);
       play(Number(params.get("t") ?? 0), audio);
     }).catch((e) => setError(e.message));

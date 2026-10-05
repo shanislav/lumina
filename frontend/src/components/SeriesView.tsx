@@ -332,8 +332,16 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
                   <span className={`h-2 w-2 flex-shrink-0 rounded-full ${STATE[ep.state].dot}`} />
                   <span className="w-16 font-mono text-zinc-400">{se(season.season_number, ep.episode)}</span>
                   {ep.file?.id ? (
-                    <button onClick={() => onOpen(ep.file!.id!)} title={`${ep.overview}\n\nOtevřít díl: soubory, přehrát, titulky`.trim()}
-                      className="min-w-0 flex-1 truncate text-left text-zinc-200 hover:text-violet-300 hover:underline">{ep.name || "—"}</button>
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <button onClick={() => onOpen(ep.file!.id!)} title={`${ep.overview}\n\nOtevřít díl: soubory, přehrát, titulky`.trim()}
+                        className="min-w-0 truncate text-left text-zinc-200 hover:text-violet-300 hover:underline">{ep.name || "—"}</button>
+                      {(ep.file.parts?.length ?? 0) > 1 && ep.file.parts!.map((n) => (
+                        <button key={n} onClick={() => onOpen(ep.file!.id!)} title={`Dvojdíl — ${n}. část (soubor „- pt${n}“)`}
+                          className="flex-shrink-0 rounded border border-violet-800/70 px-1.5 text-[10px] text-violet-200 hover:bg-violet-900/40">
+                          část {n}
+                        </button>
+                      ))}
+                    </span>
                   ) : (
                     <span className="min-w-0 flex-1 truncate text-zinc-200" title={ep.overview}>{ep.name || "—"}</span>
                   )}

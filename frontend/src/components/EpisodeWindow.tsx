@@ -89,12 +89,13 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
             <div className="space-y-2">
               {data.versions.map((v) => (
                 <div key={v.file_path} className={`rounded-lg border p-3 text-xs ${v.current ? "border-violet-800 bg-violet-950/20" : "border-zinc-800"}`}>
+                  {v.part && <p className="mb-1 text-sm font-medium text-violet-200">Část {v.part}</p>}
                   <p className="break-all text-zinc-200">{v.filename}</p>
                   <p className="mt-0.5 break-all text-[11px] text-zinc-600">{v.file_path}</p>
                   <p className="mt-1 text-zinc-400">
                     {[videoLabel(v.media), `${(v.size / 1e9).toFixed(2)} GB`,
                       v.media.duration_s ? `${Math.round(v.media.duration_s / 60)} min` : ""].filter(Boolean).join(" · ")}
-                    {v.current && data.versions.length > 1 && <span className="ml-2 text-violet-300">v knihovně</span>}
+                    {v.current && !v.part && data.versions.length > 1 && <span className="ml-2 text-violet-300">v knihovně</span>}
                   </p>
                   {!!v.media.audio?.length && (can("library.edit") ? (
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-zinc-400">
@@ -116,7 +117,7 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
                   ) : (
                     <p className="mt-0.5 text-zinc-400">🔊 {v.media.audio.map(audioLabel).join(" · ")}</p>
                   ))}
-                  {v.current && can("library.edit") && (
+                  {v.current && (v.part || 1) === 1 && can("library.edit") && (
                     <label className="mt-1 flex w-fit cursor-pointer items-center gap-1.5 text-[11px] text-zinc-400"
                       title="Díl bez CZ zvuku se jinak počítá jako „čeká na dabing“ — u dílů, které dabing nikdy nedostaly, na něj nečekat">
                       <input type="checkbox" checked={!!data.no_dub}
@@ -130,7 +131,7 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
                   {!Object.keys(v.media).length && <p className="mt-0.5 text-zinc-600">MediaInfo zatím není (proběhne při skenu knihovny).</p>}
                   <div className="mt-2 flex flex-wrap items-center gap-3">
                     {v.current && can("player") && (
-                      <Link href={`/play?id=${data.id}&kind=episode`}
+                      <Link href={`/play?id=${data.id}&kind=episode${v.part ? `&part=${v.part}` : ""}`}
                         className="rounded bg-violet-700 px-2.5 py-1 font-medium text-white hover:bg-violet-600">▶ Přehrát</Link>
                     )}
                     {can("library.delete") && (confirm === v.file_path ? (

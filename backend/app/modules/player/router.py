@@ -50,7 +50,7 @@ async def start(movie_id: int, body: StartBody, user: User = Depends(require("pl
     return {"session": s.id, "start": s.start, "audio": s.audio, "mode": s.mode, "reason": reason}
 
 
-async def _episode_path(episode_id: int) -> dict:
+async def _episode_path(episode_id: int, part: int | None = None) -> dict:
     db = await get_db()
     try:
         row = await (await db.execute(
@@ -60,19 +60,23 @@ async def _episode_path(episode_id: int) -> dict:
         await db.close()
     if not row or not row["file_path"] or not os.path.isfile(row["file_path"]):
         raise HTTPException(404, "Soubor nenalezen")
-    return {**dict(row), "title": f"{row['title'] or ''} S{row['season']:02d}E{row['episode']:02d}".strip()}
+    from app.modules.library.episodes import part_path
+    path = part_path(row["file_path"], part)            # a two-part episode: "- pt2"
+    title = f"{row['title'] or ''} S{row['season']:02d}E{row['episode']:02d}{f' (část {part})' if part else ''}".strip()
+    return {**dict(row), "file_path": path, "title": title}
 
 
 @router.get("/episode/{episode_id}/info", dependencies=[Depends(require("player"))])
-async def episode_info(episode_id: int) -> dict:
-    f = await _episode_path(episode_id)
+async def episode_info(episode_id: int, part: int | None = None) -> dict:
+    f = await _episode_path(episode_id, part)
     data = await asyncio.to_thread(sessions.probe, f["file_path"])
     return {"id": episode_id, "title": f["title"], "year": f["year"], **data}
 
 
 @router.post("/episode/{episode_id}/start")
-async def episode_start(episode_id: int, body: StartBody, user: User = Depends(require("player"))) -> dict:
-    f = await _episode_path(episode_id)
+async def episode_start(episode_id: int, body: StartBody, part: int | None = None,
+                        user: User = Depends(require("player"))) -> dict:
+    f = await _episode_path(episode_id, part)
     s, _, reason = await sessions.start(user.id, episode_id, f["file_path"], body.at, body.audio, body.mode,
                                         {"hevc": body.hevc, "dv5": body.dv5})
     return {"session": s.id, "start": s.start, "audio": s.audio, "mode": s.mode, "reason": reason}

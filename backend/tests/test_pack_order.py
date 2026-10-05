@@ -106,3 +106,14 @@ def test_a_pack_planned_at_once():
     assert f[files[6]["name"]]["kind"] == "sample" and f[files[7]["name"]]["extra"] == "Behind The Scenes"
     assert skip_indexes(plan) == [4, 6]
     assert first_indexes(plan) == ([0, 1], [2, 3])
+
+
+def test_the_parts_of_a_two_part_episode(tmp_path):
+    from app.modules.library.episodes import part_path, parts_of
+    for n in ("MASH - S07E04 - Naše nejlepší okamžiky [1080p] - pt1.mkv", "MASH - S07E04 - Naše nejlepší okamžiky [1080p] - pt2.mkv",
+              "MASH - S07E04 - Naše nejlepší okamžiky [1080p] - pt1.cs.srt", "MASH - S07E05 - Jiný [1080p].mkv"):
+        (tmp_path / n).write_bytes(b"x")
+    pt1 = str(tmp_path / "MASH - S07E04 - Naše nejlepší okamžiky [1080p] - pt1.mkv")
+    assert [n for n, _ in parts_of(pt1)] == [1, 2]
+    assert part_path(pt1, 2).endswith(" - pt2.mkv") and part_path(pt1, None) == pt1
+    assert parts_of(str(tmp_path / "MASH - S07E05 - Jiný [1080p].mkv")) == []
