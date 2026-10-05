@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { NotificationItem, getNotifications, markNotificationsSeen } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
+import { NotificationItem, clearNotifications, getNotifications, markNotificationsSeen } from "@/lib/api";
 
 const LEVEL: Record<string, string> = {
   ok: "text-emerald-200", info: "text-zinc-100", warn: "text-amber-200", error: "text-red-300",
@@ -21,7 +22,9 @@ function ago(at: string): string {
 /** What happened while you were away (backend modules/notify): downloads landed or failed, the wanted list or the
  *  nightly check found something, the TV automation found or started episodes. Opening the list marks it seen. */
 export default function NotifyButton() {
+  const { can } = useAuth();
   const [items, setItems] = useState<NotificationItem[]>([]);
+  const [confirm, setConfirm] = useState(false);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -57,7 +60,18 @@ export default function NotifyButton() {
       setUnread(0);             // the "new" marks stay in the open list until it closes
     }
     if (!next) setItems((xs) => xs.map((x) => ({ ...x, new: false })));
+    setConfirm(false);
   };
+
+  async function clearAll() {
+    try {
+      await clearNotifications();
+      setItems([]);
+      setUnread(0);
+    } finally {
+      setConfirm(false);
+    }
+  }
 
   return (
     <div ref={box} className="relative">
@@ -77,7 +91,19 @@ export default function NotifyButton() {
       </button>
       {open && (
         <div className="absolute right-0 z-50 mt-2 max-h-[70vh] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 p-3 shadow-xl space-y-2.5 text-xs">
-          <p className="uppercase tracking-wide text-zinc-500">Upozornění</p>
+          <div className="flex items-center gap-2">
+            <p className="flex-1 uppercase tracking-wide text-zinc-500">Upozornění</p>
+            {can("admin") && items.length > 0 && (confirm ? (
+              <span className="flex items-center gap-2 text-[11px]">
+                <span className="text-zinc-400">Smazat pro všechny?</span>
+                <button onClick={clearAll} className="rounded bg-red-800 px-2 py-0.5 text-white hover:bg-red-700">Smazat</button>
+                <button onClick={() => setConfirm(false)} className="text-zinc-500 hover:text-zinc-300">Ne</button>
+              </span>
+            ) : (
+              <button onClick={() => setConfirm(true)} title="Smaže historii upozornění všem uživatelům"
+                className="text-[11px] text-zinc-500 hover:text-red-300">Smazat historii</button>
+            ))}
+          </div>
           {!items.length && <p className="text-zinc-500">Zatím nic.</p>}
           {items.map((n) => {
             const title = <span className={LEVEL[n.level] ?? LEVEL.info}>{ICON[n.level] ?? ""}{n.title}</span>;

@@ -71,7 +71,8 @@ async def add(kind: str, title: str, body: str = "", *, level: str = "info", lin
         if group:
             since = _fmt(now - timedelta(minutes=MERGE_MINUTES))
             old = await (await db.execute(
-                "SELECT id, items FROM notifications WHERE group_key = ? AND created_at > ? ORDER BY id DESC LIMIT 1",
+                "SELECT id, items FROM notifications WHERE group_key = ? AND created_at > ? AND hidden = 0 "
+                "ORDER BY id DESC LIMIT 1",
                 (group, since))).fetchone()
             if old:
                 items = [*json.loads(old["items"] or "[]"), *items]
@@ -91,7 +92,7 @@ async def listing(user, limit: int = 30) -> dict:
     """The newest notifications the user may see, and how many of them are new to them."""
     db = await get_db()
     try:
-        rows = await (await db.execute("SELECT * FROM notifications ORDER BY id DESC LIMIT 300")).fetchall()
+        rows = await (await db.execute("SELECT * FROM notifications WHERE hidden = 0 ORDER BY id DESC LIMIT 300")).fetchall()
         seen = await (await db.execute("SELECT last_id FROM notify_seen WHERE user_id = ?", (user.id,))).fetchone()
     finally:
         await db.close()
@@ -100,6 +101,18 @@ async def listing(user, limit: int = 30) -> dict:
     items = [{"id": r["id"], "created_at": r["created_at"], "kind": r["kind"], "level": r["level"], "title": r["title"],
               "body": r["body"], "link": r["link"], "new": r["id"] > last} for r in mine[:limit]]
     return {"items": items, "unread": sum(1 for r in mine if r["id"] > last)}
+
+
+async def clear() -> int:
+    """The admin clears the history: hidden for everyone, kept for the repeat check (the same news is not told
+    again), gone after ``KEEP_DAYS`` as every other one. Returns how many were hidden."""
+    db = await get_db()
+    try:
+        cur = await db.execute("UPDATE notifications SET hidden = 1 WHERE hidden = 0")
+        await db.commit()
+        return cur.rowcount
+    finally:
+        await db.close()
 
 
 async def mark_seen(user_id: int, last_id: int) -> None:

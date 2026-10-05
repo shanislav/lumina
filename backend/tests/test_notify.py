@@ -47,3 +47,18 @@ async def test_an_import_for_review_warns(db):
                                           "imported": True, "review": "délka 33 min, film má 112 min"})
     item = (await store.listing(ADMIN))["items"][0]
     assert item["title"] == "Na kontrolu: Film (2001)" and item["level"] == "warn"
+
+
+async def test_the_admin_clears_the_history_repeats_stay_out(db):
+    await store.add("upgrade", "Lepší verze: Matrix", dedup="upgrade:603:x")
+    await store.add("wanted", "Nalezeno: Dune")
+    assert await store.clear() == 2
+    assert (await store.listing(ADMIN)) == {"items": [], "unread": 0}
+    assert await store.add("upgrade", "Lepší verze: Matrix", dedup="upgrade:603:x") is None    # told already
+    await store.add("wanted", "Nalezeno: Duna 2")
+    assert [n["title"] for n in (await store.listing(ADMIN))["items"]] == ["Nalezeno: Duna 2"]
+
+
+def test_only_an_admin_clears():
+    from app.core.auth import ADMIN_ONLY
+    assert ADMIN.can(ADMIN_ONLY) and not VIEWER.can(ADMIN_ONLY)

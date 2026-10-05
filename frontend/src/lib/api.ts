@@ -2146,6 +2146,12 @@ export async function getNotifications(): Promise<{ items: NotificationItem[]; u
   return res.json();
 }
 
+/** Admin: hide the whole notification history (for everyone). */
+export async function clearNotifications(): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/notifications`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Smazání selhalo: ${res.status}`);
+}
+
 export async function markNotificationsSeen(lastId: number): Promise<void> {
   await apiFetch(`${API_BASE}/api/notifications/seen`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ last_id: lastId }),
