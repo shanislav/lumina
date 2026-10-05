@@ -10,6 +10,11 @@ const LEVEL: Record<string, string> = {
 };
 const ICON: Record<string, string> = { ok: "✓ ", warn: "⚠ ", error: "✕ ", info: "" };
 
+/** A link to the page that is open already (the library's film card): the page reads its URL again. */
+function urlChanged() {
+  setTimeout(() => window.dispatchEvent(new Event("lumina:url")), 150);
+}
+
 function ago(at: string): string {
   const d = new Date(at.replace(" ", "T"));
   const min = Math.round((Date.now() - d.getTime()) / 60000);
@@ -111,7 +116,7 @@ export default function NotifyButton() {
               <div key={n.id} className={`space-y-0.5 ${n.new ? "border-l-2 border-amber-500 pl-2" : "pl-2.5"}`}>
                 <div className="flex items-start gap-2">
                   <div className="min-w-0 flex-1 break-words">
-                    {n.link ? <Link href={n.link} onClick={() => setOpen(false)} className="hover:underline">{title}</Link> : title}
+                    {n.link ? <Link href={n.link} onClick={() => { setOpen(false); urlChanged(); }} className="hover:underline">{title}</Link> : title}
                   </div>
                   <span className="shrink-0 text-zinc-600">{ago(n.created_at)}</span>
                 </div>

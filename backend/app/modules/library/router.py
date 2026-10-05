@@ -971,9 +971,34 @@ async def tv_audio_language(body: AudioLanguage) -> dict:
                                                     json.loads(cached[0]) if cached and cached[0] else None)
                 langs = await audio_lang.save(db, path, out["media"])
                 await db.commit()
-                done.append({"id": ep_id, "written": out["written"], "languages": langs, "tracks": out["tracks"]})
+                done.append({"id": ep_id, "path": path, "written": out["written"], "languages": langs,
+                             "tracks": out["tracks"]})
             except (ValueError, RuntimeError, OSError) as e:
                 errors.append(f"{os.path.basename(path)}: {e}")
+        # the new language in the file's name too ("[SK]"), as the renamer names an imported episode
+        renamed = await _tv_names_after_language(db, [d["path"] for d in done if d["tracks"]])
+        for d in done:
+            new = renamed.get(d.pop("path"))
+            if new:
+                d["renamed"] = os.path.basename(new)
     finally:
         await db.close()
     return {"done": done, "errors": errors}
+
+
+async def _tv_names_after_language(db, paths: list[str]) -> dict[str, str]:
+    from app.config import tv_library_dir
+    from app.db import get_automation
+    from app.modules.library import organize_tv
+    renamer = await get_automation("renamer")
+    if not paths or not (renamer and renamer["enabled"]):
+        return {}
+    cfg = await get_effective_settings()
+    client = TMDBClient(cfg.get("tmdb_api_key", ""))
+    try:
+        return await organize_tv.rename_files(db, client, tv_library_dir(cfg), paths)
+    except Exception as e:  # noqa: BLE001 — the language is in the file already; the name waits for the renamer
+        logger.warning("Renaming after a sound language change failed: %s", e)
+        return {}
+    finally:
+        await client.close()

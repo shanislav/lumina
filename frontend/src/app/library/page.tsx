@@ -366,11 +366,17 @@ export default function LibraryPage() {
     }
   }
 
-  // a link to a film (the download list): /library?tmdb=603 — opened once the library is loaded
+  // a link to a film (the download list, a notification): /library?tmdb=603 — opened once the library is loaded;
+  // a link followed while the library is open already says so by "lumina:url" (the page does not load again)
   const [openTmdb, setOpenTmdb] = useState<number | null>(null);
   useEffect(() => {
-    const t = parseInt(new URLSearchParams(window.location.search).get("tmdb") || "");
-    if (Number.isFinite(t)) setOpenTmdb(t);
+    const read = () => {
+      const t = parseInt(new URLSearchParams(window.location.search).get("tmdb") || "");
+      if (Number.isFinite(t)) setOpenTmdb(t);
+    };
+    read();
+    window.addEventListener("lumina:url", read);
+    return () => window.removeEventListener("lumina:url", read);
   }, []);
   useEffect(() => {
     if (!openTmdb || !groups.length) return;

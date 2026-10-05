@@ -43,7 +43,9 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
     setLangMsg("zapisuji…");
     try {
       const r = await setAudioLanguage([], lang, track, [path]);
-      setLangMsg(r.errors.length ? r.errors[0] : r.done[0]?.written ? "uloženo do souboru" : "uloženo v Lumině (AVI jazyk neukládá)");
+      const d = r.done[0];
+      setLangMsg(r.errors.length ? r.errors[0] : (d?.written ? "uloženo do souboru" : "uloženo v Lumině (AVI jazyk neukládá)")
+        + (d?.renamed ? ` · přejmenováno na ${d.renamed}` : ""));
       await load();
       onChanged();
     } catch (e) {

@@ -541,3 +541,34 @@ def _remove_empty_tree_inside(folder: str) -> None:
                 os.rmdir(d)
             except OSError:
                 pass
+
+
+async def rename_files(db, client, root: str, paths: list[str]) -> dict[str, str]:
+    """The renamer's names for these files only, each staying in its folder (Plex keeps its items) — after the
+    user set their sound language ("[SK]" in the name, as an imported file gets it). A folder the renamer can not
+    plan now (another show undecided, a conflict) keeps its names. Returns {old path: new path}."""
+    if not paths:
+        return {}
+    rows = {r[0]: r[1] for r in await (await db.execute(
+        f"SELECT file_path, folder FROM tv_files WHERE file_path IN ({','.join('?' * len(paths))})", paths)).fetchall()}
+    out: dict[str, str] = {}
+    for folder in sorted(set(rows.values())):
+        try:
+            plan = names_only(await plan_show(db, client, folder, root))
+        except OrganizeError as e:
+            logger.info("No new names in %s: %s", folder, e)
+            continue
+        mine = {p for p, f in rows.items() if f == folder}
+        stems = {(os.path.dirname(p), os.path.splitext(os.path.basename(p))[0]) for p in mine}
+        ops = [op for op in plan["ops"] if (op["kind"] == "video" and op["src"] in mine) or (
+            op["kind"] == "sidecar" and any(os.path.dirname(op["src"]) == d and os.path.basename(op["src"]).startswith(s)
+                                            for d, s in stems))]
+        if not ops:
+            continue
+        conflicts = ([plan["blocked"]] if plan.get("blocked") else []) + _conflicts(ops)
+        if conflicts:
+            logger.info("No new names in %s: %s", folder, "; ".join(conflicts))
+            continue
+        await apply_plan(db, {**plan, "ops": ops, "conflicts": []}, root)
+        out.update({op["src"]: op["dst"] for op in ops if op["kind"] == "video"})
+    return out

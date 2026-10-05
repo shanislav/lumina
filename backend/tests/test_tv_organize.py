@@ -379,3 +379,30 @@ def test_the_users_word_does_not_take_plexs_name_of_the_old_number(tmp_path):
     plan = organize_tv.plan_folder(rows, {"tmdb_id": 45, "title": "Top Gear", "year": 2002}, {}, {(14, 7): "7. epizoda"},
                                    root, SETTINGS)
     assert [os.path.basename(op["dst"]) for op in plan["ops"]] == ["Top Gear - S14E07.avi"]
+
+
+async def test_a_new_sound_language_goes_into_the_name_in_place(db_tv):
+    """The user set the sound language of a file without one: the renamer's name for it, in its folder."""
+    db, root = db_tv
+    a = touch(root, "Bones/Season 04/Bones - S04E03 - Muž v budce [480p XviD].avi")
+    touch(root, "Bones/Season 04/Bones - S04E03 - Muž v budce [480p XviD].cs.srt")
+    other = touch(root, "Bones/Season 04/Bones - S04E04.avi")
+    await db.execute("INSERT INTO tmdb_shows (tmdb_id, data, fetched_at) VALUES (?, ?, ?)",
+                     (1911, json.dumps({"title": "Bones", "original_title": "Bones", "original_language": "en", "year": 2005,
+                                        "titles_by_lang": {"en": "Bones"}}), time.time()))
+    await db.execute("INSERT INTO tv_folders (folder, tmdb_id, source) VALUES ('Bones', 1911, 'plex')")
+    for path, e in ((a, 3), (other, 4)):
+        await db.execute("INSERT INTO tv_files (file_path, folder, show_tmdb_id, season, episodes, status, facts) "
+                         "VALUES (?, 'Bones', 1911, 4, ?, 'ok', ?)", (path, json.dumps([e]), json.dumps({"file": [4, [e]], "title": "Muž v budce"})))
+        await db.execute("INSERT INTO tv_media (file_path, size, mtime, media) VALUES (?, 1, 0, ?)",
+                         (path, json.dumps({"width": 640, "height": 480, "video_codec": "XviD", "audio": [{"lang": "sk"}]})))
+        await db.execute("INSERT INTO library_episodes (show_tmdb_id, season, episode, file_path, has_file) VALUES (1911, 4, ?, ?, 1)",
+                         (e, path))
+    await db.commit()
+    renamed = await organize_tv.rename_files(db, None, root, [a])
+    new = renamed[a]
+    assert os.path.dirname(new) == os.path.dirname(a) and "[SK]" in os.path.basename(new) and os.path.exists(new)
+    assert os.path.exists(new[:-4] + ".cs.srt")                                       # its subtitles go along
+    assert os.path.exists(other)                                                       # only the file asked for
+    ep = await (await db.execute("SELECT file_path FROM library_episodes WHERE episode = 3")).fetchone()
+    assert ep[0] == new

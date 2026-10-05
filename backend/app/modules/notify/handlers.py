@@ -20,13 +20,18 @@ def _name(p: dict) -> str:
     return f"{title} ({p['year']})" if p.get("year") and p.get("content_type") != "tv" else title
 
 
+def _film(p: dict) -> str:
+    """The film's card in the library (its versions when it has more)."""
+    return f"/library?tmdb={p['tmdb_id']}" if p.get("tmdb_id") else "/library"
+
+
 async def on_download_completed(p: dict) -> None:
     """After the library took it (priority behind the import): landed in the library, or only downloaded."""
     if p.get("held_by"):
         return                                   # another module works on it and emits the event again
     action = p.get("library_action") or {}
     tv = p.get("content_type") == "tv"
-    link = f"/series?tmdb={p['tmdb_id']}" if tv and p.get("tmdb_id") else "/library" if p.get("imported") else "/downloads"
+    link = f"/series?tmdb={p['tmdb_id']}" if tv and p.get("tmdb_id") else _film(p) if p.get("imported") else "/downloads"
     if not p.get("imported"):
         # which file and why — "Columbo: 18 - Sladká, leč smrtící.avi (S03E01 už máš)"
         left = p.get("left_files") or [[os.path.basename(p.get("path") or ""), ""]]
@@ -46,7 +51,7 @@ async def on_download_completed(p: dict) -> None:
             return                               # nothing of it went to its episode
     if p.get("review"):
         await store.add("download", f"Na kontrolu: {_name(p)}", f"stažený soubor sedí jen napůl — {p['review']}",
-                        level="warn", link="/library", permission="download")
+                        level="warn", link=_film(p), permission="download")
         return
     if tv:
         # the episodes that went in (a pack imports them one by one while it downloads), else the one asked for
@@ -91,7 +96,7 @@ async def on_offers_found(p: dict) -> None:
     what = " · ".join(x for x in (best.get("quality_summary") or best.get("resolution") or "",
                                   "+".join(best.get("audio_langs") or []).upper()) if x)
     if p.get("kind") == "upgrade":
-        await store.add("upgrade", f"Lepší verze: {_name(p)}", what, link="/library", permission="library.view",
+        await store.add("upgrade", f"Lepší verze: {_name(p)}", what, link=_film(p), permission="library.view",
                         dedup=f"upgrade:{p.get('tmdb_id')}:{best.get('ident')}")
     else:
         await store.add("wanted", f"Chci — nalezeno: {_name(p)}", what, level="ok", link="/wanted", permission="wanted",
