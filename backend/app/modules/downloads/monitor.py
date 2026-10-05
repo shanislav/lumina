@@ -102,6 +102,7 @@ async def _monitor_loop():
                     try:
                         completed_path = None
                         extra_paths: list[str] = []      # a torrent of several episodes: the others
+                        pack_files: dict[str, str] = {}   # a pack's file here → its path in the torrent (the plan's key)
                         if backend == "aria2":
                             aria2 = Aria2Client(cfg["aria2_rpc_url"], cfg["aria2_rpc_secret"])
                             try:
@@ -153,18 +154,40 @@ async def _monitor_loop():
                                         owned = {(r[0], r[1]) for r in cur.execute(
                                             "SELECT season, episode FROM library_episodes WHERE show_tmdb_id = ? AND has_file = 1",
                                             (tmdb_id,)).fetchall()}
-                                        skip = [] if intent.get("replace_owned") else pack_skip(files, owned, intent.get("pack_season"))
+                                        # the whole pack placed at once (library.pack_plan): which file is which
+                                        # episode, two-part episodes, bonuses — before anything downloads
+                                        plan = None
+                                        try:
+                                            from app.modules.library.pack_plan import first_indexes, make_plan, skip_indexes
+                                            plan = await make_plan(tmdb_id, files, intent.get("pack_season"),
+                                                                   bool(intent.get("replace_owned")), title)
+                                        except Exception as e:  # noqa: BLE001 — the file by file way then
+                                            logger.warning("Pack %s: no plan: %s", title, e)
+                                        if plan:
+                                            skip = skip_indexes(plan)
+                                            top, high = first_indexes(plan)
+                                            prios = {7: top, 6: high}
+                                        else:
+                                            skip = [] if intent.get("replace_owned") else pack_skip(files, owned, intent.get("pack_season"))
+                                            prios = pack_priorities(files, skip, intent.get("pack_season"))
                                         if skip:
                                             await qbt.set_file_priority(did, skip, 0)
                                         # the first episodes first, in order — each goes to the library once it is
                                         # complete (below), so watching can start before the whole pack is in
                                         try:
-                                            for priority, indexes in pack_priorities(files, skip, intent.get("pack_season")).items():
-                                                await qbt.set_file_priority(did, indexes, priority)
+                                            for priority, indexes in prios.items():
+                                                if indexes:
+                                                    await qbt.set_file_priority(did, indexes, priority)
                                             await qbt.set_sequential(did, True)
                                         except Exception as e:  # noqa: BLE001 — only the order
                                             logger.info("Pack %s: the order not set: %s", title, e)
                                         intent.update(files_chosen=True, skipped=len(skip))
+                                        if plan:
+                                            intent["plan"] = plan
+                                            await events.emit("download.planned", {"tmdb_id": tmdb_id, "title": title,
+                                                                                   "summary": plan["summary"],
+                                                                                   "unknown": [os.path.basename(k) for k, v in plan["files"].items()
+                                                                                               if v.get("kind") == "unknown"][:20]})
                                         cur.execute("UPDATE download_tracker SET intent = ? WHERE id = ?", (json.dumps(intent), did))
                                         conn.commit()
                                         logger.info("Pack %s: %d of %d files not downloaded (owned episodes)", title, len(skip), len(files))
@@ -187,6 +210,7 @@ async def _monitor_loop():
                                             "download_id": did, "tmdb_id": tmdb_id, "title": title, "year": year,
                                             "content_type": content_type, "path": _seeding_copy(full, did),
                                             "extra_paths": [], "library_action": intent, "partial": True,
+                                            "pack_file": f["name"].replace("\\", "/"),
                                         })
                                         done_before.add(full)
                                         intent["imported_paths"] = sorted(done_before)
@@ -222,7 +246,14 @@ async def _monitor_loop():
                                                     videos = [fp for fp in videos if fp not in done_before]
                                                     if done_before and completed_path in done_before:
                                                         completed_path = max(videos, key=os.path.getsize) if videos else None
-                                                    extra_paths = [_seeding_copy(fp, did) for fp in videos if fp != completed_path]
+                                                    rels = {fp: os.path.relpath(fp, os.path.dirname(candidate)).replace(os.sep, "/")
+                                                            for fp in videos}
+                                                    extra_paths = []
+                                                    for fp in videos:
+                                                        if fp != completed_path:
+                                                            copy = _seeding_copy(fp, did)
+                                                            extra_paths.append(copy)
+                                                            pack_files[copy] = rels[fp]
                                                     if not completed_path and done_before:
                                                         cur.execute("UPDATE download_tracker SET processed = 1, status = 'complete', "
                                                                     "finished_at = ? WHERE id = ?", (_now(), did))
@@ -233,7 +264,11 @@ async def _monitor_loop():
                                     if completed_path:
                                         # the library moves and renames what it imports — qBittorrent keeps
                                         # seeding its own file, the library gets a hard link (same data, no space)
+                                        original = completed_path
                                         completed_path = _seeding_copy(completed_path, did)
+                                        if content_type == "tv" and t.get("content_path"):
+                                            rel_root = os.path.dirname(candidate) if os.path.isdir(candidate) else os.path.dirname(original)
+                                            pack_files[completed_path] = os.path.relpath(original, rel_root).replace(os.sep, "/")
                                     logger.info("qBittorrent %s complete: state=%s path=%s", did[:8], state, completed_path)
                             except Exception as qe:
                                 logger.error("qBittorrent check failed for %s: %s", did[:8], qe)
@@ -252,6 +287,7 @@ async def _monitor_loop():
                                 "path": completed_path,
                                 "extra_paths": extra_paths,
                                 "library_action": intent,
+                                "pack_files": pack_files,
                             })
                             cur.execute("UPDATE download_tracker SET processed = 1, status = 'complete', finished_at = ?, file_name = ?, size = ? "
                                         "WHERE id = ?", (_now(), os.path.basename(done.get("path") or completed_path), done_size, did))

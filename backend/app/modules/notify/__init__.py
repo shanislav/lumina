@@ -15,6 +15,7 @@ module = Module(
     migrations=[NOTIFICATIONS],
     subscriptions=[Subscription("download.completed", handlers.on_download_completed, priority=95),
                    Subscription("download.failed", handlers.on_download_failed),
+                   Subscription("download.planned", handlers.on_download_planned),
                    Subscription("offers.found", handlers.on_offers_found),
                    Subscription("series.found", handlers.on_series_found)],
 )

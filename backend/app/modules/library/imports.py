@@ -37,7 +37,7 @@ from app.core.mediainfo import probe_async
 from app.db import get_automation, get_db
 from app.core.release_name import SUBTITLE_EXTS, VIDEO_EXTS
 from app.core import events
-from app.modules.library import episode_names, tv_inventory
+from app.modules.library import episode_names, pack_plan, tv_inventory
 from app.modules.library.notify import emit_movie_updated
 from app.modules.library.organize import _ensure_dir, naming_settings
 
@@ -349,6 +349,16 @@ def _in_pack(path: str, season: int | None, episodes: list[int], pack_season: in
 
 
 UNSORTED_DIR = "Nezařazeno"
+
+
+async def _extra(path: str, show_root: str, folder: str) -> str:
+    """A pack's bonus into the show's Plex extras folder ("Behind The Scenes", "Other" …)."""
+    target_dir = os.path.join(show_root, folder)
+    _ensure_dir(target_dir)
+    target = _unique_path(os.path.join(target_dir, os.path.basename(path)))
+    _move_with_subtitles(path, target)
+    logger.info("%s: a bonus — %s", os.path.basename(path), target)
+    return target
 _PT = re.compile(r"(?i) - pt(\d)\.[a-z0-9]{2,4}$")
 
 
@@ -557,6 +567,10 @@ async def import_episode(payload: dict) -> None:
         if tmdb_id:
             _check, cat = await episode_names.release_checker(cfg.get("tmdb_api_key", ""), tmdb_id, None)
         extras = payload.get("extra_paths") or []
+        # a pack's files: path here → its path in the torrent (its key in the plan)
+        pack_files = dict(payload.get("pack_files") or {})
+        if payload.get("pack_file"):
+            pack_files[src] = payload["pack_file"]
         targets = []
         unsorted: list[str] = []
         placed: list[str] = []                 # "S01E04" — what went to the library (the notification names them)
@@ -572,7 +586,32 @@ async def import_episode(payload: dict) -> None:
                 m = _SEASON.search(os.path.basename(path))
                 season = int(m.group(1) or m.group(2)) if m else None
             pack = action.get("mode") == "pack"
-            if pack:
+            # the pack's plan (pack_plan, made when its list of files came): where this file goes
+            planned = pack_plan.plan_for(action.get("plan"), pack_files.get(path)) if pack else None
+            if planned and planned.get("kind") != "episode":
+                kind = planned.get("kind")
+                if kind == "extra":
+                    target = await _extra(path, show_root, planned.get("extra") or "Other")
+                    targets.append(target)
+                    placed.append(f"bonus {os.path.basename(target)}")
+                elif kind == "unknown":
+                    unsorted.append(await _unsorted(db, path, root, show_root, tmdb_id))
+                else:
+                    left.append([os.path.basename(path), planned.get("why") or kind])
+                continue
+            if planned:
+                file_numbers = (season, list(episodes))
+                season, episodes = planned["season"], list(planned["episodes"])
+                part = planned.get("part")
+                duration = (await probe_async(path)).get("duration_s") or 0
+                runtime = sum(cat.get((season, ep), {}).get("runtime") or 0 for ep in episodes)
+                if not part and runtime and duration > 1.8 * runtime * 60:
+                    logger.info("%s: %d min for S%02dE%02d of %d min — not placed", path, duration // 60, season,
+                                episodes[0], runtime)
+                    unsorted.append(await _unsorted(db, path, root, show_root, tmdb_id))
+                    continue
+                why = planned.get("why", "") if file_numbers != (season, episodes) else ""
+            if pack and not planned:
                 season, episodes = _in_pack(path, season, episodes, _int(action.get("pack_season")))
                 if season is None or not episodes:
                     duration = (await probe_async(path)).get("duration_s") or 0
@@ -585,12 +624,13 @@ async def import_episode(payload: dict) -> None:
                         logger.info("%s: no episode (a film, an extra) — left in downloads", path)
                         left.append([os.path.basename(path), "není díl (film, bonus)" if duration else "neznámý díl"])
                     continue
-            file_numbers = (season, list(episodes))
-            season, episodes, why = _which_episode(os.path.basename(path), season, episodes, cat,
-                                                   action if path == src and not extras else {}, [title])
+            if not planned:
+                file_numbers = (season, list(episodes))
+                season, episodes, why = _which_episode(os.path.basename(path), season, episodes, cat,
+                                                       action if path == src and not extras else {}, [title])
+                # a part of a two-part episode TMDB keeps as one ("Vítej v Koreji II"): "- pt2" next to the first part
+                part = file_part(os.path.basename(path), cat, season, episodes, [title])
             dub_over = False
-            # a part of a two-part episode TMDB keeps as one ("Vítej v Koreji II"): "- pt2" next to the first part
-            part = file_part(os.path.basename(path), cat, season, episodes, [title])
             owned_path = owned.get((season, episodes[0])) if season is not None and episodes else None
             if part is None and owned_path and _PT.search(owned_path) and _PT.search(owned_path).group(1) != "1":
                 part = 1                                    # the 2nd part came first: this one is the 1st

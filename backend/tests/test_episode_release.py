@@ -402,3 +402,34 @@ async def test_both_parts_in_one_batch(tmp_path, monkeypatch):
         "path": str(files[0]), "extra_paths": [str(files[1])], "library_action": {"mode": "pack", "replace_owned": False}})
     s4 = sorted(p.name for p in (tmp_path / "Serials" / "South Park" / "Season 04").iterdir())
     assert len(s4) == 2 and s4[0].endswith(" - pt1.mkv") and s4[1].endswith(" - pt2.mkv"), s4
+
+
+async def test_the_import_follows_the_packs_plan(tmp_path, monkeypatch):
+    """With a plan the import does not guess: the episode and its part from the plan, a bonus to the show's
+    extras, an unclear file to "Nezařazeno"."""
+    import os
+    season, owned, dl = await _setup(tmp_path, monkeypatch)
+    pack = dl / "MASH"
+    (pack / "S04").mkdir(parents=True)
+    (pack / "Bonus").mkdir()
+    names = ["MASH/S04/S04E01[073].Vítej v Koreji.mkv", "MASH/S04/S04E02[074].Vítej v Koreji.II.mkv",
+             "MASH/S04/S04E03[075].Změna velení.mkv", "MASH/Bonus/Making of.mkv", "MASH/S04/S04E09.mkv"]
+    for n in names:
+        (dl / n).write_bytes(b"x" * 30)
+    plan = {"files": {names[0]: {"kind": "episode", "season": 4, "episodes": [1], "part": 1, "why": "podle názvu"},
+                      names[1]: {"kind": "episode", "season": 4, "episodes": [1], "part": 2, "why": "podle názvu"},
+                      names[2]: {"kind": "episode", "season": 4, "episodes": [2], "part": None, "why": "podle názvu"},
+                      names[3]: {"kind": "extra", "extra": "Behind The Scenes"},
+                      names[4]: {"kind": "unknown", "why": "?"}}}
+    paths = [str(dl / n) for n in names]
+    await events.emit("download.completed", {
+        "download_id": "p", "tmdb_id": 2190, "title": "South Park", "year": "1997", "content_type": "tv",
+        "path": paths[0], "extra_paths": paths[1:], "pack_files": dict(zip(paths, names)),
+        "library_action": {"mode": "pack", "replace_owned": False, "plan": plan}})
+    show = tmp_path / "Serials" / "South Park"
+    s4 = sorted(p.name for p in (show / "Season 04").iterdir())
+    assert len(s4) == 3 and s4[0].endswith(" - pt1.mkv") and s4[1].endswith(" - pt2.mkv")
+    assert (show / "Behind The Scenes" / "Making of.mkv").exists()
+    assert (show / "Nezařazeno" / "S04E09.mkv").exists()
+    got = {r[:2]: os.path.basename(r[2]) for r in _episodes() if r[0] == 4}
+    assert got[(4, 1)].endswith(" - pt1.mkv") and (4, 2) in got

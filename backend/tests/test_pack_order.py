@@ -75,3 +75,34 @@ def test_mash_two_parts_and_letters():
     assert hit("S06E13[135].Kamarádi ve zbrani.mkv", 6) == ((6, 12), True)        # the 1st part, not S04 "Zbraň"
     assert hit("S06E14[136].Kamarádi ve zbrani.II.mkv", 6) == ((6, 13), True)
     assert hit("S07E21[168].J.E.S.K.Y.N.Ě.mkv", 7) == ((7, 20), True)
+
+
+def test_a_pack_planned_at_once():
+    """M*A*S*H's pack: the two-part episodes TMDB keeps as one become pt1 / pt2, nothing takes another's place; a
+    sample is not downloaded, a bonus goes to the show's extras, a film-sized file is no episode."""
+    from app.modules.library.pack_plan import first_indexes, plan_pack, skip_indexes
+    cat = {(4, 1): {"cs": "Vítej v Koreji", "en": "Welcome to Korea", "runtime": 46},
+           (4, 2): {"cs": "Změna velení", "en": "Change of Command", "runtime": 25},
+           (4, 3): {"cs": "Stalo se jedné noci", "en": "It Happened One Night", "runtime": 25},
+           (4, 4): {"cs": "Mrtvý kapitán Pierce", "en": "The Late Captain Pierce", "runtime": 25},
+           (4, 5): {"cs": "Hej, doktore", "en": "Hey, Doc", "runtime": 25}}
+    gb = 10 ** 9
+    files = [{"index": 0, "name": "MASH/S04/S04E01[073].Vítej v Koreji.mkv", "size": gb},
+             {"index": 1, "name": "MASH/S04/S04E02[074].Vítej v Koreji.II.mkv", "size": gb},
+             {"index": 2, "name": "MASH/S04/S04E03[075].Změna velení.mkv", "size": gb},
+             {"index": 3, "name": "MASH/S04/S04E04[076].Stalo se jedné noci.mkv", "size": gb},
+             {"index": 4, "name": "MASH/S04/S04E05[077].Mrtvý kapitán Pierce.mkv", "size": gb},
+             {"index": 5, "name": "MASH/S04/S04E06.mkv", "size": 9 * gb},                       # a film-sized one
+             {"index": 6, "name": "MASH/Sample/sample.mkv", "size": 1},
+             {"index": 7, "name": "MASH/Bonus/Making of.mkv", "size": gb // 5},
+             {"index": 8, "name": "MASH/S04/S04E03[075].Změna velení.cs.srt", "size": 1}]
+    plan = plan_pack(files, cat, owned_local={(4, 4)}, show_names=["M*A*S*H"])
+    f = plan["files"]
+    assert (f[files[0]["name"]]["episodes"], f[files[0]["name"]]["part"]) == ([1], 1)
+    assert (f[files[1]["name"]]["episodes"], f[files[1]["name"]]["part"]) == ([1], 2)
+    assert f[files[2]["name"]]["episodes"] == [2] and f[files[3]["name"]]["episodes"] == [3]
+    assert f[files[4]["name"]]["kind"] == "owned"
+    assert f[files[5]["name"]]["kind"] == "unknown"
+    assert f[files[6]["name"]]["kind"] == "sample" and f[files[7]["name"]]["extra"] == "Behind The Scenes"
+    assert skip_indexes(plan) == [4, 6]
+    assert first_indexes(plan) == ([0, 1], [2, 3])

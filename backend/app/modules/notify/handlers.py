@@ -59,6 +59,27 @@ async def on_download_completed(p: dict) -> None:
                         level="ok", link=link, permission="download")
 
 
+async def on_download_planned(p: dict) -> None:
+    """A show pack's plan: what it holds and where it goes — before it downloads ("256 souborů → 251 dílů · 5×
+    dvojdíl · 1 bonus"); what Lumina can not place is named."""
+    s = p.get("summary") or {}
+    files = sum(v for k, v in s.items() if k in ("episode", "extra", "sample", "unknown", "owned"))
+    bits = [f"{files} souborů → {s.get('episodes', 0)} dílů z {s.get('tmdb', 0)}"]
+    if s.get("parts"):
+        bits.append(f"{s['parts']}× dvojdíl (pt1/pt2)")
+    if s.get("extra"):
+        bits.append(f"{s['extra']} bonus{'y' if 1 < s['extra'] < 5 else 'ů' if s['extra'] >= 5 else ''} do Extra")
+    if s.get("owned"):
+        bits.append(f"{s['owned']} už máš (nestahuje)")
+    if s.get("sample"):
+        bits.append(f"{s['sample']} ukázka (nestahuje)")
+    if s.get("unknown"):
+        bits.append(f"{s['unknown']} nejasných → Nezařazeno: {', '.join(p.get('unknown') or [])[:200]}")
+    await store.add("download", f"Balík {p.get('title') or ''}: plán", " · ".join(bits),
+                    level="warn" if s.get("unknown") else "info", link=f"/series?tmdb={p.get('tmdb_id')}",
+                    permission="download")
+
+
 async def on_download_failed(p: dict) -> None:
     se = _se((p.get("library_action") or {}).get("season"), (p.get("library_action") or {}).get("episode"))
     await store.add("download_failed", f"Stahování selhalo: {_name(p)}{' ' + se if se else ''}",
