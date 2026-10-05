@@ -60,3 +60,9 @@ def test_torrent_queries_are_few():
     assert torrent_query_list("Matrix 1999", "The Matrix", "The Matrix") == ["Matrix", "The Matrix"]
     assert torrent_query_list("Mrazík", "Jack Frost", "Морозко") == ["Mrazík", "Jack Frost"]
     assert torrent_query_list("Matrix", "Matrix", "Matrix") == ["Matrix"]
+
+
+def test_a_show_named_with_stars_is_searched_joined():
+    from app.core.offers.season import season_queries
+    ddl, torrent = season_queries(["M*A*S*H", "Mash"], 3)
+    assert torrent[0] == "MASH S03" and "MASH" in torrent

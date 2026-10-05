@@ -20,7 +20,7 @@ from app.core.episode_match import _plain, parse_episode, show_fit
 from app.core.film_match import tokens
 from app.core.offers.details import cached_details, get_details
 from app.core.offers.evaluate import MovieContext, evaluate
-from app.core.offers.search import _clean_title, _norm, _unique_names, search_sources
+from app.core.offers.search import _clean_title, _collapse_acronyms, _norm, _unique_names, search_sources
 from app.core.quality import Prefs, prefs_from_settings
 from app.sources.base import TORRENT_SOURCES
 from app.sources.registry import SourceRegistry
@@ -188,7 +188,8 @@ async def _verify_samples(out: SeasonOffers, titles: list[str], runtime: int) ->
 def season_queries(titles: list[str], season: int) -> tuple[list[str], list[str]]:
     """WebShare finds a whole season by "Show S03" (measured: Sex Education S03 — all 8 episodes in
     100 results); FastShare answers the plain name; trackers name packs "Show 1. - S03", "komplet"."""
-    names = [_clean_title(t) for t in _unique_names(titles)]
+    # "M*A*S*H" as "MASH" first (a tracker finds nothing for "M A S H"), the spaced one too
+    names = _unique_names([_clean_title(x) for t in _unique_names(titles) for x in (_collapse_acronyms(t), t)])
     names = [n for n in names if len(_norm(n)) >= 2]
     if not names:
         return [], []
@@ -289,7 +290,8 @@ async def find_show_packs(cfg: dict, tmdb_id: int) -> dict:
     by_lang = show.get("titles_by_lang") or {}
     titles = _unique_names([show.get("title", ""), *(by_lang.get(l, "") for l in prefs.local_langs),
                             by_lang.get("en", ""), show.get("original_title", ""), *show.get("alternative_titles", [])])
-    names = [n for n in (_clean_title(t) for t in titles) if len(_norm(n)) >= 2]
+    names = [n for n in _unique_names([_clean_title(x) for t in titles for x in (_collapse_acronyms(t), t)])
+             if len(_norm(n)) >= 2]
     if not names:
         return {"seasons": tmdb_seasons, "packs": []}
     latin = next((n for n in names if n.isascii() and re.search(r"[A-Za-z]", n)), names[0])

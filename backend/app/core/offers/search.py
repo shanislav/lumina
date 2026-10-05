@@ -59,8 +59,9 @@ def _clean_title(text: str) -> str:
 
 
 def _collapse_acronyms(text: str) -> str:
-    """ "S.W.A.T." → "SWAT" (WebShare matches the joined form, FastShare the spaced one)."""
-    return re.sub(r"\b(?:[A-Za-z]\.){2,}[A-Za-z]?\.?", lambda m: m.group(0).replace(".", ""), text)
+    """ "S.W.A.T." → "SWAT", "M*A*S*H" → "MASH" (WebShare and the trackers match the joined form, FastShare the
+    spaced one; a tracker finds nothing for "M A S H")."""
+    return re.sub(r"\b(?:[A-Za-z][.*]){2,}[A-Za-z]?\.?", lambda m: re.sub(r"[.*]", "", m.group(0)), text)
 
 
 def ddl_queries(query: str, original_title: str = "", en_title: str = "",
