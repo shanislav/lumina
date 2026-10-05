@@ -4,20 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { ManagedUser, PermissionInfo, createUser, deleteUser, getPermissions, getUsers, updateUser } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 
-/** A child's account: looks for films and shows, watches the library, asks for what it wants in Chci — sees no
- *  offers and downloads nothing; what it asks for is never downloaded automatically (the admin decides). */
-const KID = ["search", "wanted", "library.view", "player"];
-
-function KidPreset({ perms, onPick }: { perms: PermissionInfo[]; onPick: (p: string[]) => void }) {
-  return (
-    <button type="button" onClick={() => onPick(KID.filter((k) => perms.some((p) => p.name === k)))}
-      title="Jen hledat, dívat se a přidávat do Chci — žádné stahování ani nabídky souborů; co přidá, rozhodneš ty"
-      className="rounded border border-amber-700/70 px-2.5 py-1 text-xs text-amber-200 hover:bg-amber-950/40">
-      🧒 Dětský účet
-    </button>
-  );
-}
-
 const INPUT = "rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 focus:border-violet-500 outline-none";
 
 /** Users and what each may do (admin only; the backend checks everything again). */
@@ -111,7 +97,6 @@ function NewUserForm({ perms, onCreate, onCancel }: {
           <option value="admin">Správce</option>
         </select>
       </div>
-      {role === "user" && <div className="flex items-center gap-2 text-[11px] text-zinc-500">Předvolba: <KidPreset perms={perms} onPick={setChosen} /></div>}
       <PermChecks perms={perms} value={chosen} onChange={setChosen} disabled={role === "admin"} />
       <div className="flex gap-2">
         <button disabled={!username || !password} onClick={() => onCreate({ username, password, role, permissions: chosen })}
@@ -167,7 +152,6 @@ function UserRow({ user, perms, isMe, run }: {
               <option value="admin">Správce</option>
             </select>
           </div>
-          {role === "user" && <div className="flex items-center gap-2 text-[11px] text-zinc-500">Předvolba: <KidPreset perms={perms} onPick={setChosen} /></div>}
           <PermChecks perms={perms} value={chosen} onChange={setChosen} disabled={role === "admin"} />
           <div className="flex flex-wrap items-center gap-2">
             <button disabled={!dirty} onClick={() => run(() => updateUser(user.id, { role, permissions: chosen }))}
