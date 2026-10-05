@@ -70,6 +70,14 @@ def _seeding_copy(path: str, torrent_hash: str) -> str:
 _monitor_running = False
 
 
+async def _removed(tmdb_id, content_type: str, intent: dict | None) -> None:
+    """A download removed in Aria2 / qBittorrent while it ran (the user cancelled it there or in Lumina): the
+    modules that started it hear it — it is not downloading any more."""
+    if tmdb_id:
+        await events.emit("download.cancelled", queue.cancelled(
+            [{"tmdb_id": tmdb_id, "content_type": content_type, "library_action": intent or {}}]))
+
+
 def _now() -> str:
     from datetime import datetime
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -120,12 +128,15 @@ async def _monitor_loop():
                                             "download_id": did, "tmdb_id": tmdb_id, "title": title, "year": year,
                                             "content_type": content_type, "library_action": intent,
                                             "reason": s.get("errorMessage") or ""})
+                                    else:
+                                        await _removed(tmdb_id, content_type, intent)
                                     continue
                             except Exception as ae:
                                 if "not found" in str(ae):
                                     logger.warning("GID %s not found in Aria2, marking as processed to unblock", did)
                                     cur.execute("UPDATE download_tracker SET processed = 1, status = 'not_found' WHERE id = ?", (did,))
                                     conn.commit()
+                                    await _removed(tmdb_id, content_type, intent)
                                     continue
                                 raise ae
                             finally:
@@ -144,6 +155,7 @@ async def _monitor_loop():
                                     logger.warning("Torrent %s of %s not in qBittorrent, marking as processed", did[:8], title)
                                     cur.execute("UPDATE download_tracker SET processed = 1, status = 'not_found' WHERE id = ?", (did,))
                                     conn.commit()
+                                    await _removed(tmdb_id, content_type, intent)
                                     continue
                                 if intent and intent.get("mode") == "pack" and not intent.get("files_chosen") and tmdb_id:
                                     # a whole-show pack: the episodes the user has are not downloaded at all (unless

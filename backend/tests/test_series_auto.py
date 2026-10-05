@@ -277,3 +277,18 @@ def test_the_space_estimate():
     got = estimate(rows, [])
     assert got == {"chci": 20e9 + 5e9, "way": "seasons", "episodes": 15e9, "unknown": 1}
     assert estimate(rows, [{"fits": True, "size": 90e9}])["chci"] == 90e9
+
+
+async def test_a_cancelled_episode_is_not_downloading_any_more(db):
+    """Cancelled in the downloads (or removed in qBittorrent): the record does not stay "downloading" for days —
+    the file is dismissed, the next check looks again. A film of the same TMDB id is not touched."""
+    from app.modules.downloads import queue
+    registry.register_subscriptions(registry.discover())
+    await auto._save(1408, 2, 5, "new", "downloading", {"ident": "a"})
+    await auto._save(1408, 2, 6, "new", "downloading", {"ident": "b"})
+    await events.emit("download.cancelled", queue.cancelled([
+        {"tmdb_id": 1408, "content_type": "tv", "library_action": {"mode": "episode", "season": 2, "episode": 5}}]))
+    got = {(r["season"], r["episode"]): r["status"] for r in await auto.records(1408)}
+    assert got == {(2, 5): "dismissed", (2, 6): "downloading"}
+    assert events.cancelled_films(queue.cancelled([{"tmdb_id": 1408, "content_type": "tv"}, {"tmdb_id": 603}])) == [603]
+    assert events.cancelled_films({"tmdb_ids": [603]}) == [603]              # an older emitter

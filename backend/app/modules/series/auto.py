@@ -312,6 +312,33 @@ async def dismiss(tmdb_id: int, season: int, episode: int, kind: str) -> None:
         await db.close()
 
 
+async def on_download_cancelled(payload: dict) -> None:
+    """An episode the automation downloads was cancelled (in the downloads, in qBittorrent, "Zastavit vše"): it is
+    not "downloading" any more (before, it stayed so for days and was not searched again). Its file is dismissed —
+    the next check picks another one (or shows it to the user); "Zastavit vše" also stops the running check."""
+    if payload.get("stop_all"):
+        _queue.clear()
+    eps = []
+    for item in payload.get("items") or []:
+        action = item.get("library_action") or {}
+        if item.get("content_type") == "tv" and item.get("tmdb_id") and action.get("episode"):
+            try:
+                eps.append((int(item["tmdb_id"]), int(action["season"]), int(action["episode"])))
+            except (TypeError, ValueError, KeyError):
+                continue
+    if not eps:
+        return
+    db = await get_db()
+    try:
+        for tmdb_id, season, episode in eps:
+            await db.execute("UPDATE series_auto SET status = 'dismissed', updated_at = datetime('now') WHERE tmdb_id = ? "
+                             "AND season = ? AND episode = ? AND status = 'downloading'", (tmdb_id, season, episode))
+        await db.commit()
+    finally:
+        await db.close()
+    logger.info("Series automation: cancelled downloads %s", [f"{t} S{s:02d}E{e:02d}" for t, s, e in eps])
+
+
 async def cancel_all(tmdb_id: int, stop: bool = True) -> dict:
     """"Zrušit vše" on the show page: the show's episodes waiting in the download queue and downloading now are
     cancelled, what the automation found / downloads is forgotten — and with ``stop`` the automation is switched

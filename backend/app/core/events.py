@@ -28,9 +28,11 @@ Known events:
     download.request       {file_ident, source, source_id, magnet_url, tmdb_id, title, year, content_type,
                             library_action, requested_by} — start a download (the downloads module does it,
                            sets "started" or "error")
-    download.cancelled     {tmdb_ids: [...], stop_all: bool} — downloads Lumina started were cancelled or taken
-                           out of the queue; stop_all = "Zastavit vše": background checks must not start new
-                           ones (library upgrades, wanted stop their jobs)
+    download.cancelled     {tmdb_ids: [...], stop_all: bool, items: [{tmdb_id, content_type, library_action}]} —
+                           downloads Lumina started were cancelled (also removed in Aria2 / qBittorrent while
+                           running) or taken out of the queue; items say which (a film or which episode — a
+                           film and a show may share a TMDB id); stop_all = "Zastavit vše": background checks
+                           must not start new ones (library upgrades, wanted stop their jobs)
     scheduler.run          {wanted, upgrades, auto_download_wanted, auto_download_upgrades} — the nightly
                            run; wanted / library enqueue their checks
 """
@@ -60,3 +62,11 @@ async def emit(event: str, payload: dict) -> dict:
         except Exception:
             logger.exception("Handler of '%s' in module '%s' failed", event, owner)
     return payload
+
+
+def cancelled_films(payload: dict) -> list[int]:
+    """The films of a download.cancelled (a show's episode may have a film's TMDB id)."""
+    items = payload.get("items")
+    if items is None:                       # an older emitter: ids only
+        return [t for t in payload.get("tmdb_ids") or [] if t]
+    return [i["tmdb_id"] for i in items if i.get("tmdb_id") and i.get("content_type") != "tv"]

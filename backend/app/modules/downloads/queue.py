@@ -64,6 +64,14 @@ async def add(request: dict, requested_by: str = "") -> int:
         await db.close()
 
 
+def cancelled(requests: list[dict], stop_all: bool = False) -> dict:
+    """The download.cancelled payload of these downloads (their requests: tmdb_id, content_type, library_action)."""
+    got = [r for r in requests if r.get("tmdb_id")]
+    return {"tmdb_ids": [r["tmdb_id"] for r in got], "stop_all": stop_all,
+            "items": [{"tmdb_id": r["tmdb_id"], "content_type": r.get("content_type") or "movie",
+                       "library_action": r.get("library_action") or {}} for r in got]}
+
+
 async def items() -> list[dict]:
     db = await get_db()
     try:
@@ -130,4 +138,4 @@ async def drain() -> int:
             logger.warning("Download queue: %s could not start: %s", title, e)
             from app.core import events
             if first["request"].get("tmdb_id"):
-                await events.emit("download.cancelled", {"tmdb_ids": [first["request"]["tmdb_id"]], "stop_all": False})
+                await events.emit("download.cancelled", cancelled([first["request"]]))

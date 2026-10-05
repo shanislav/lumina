@@ -244,7 +244,7 @@ async def on_download_cancelled(payload: dict) -> None:
     if payload.get("stop_all"):
         _queue.clear()
         _auto_download.clear()
-    ids = [t for t in payload.get("tmdb_ids") or [] if t]
+    ids = events.cancelled_films(payload)
     if not ids:
         return
     db = await get_db()

@@ -25,6 +25,7 @@ module = Module(
                 auto.SERIES_AUTO,
                 add_column("series_settings", "auto_upgrade", "TEXT"),
                 overview.SERIES_OVERVIEW],
-    subscriptions=[Subscription("scheduler.run", auto.on_scheduler_run)],
+    subscriptions=[Subscription("scheduler.run", auto.on_scheduler_run),
+                   Subscription("download.cancelled", auto.on_download_cancelled)],
     tasks=[TaskSource(auto.tasks, "library.edit")],
 )

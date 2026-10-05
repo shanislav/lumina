@@ -206,7 +206,7 @@ async def remove_download(
         except ValueError:
             raise HTTPException(400, "Neplatné id fronty")
         if item and item["request"].get("tmdb_id"):
-            await events.emit("download.cancelled", {"tmdb_ids": [item["request"]["tmdb_id"]], "stop_all": False})
+            await events.emit("download.cancelled", queue.cancelled([item["request"]]))
         return {"ok": bool(item)}
     if backend == "history":
         # off the list only — the file is in the library (and a torrent keeps seeding)
@@ -292,17 +292,21 @@ async def stop_all(body: StopAll) -> dict:
     from app.db import DB_PATH
     from app.modules.downloads import queue
 
-    tmdb_ids = [q["request"].get("tmdb_id") for q in await queue.clear()]
-    dropped = len(tmdb_ids)
+    import json
+
+    requests = [q["request"] for q in await queue.clear()]
+    dropped = len(requests)
     cancelled = 0
     if body.cancel_running:
         with sqlite3.connect(DB_PATH) as conn:
-            running = conn.execute("SELECT id, backend, tmdb_id FROM download_tracker WHERE processed = 0").fetchall()
-        for did, backend, tmdb_id in running:
+            running = conn.execute("SELECT id, backend, tmdb_id, content_type, intent FROM download_tracker "
+                                   "WHERE processed = 0").fetchall()
+        for did, backend, tmdb_id, content_type, intent in running:
             await cancel_tracked(did, backend)
-            tmdb_ids.append(tmdb_id)
+            requests.append({"tmdb_id": tmdb_id, "content_type": content_type,
+                             "library_action": json.loads(intent) if intent else {}})
             cancelled += 1
-    await events.emit("download.cancelled", {"tmdb_ids": [t for t in tmdb_ids if t], "stop_all": True})
+    await events.emit("download.cancelled", queue.cancelled(requests, stop_all=True))
     logger.info("Stop all: %d taken out of the queue, %d running cancelled", dropped, cancelled)
     return {"dropped": dropped, "cancelled": cancelled}
 
