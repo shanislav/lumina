@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
@@ -258,6 +259,7 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
   searching: { season: number; episode: number } | null; onSearch: (episode: number) => void;
   onOpen: (episodeId: number) => void; children?: React.ReactNode;
 }) {
+  const { can } = useAuth();
   const [whole, setWhole] = useState(false);
   const [langBusy, setLangBusy] = useState("");
   const c = season.counts;
@@ -347,7 +349,13 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
                           v souboru s {ep.file.shared.map(([s, e]) => se(s, e)).join(", ")}
                         </span>
                       )}
-                      {(ep.file.parts?.length ?? 0) > 1 && ep.file.parts!.map((n) => (
+                      {(ep.file.parts?.length ?? 0) > 1 && ep.file.parts!.map((n) => can("player") ? (
+                        // a part plays at once (the episode's window: its name)
+                        <Link key={n} href={`/play?id=${ep.file!.id}&kind=episode&part=${n}`} title={`Dvojdíl — přehrát ${n}. část (soubor „- pt${n}“)`}
+                          className="flex-shrink-0 rounded border border-violet-800/70 px-1.5 text-[10px] text-violet-200 hover:bg-violet-900/40">
+                          ▶ část {n}
+                        </Link>
+                      ) : (
                         <button key={n} onClick={() => onOpen(ep.file!.id!)} title={`Dvojdíl — ${n}. část (soubor „- pt${n}“)`}
                           className="flex-shrink-0 rounded border border-violet-800/70 px-1.5 text-[10px] text-violet-200 hover:bg-violet-900/40">
                           část {n}

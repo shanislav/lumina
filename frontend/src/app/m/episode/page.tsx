@@ -44,6 +44,12 @@ function Episode() {
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
             <p className="text-base text-emerald-300">V knihovně · {owned.quality} · {owned.languages.map(langName).join("+") || "zvuk ?"}</p>
             <p className="break-all text-xs text-zinc-500">{owned.filename}</p>
+            {(owned.parts?.length ?? 0) > 1 && <p className="mt-1 text-sm text-violet-200">Dvojdíl — {owned.parts!.length} části (soubory „- pt1“, „- pt2“)</p>}
+            {!!owned.shared?.length && (
+              <p className="mt-1 text-sm text-zinc-300">
+                Jeden soubor s {owned.shared.map(([s, n]) => `S${String(s).padStart(2, "0")}E${String(n).padStart(2, "0")}`).join(", ")}
+              </p>
+            )}
           </div>
           {owned.id && can("subtitles") && <Subtitles id={owned.id} kind="episode" />}
           {can("download") && (other ? offers : <BigButton kind="secondary" onClick={() => setOther(true)}>Najít jinou verzi (nahradí tuhle)</BigButton>)}

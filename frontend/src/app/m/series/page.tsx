@@ -75,6 +75,8 @@ function Season({ data, season, open, toggle }: { data: SeriesDetail; season: Se
                 <span className="block truncate text-base text-zinc-100">{e.name || `${e.episode}. díl`}</span>
                 <span className={`text-sm ${STATE[e.state][1]}`}>
                   {STATE[e.state][0]}{e.file ? ` · ${e.file.quality} ${e.file.languages.map(langName).join("+")}` : ""}
+                  {(e.file?.parts?.length ?? 0) > 1 && " · dvojdíl"}
+                  {!!e.file?.shared?.length && ` · v souboru s ${e.file.shared.map(([s, n]) => `S${String(s).padStart(2, "0")}E${String(n).padStart(2, "0")}`).join(", ")}`}
                 </span>
               </span>
               <span className="text-xl text-zinc-600">›</span>
