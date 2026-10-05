@@ -161,3 +161,103 @@ async def test_a_file_of_both_episodes_replaces_the_old_one(tv_import):
         "library_action": {"mode": "episode", "season": 4, "episode": 1, "replace": True}})
     assert not old.exists()
     assert {e for s, e, p in owned(1911) if os.path.basename(p) == new.name} == {1, 2}
+
+
+MASH_CAT = [(4, 1, "Vítej v Koreji", "Welcome to Korea", 46), (4, 2, "Změna velení", "Change of Command", 25),
+            (4, 3, "Stalo se jedné noci", "It Happened One Night", 25), (4, 4, "Mrtvý kapitán Pierce", "The Late Captain Pierce", 25)]
+
+
+@pytest.fixture
+async def mash(tmp_path, monkeypatch):
+    """M*A*S*H owned with its two-part S04E01 as "- pt1" / "- pt2"; a pack of it downloaded again."""
+    import time
+    await init_db(registry.discover())
+    registry.register_subscriptions(registry.discover())
+
+    async def no_tmdb(db, tmdb_id, title, year):
+        await db.execute("INSERT OR IGNORE INTO library_shows (tmdb_id, title) VALUES (?, ?)", (tmdb_id, title))
+    monkeypatch.setattr(imports, "_ensure_show", no_tmdb)
+
+    async def length(path):
+        return {"duration_s": 23 * 60, "audio": [{"lang": "cs"}]}
+    monkeypatch.setattr(imports, "probe_async", length)
+    season = tmp_path / "Serials" / "MASH" / "Season 04"
+    season.mkdir(parents=True)
+    old = [season / "MASH - S04E01 - Vítej v Koreji [480p] - pt1.avi", season / "MASH - S04E01 - Vítej v Koreji [480p] - pt2.avi"]
+    for f in old:
+        f.write_bytes(b"old")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('tv_library_dir', ?)", (str(tmp_path / "Serials"),))
+        conn.execute("INSERT INTO library_episodes (show_tmdb_id, season, episode, file_path, language, has_file) "
+                     "VALUES (918, 4, 1, ?, 'CS', 1)", (str(old[0]),))
+        for s, e, cs, en, rt in MASH_CAT:
+            conn.execute("INSERT INTO tmdb_episodes (show_tmdb_id, season, episode, title_cs, title_en, runtime, air_date, "
+                         "fetched_at) VALUES (918, ?, ?, ?, ?, ?, '1975-09-12', ?)", (s, e, cs, en, rt, time.time()))
+    dl = tmp_path / "Downloads" / "MASH" / "S04"
+    dl.mkdir(parents=True)
+    rels = ["MASH/S04/S04E01[073].Vítej v Koreji.mkv", "MASH/S04/S04E02[074].Vítej v Koreji.II.mkv",
+            "MASH/S04/S04E03[075].Změna velení.mkv", "MASH/S04/S04E04[076].Stalo se jedné noci.mkv"]
+    for r in rels:
+        (tmp_path / "Downloads" / r).write_bytes(b"new")
+    yield tmp_path, old, rels
+
+
+async def _import_pack(tmp_path, rels, paths, owned_parts=None):
+    from app.modules.library.pack_plan import plan_pack
+    cat = {(s, e): {"cs": cs, "en": en, "runtime": rt} for s, e, cs, en, rt in MASH_CAT}
+    plan = plan_pack([{"index": i, "name": r, "size": 10 ** 9} for i, r in enumerate(rels)], cat, show_names=["M*A*S*H"])
+    files = [str(tmp_path / "Downloads" / r) for r in paths]
+    await events.emit("download.completed", {
+        "download_id": "p", "tmdb_id": 918, "title": "MASH", "year": "1972", "content_type": "tv", "path": files[0],
+        "extra_paths": files[1:], "pack_files": {f: r for f, r in zip(files, paths)},
+        "library_action": {"mode": "pack", "plan": plan, "replace_owned": True}})
+
+
+def _season_files(tmp_path):
+    return sorted(os.listdir(tmp_path / "Serials" / "MASH" / "Season 04"))
+
+
+async def test_replacing_a_two_part_episode_by_a_packs_parts(mash):
+    tmp_path, old, rels = mash
+    await _import_pack(tmp_path, rels, rels[:2])                            # both parts in one go
+    got = _season_files(tmp_path)
+    assert not any(n.endswith(".avi") for n in got), got                   # the old parts are gone — both
+    assert [n for n in got if " - pt" in n] == ["S04E01[073].Vítej v Koreji - pt1.mkv", "S04E02[074].Vítej v Koreji.II - pt2.mkv"]
+
+
+async def test_replacing_a_two_part_episode_part_by_part(mash):
+    """A pack imports its files one by one as they complete: the 2nd part never takes the new 1st one."""
+    tmp_path, old, rels = mash
+    await _import_pack(tmp_path, rels, rels[:1])
+    await _import_pack(tmp_path, rels, rels[1:2])
+    got = _season_files(tmp_path)
+    assert not any(n.endswith(".avi") for n in got), got
+    assert len([n for n in got if " - pt" in n]) == 2, got
+
+
+async def test_the_second_part_first_keeps_the_old_whole_episode_until_the_first(mash):
+    tmp_path, old, rels = mash
+    await _import_pack(tmp_path, rels, rels[1:2])                           # pt2 completes first
+    got = _season_files(tmp_path)
+    assert old[0].name in got and old[1].name not in got                   # only the old 2nd part went
+    await _import_pack(tmp_path, rels, rels[:1])
+    got = _season_files(tmp_path)
+    assert not any(n.endswith(".avi") for n in got) and len([n for n in got if " - pt" in n]) == 2, got
+
+
+async def test_a_new_file_of_the_old_ones_very_name_replaces_it(tv_import):
+    tmp_path, _old = tv_import
+    season = tmp_path / "Serials" / "Bones" / "Season 04"
+    same = season / "Bones.S04E03.mkv"
+    same.write_bytes(b"old")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT INTO library_episodes (show_tmdb_id, season, episode, file_path, has_file) VALUES (1911, 4, 3, ?, 1)",
+                     (str(same),))
+    dl = tmp_path / "Downloads"
+    dl.mkdir()
+    new = dl / "Bones.S04E03.mkv"
+    new.write_bytes(b"new")
+    await events.emit("download.completed", {
+        "download_id": "t", "tmdb_id": 1911, "title": "Bones", "year": "2005", "content_type": "tv", "path": str(new),
+        "library_action": {"mode": "episode", "season": 4, "episode": 3, "replace": True}})
+    assert same.read_bytes() == b"new" and not (season / "Bones.S04E03 (2).mkv").exists()

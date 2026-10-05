@@ -162,6 +162,29 @@ async def delete_version(db, movie_id: int, root: str) -> list[str]:
     return deleted
 
 
+def _replaced(owned: dict, season: int, episodes: list[int], part: int | None) -> list[str]:
+    """The owned files a new file of these episodes replaces: the episode's file with its parts ("- pt1" and
+    "- pt2" both go for a whole new file or its 1st part); a new 2nd part replaces only the old 2nd part (never
+    the new 1st part imported a moment ago, nor the old whole episode — that goes when the new 1st part comes). A
+    file of more episodes ("S04E01-E02") goes only when the new one holds them all — else the other episode would
+    be lost; the old file stays its file."""
+    from app.modules.library.episodes import parts_of
+    out: list[str] = []
+    for ep in episodes:
+        old = owned.get((season, ep))
+        if not old or not os.path.exists(old):
+            continue
+        keeps = sorted(e for (s, e), p in owned.items() if p == old and (s != season or e not in episodes))
+        if keeps:
+            logger.info("S%02dE%02d: %s kept — it holds E%s too", season, ep, os.path.basename(old),
+                        ", E".join(f"{e:02d}" for e in keeps))
+            continue
+        parts = parts_of(old)
+        group = [p for n, p in parts if n == part] if part and part >= 2 else [p for _n, p in parts] or [old]
+        out += [p for p in group if p not in out]
+    return out
+
+
 def _durations_agree(a: int, b: int) -> bool:
     if not a or not b:
         return True  # unknown → do not block on it
@@ -660,7 +683,16 @@ async def import_episode(payload: dict) -> None:
             if part and not _PT.search(name):
                 name = f"{os.path.splitext(name)[0]} - pt{part}{os.path.splitext(name)[1]}"
             _ensure_dir(folder)
-            if part and part >= 2 and owned_path and os.path.exists(owned_path) and not _PT.search(owned_path):
+            picked = (_int(action.get("season")), [_int(action.get("episode"))]) if action.get("episode") else None
+            # "replace" was for the episode the user picked: a file that turned out another one replaces nothing
+            # (a file of more episodes holding the picked one replaces it: "S04E01-E02" for E01); "replace_owned"
+            # is for every file of a pack (it imports them one by one as they complete) and a season's other files
+            picked_here = picked is None or (picked[0] == season and picked[1][0] in episodes)
+            replacing = bool(tmdb_id and season is not None and episodes) and (
+                dub_over or (action.get("replace") and path == src and picked_here)
+                or (action.get("replace_owned") and (pack or path != src)))
+            if part and part >= 2 and owned_path and os.path.exists(owned_path) and not _PT.search(owned_path) \
+                    and not replacing:
                 # the first part was imported as the whole episode: it becomes "- pt1"
                 stem, ext = os.path.splitext(owned_path)
                 first = _unique_path(f"{stem} - pt1{ext}")
@@ -673,30 +705,25 @@ async def import_episode(payload: dict) -> None:
                 await db.execute("UPDATE library_episodes SET filename = ? WHERE file_path = ?", (os.path.basename(first), first))
                 owned[(season, episodes[0])] = owned_path = first
                 logger.info("S%02dE%02d: two parts — %s", season, episodes[0], os.path.basename(first))
-            target = _unique_path(os.path.join(folder, name))
-            _move_with_subtitles(path, target)
+            desired = os.path.join(folder, name)
+            gone = _replaced(owned, season, episodes, part) if replacing else []
+            if os.path.exists(desired) and desired in gone:
+                # the new file takes the old one's very name: it waits aside while the old one goes
+                aside = _unique_path(desired)
+                _move_with_subtitles(path, aside)
+                for old in gone:
+                    logger.info("Replaced S%02dE%02d: deleted %s", season, episodes[0], _delete_version(old, aside))
+                target = desired
+                _move_with_subtitles(aside, target)
+            else:
+                target = _unique_path(desired)
+                _move_with_subtitles(path, target)
+                for old in gone:
+                    logger.info("Replaced S%02dE%02d: deleted %s", season, episodes[0], _delete_version(old, target))
             targets.append(target)
             if not (tmdb_id and season is not None and episodes):
                 logger.info("Imported %s (episode unknown — not in the library list)", target)
                 continue
-            picked = (_int(action.get("season")), [_int(action.get("episode"))]) if action.get("episode") else None
-            # "replace" was for the episode the user picked: a file that turned out another one replaces nothing
-            # (a file of more episodes holding the picked one replaces it: "S04E01-E02" for E01)
-            picked_here = picked is None or (picked[0] == season and picked[1][0] in episodes)
-            if dub_over or (action.get("replace") and path == src and picked_here) \
-                    or (path != src and action.get("replace_owned")):
-                for ep in episodes:
-                    old = owned.get((season, ep))
-                    if old and old != target and os.path.exists(old):
-                        # a file of more episodes ("S04E01-E02") goes only when the new one holds them all — else
-                        # the other episode would be lost; the old file stays its file
-                        keeps = sorted(e for (s, e), p in owned.items() if p == old and (s != season or e not in episodes))
-                        if keeps:
-                            logger.info("S%02dE%02d: %s kept — it holds E%s too", season, ep, os.path.basename(old),
-                                        ", E".join(f"{e:02d}" for e in keeps))
-                            continue
-                        deleted = _delete_version(old, target)
-                        logger.info("Replaced S%02dE%02d: deleted %s", season, ep, deleted)
             if (season, episodes) != file_numbers and len(episodes) == 1:
                 # the file's name keeps saying another number: the user's word (as the TV renamer's) holds it
                 await tv_inventory.set_episode_override(db, target, season, episodes[0], why)
