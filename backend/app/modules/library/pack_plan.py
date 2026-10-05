@@ -60,9 +60,12 @@ def _numbers(rel: str, pack_season: int | None) -> tuple[int | None, list[int]]:
 
 
 def plan_pack(files: list[dict], cat: dict, owned_local: set[tuple[int, int]] = frozenset(), show_names=(),
-              pack_season: int | None = None) -> dict:
+              pack_season: int | None = None, owned_parts: dict | None = None,
+              owned_short: set[tuple[int, int]] = frozenset()) -> dict:
     """files: qBittorrent's [{index, name (the path in the torrent), size}]; cat: TMDB's episodes (episode_names
-    .catalog); owned_local: episodes the user has with Czech / Slovak sound (not downloaded again).
+    .catalog); owned_local: episodes the user has with Czech / Slovak sound (not downloaded again); owned_parts:
+    of those, the parts of a two-part episode stored as "- pt1" / "- pt2" {(season, episode): {1, 2}};
+    owned_short: of those, a whole file far shorter than the episode (only its first part).
     → {"files": {path: entry}, "summary": {...}}; entry {"kind": episode | extra | sample | unknown | owned |
     other, "season", "episodes", "part", "how", "why", "index", "extra": Plex folder}."""
     regular = {k: v for k, v in cat.items() if k[0] > 0}
@@ -110,8 +113,10 @@ def plan_pack(files: list[dict], cat: dict, owned_local: set[tuple[int, int]] = 
     _sizes(eps_files, cat, typical_rt)
     _conflicts(eps_files, cat, typical_rt)
     for e in eps_files:
-        if e["kind"] == "episode" and all((e["season"], ep) in owned_local for ep in e["episodes"]) and not e["part"]:
-            e.update(kind="owned", why=f"S{e['season']:02d}E{e['episodes'][0]:02d} už máš (s CZ/SK)")
+        if e["kind"] == "episode" and all(_has(e["season"], ep, e["part"], owned_local, owned_parts or {}, owned_short)
+                                          for ep in e["episodes"]):
+            part = f" ({e['part']}. část)" if e["part"] else ""
+            e.update(kind="owned", why=f"S{e['season']:02d}E{e['episodes'][0]:02d}{part} už máš (s CZ/SK)")
 
     summary: dict[str, int] = {}
     for e in entries.values():
@@ -122,6 +127,19 @@ def plan_pack(files: list[dict], cat: dict, owned_local: set[tuple[int, int]] = 
     summary["missing"] = len([k for k in regular if k not in {(e["season"], ep) for e in entries.values()
                                                                 if e.get("kind") in ("episode", "owned") for ep in e["episodes"]}])
     return {"files": entries, "summary": summary}
+
+
+def _has(season: int, episode: int, part: int | None, owned: set, parts: dict, short: set) -> bool:
+    """Is this file of the pack owned already: the episode with Czech / Slovak sound — a part of a two-part episode
+    when the user has that part (or the whole episode in one file of its full length), a whole file when the user
+    has the whole episode (one full file, or its two parts)."""
+    key = (season, episode)
+    if key not in owned:
+        return False
+    mine = parts.get(key)
+    if part:
+        return part in mine if mine else key not in short
+    return (len(mine) >= 2) if mine else key not in short
 
 
 def _part(base: str, cat: dict, season: int, episode: int, show_names) -> int | None:
@@ -209,15 +227,31 @@ async def make_plan(tmdb_id: int, files: list[dict], pack_season: int | None, re
     if not cat:
         return None
     owned_local: set[tuple[int, int]] = set()
+    owned_parts: dict[tuple[int, int], set[int]] = {}
+    owned_short: set[tuple[int, int]] = set()
     if not replace_owned:
+        import json
+
+        from app.modules.library.episodes import parts_of
         db = await get_db()
         try:
-            for s, e, lang in await (await db.execute(
-                    "SELECT season, episode, language FROM library_episodes WHERE show_tmdb_id = ? AND has_file = 1",
+            for s, e, lang, path, media in await (await db.execute(
+                    "SELECT e.season, e.episode, e.language, e.file_path, m.media FROM library_episodes e "
+                    "LEFT JOIN tv_media m ON m.file_path = e.file_path WHERE e.show_tmdb_id = ? AND e.has_file = 1",
                     (tmdb_id,))).fetchall():
-                if {"CS", "SK"} & set((lang or "").upper().split(",")):
-                    owned_local.add((s, e))
+                if not {"CS", "SK"} & set((lang or "").upper().split(",")):
+                    continue
+                owned_local.add((s, e))
+                parts = [n for n, _p in parts_of(path)]
+                if parts:
+                    owned_parts[(s, e)] = set(parts)
+                    continue
+                # one whole file of a two-part episode TMDB keeps as one: only its first part when far too short
+                runtime = (cat.get((s, e)) or {}).get("runtime") or 0
+                length = (json.loads(media or "{}") or {}).get("duration_s") or 0
+                if runtime and length and length < 0.6 * runtime * 60:
+                    owned_short.add((s, e))
         finally:
             await db.close()
     return plan_pack([{"index": f["index"], "name": f["name"].replace("\\", "/"), "size": f.get("size") or 0} for f in files],
-                     cat, owned_local, [title], pack_season)
+                     cat, owned_local, [title], pack_season, owned_parts, owned_short)

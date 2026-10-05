@@ -117,3 +117,27 @@ def test_the_parts_of_a_two_part_episode(tmp_path):
     assert [n for n, _ in parts_of(pt1)] == [1, 2]
     assert part_path(pt1, 2).endswith(" - pt2.mkv") and part_path(pt1, None) == pt1
     assert parts_of(str(tmp_path / "MASH - S07E05 - Jiný [1080p].mkv")) == []
+
+
+def test_owned_parts_of_a_two_part_episode_are_not_downloaded_again():
+    """The same M*A*S*H pack added again: its pt1 / pt2 files of an episode owned as "- pt1" / "- pt2" are owned —
+    only a part the user does not have, or a whole episode owned only by its first part, is downloaded."""
+    from app.modules.library.pack_plan import _has, plan_pack
+    cat = {(4, 1): {"cs": "Vítej v Koreji", "en": "Welcome to Korea", "runtime": 46},
+           (4, 2): {"cs": "Změna velení", "en": "Change of Command", "runtime": 25},
+           (4, 3): {"cs": "Stalo se jedné noci", "en": "It Happened One Night", "runtime": 25},
+           (4, 4): {"cs": "Mrtvý kapitán Pierce", "en": "The Late Captain Pierce", "runtime": 25}}
+    gb = 10 ** 9
+    files = [{"index": 0, "name": "MASH/S04/S04E01[073].Vítej v Koreji.mkv", "size": gb},
+             {"index": 1, "name": "MASH/S04/S04E02[074].Vítej v Koreji.II.mkv", "size": gb},
+             {"index": 2, "name": "MASH/S04/S04E03[075].Změna velení.mkv", "size": gb},
+             {"index": 3, "name": "MASH/S04/S04E04[076].Stalo se jedné noci.mkv", "size": gb},
+             {"index": 4, "name": "MASH/S04/S04E05[077].Mrtvý kapitán Pierce.mkv", "size": gb}]
+    both = plan_pack(files, cat, {(4, 1), (4, 2)}, ["M*A*S*H"], owned_parts={(4, 1): {1, 2}})["files"]
+    assert [both[f["name"]]["kind"] for f in files] == ["owned", "owned", "owned", "episode", "episode"]
+    first = plan_pack(files, cat, {(4, 1)}, ["M*A*S*H"], owned_parts={(4, 1): {1}})["files"]
+    assert [first[f["name"]]["kind"] for f in files][:3] == ["owned", "episode", "episode"]   # the 2nd part is missing
+    # one whole file of full length is both parts; one far too short (only the first part) is not
+    assert _has(4, 1, 2, {(4, 1)}, {}, set()) and not _has(4, 1, 2, {(4, 1)}, {}, {(4, 1)})
+    # a whole file in the pack: owned only when both parts are
+    assert not _has(4, 1, None, {(4, 1)}, {(4, 1): {1}}, set()) and _has(4, 1, None, {(4, 1)}, {(4, 1): {1, 2}}, set())
