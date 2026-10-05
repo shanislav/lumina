@@ -332,7 +332,7 @@ function HomeContent() {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={selectedMovie.poster_url} alt="" className="w-12 h-[72px] rounded object-cover flex-shrink-0" />
               )}
-              {selectedMovie.overview && <p className="line-clamp-3 max-w-3xl">{selectedMovie.overview}</p>}
+              {selectedMovie.overview && <p className="line-clamp-3 max-w-3xl self-start">{selectedMovie.overview}</p>}
             </div>
           )}
           {!filesLoading && files.length === 0 && selectedMovie.media_type !== "tv" && (selectedMovie.tmdb_id || selectedMovie.wikidata_id) ? (
