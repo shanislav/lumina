@@ -37,3 +37,6 @@ def test_season_queries():
     ddl, torrent = season_queries(["Sexuální výchova", "Sex Education"], 3)
     assert ddl == ["Sexuální výchova S03", "Sex Education S03", "Sexuální výchova"]
     assert torrent == ["Sex Education S03", "Sex Education"]
+    # a short name drowns in other shows' seasons on WebShare: the year too ("Archer.(2009).S11E01")
+    ddl, _ = season_queries(["Archer"], 11, 2009)
+    assert ddl == ["Archer S11", "Archer", "Archer 2009 S11"]

@@ -191,9 +191,11 @@ def _as_written(titles: list[str]) -> list[str]:
     return [t for t in _unique_names(titles) if _collapse_acronyms(t) != t][:1]
 
 
-def season_queries(titles: list[str], season: int) -> tuple[list[str], list[str]]:
+def season_queries(titles: list[str], season: int, year: int | str | None = None) -> tuple[list[str], list[str]]:
     """WebShare finds a whole season by "Show S03" (measured: Sex Education S03 — all 8 episodes in
-    100 results); FastShare answers the plain name; trackers name packs "Show 1. - S03", "komplet"."""
+    100 results); FastShare answers the plain name; trackers name packs "Show 1. - S03", "komplet".
+    With the show's year too: a short name drowns in other shows' seasons ("Archer S11" brings Shameless S11
+    and no Archer; "Archer 2009 S11" all 8 episodes, named "Archer.(2009).S11E01")."""
     # "M*A*S*H" as "MASH" first (a tracker finds nothing for "M A S H"), the spaced one too
     names = _unique_names([_clean_title(x) for t in _unique_names(titles) for x in (_collapse_acronyms(t), t)])
     names = [n for n in names if len(_norm(n)) >= 2]
@@ -203,6 +205,8 @@ def season_queries(titles: list[str], season: int) -> tuple[list[str], list[str]
     # the local name first, then the English one (trackers know shows by it) — not every translation
     latin = next((n for n in names if n.isascii() and re.search(r"[A-Za-z]", n)), names[0])
     ddl = _unique_names([f"{names[0]} {ss}", f"{latin} {ss}"]) + [names[0]]
+    if year:
+        ddl.append(f"{latin} {year} {ss}")
     return ddl, _unique_names([f"{latin} {ss}", latin, *(f"{t} {ss}" for t in _as_written(titles))])
 
 
@@ -231,7 +235,7 @@ async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[
     sources = SourceRegistry.get().sources
     if not torrent:
         sources = [s for s in sources if s.source_type.value not in TORRENT_SOURCES]
-    ddl, torrent_queries = season_queries(titles, season)
+    ddl, torrent_queries = season_queries(titles, season, show.get("year"))
     # ``alt``: (season, episode) elsewhere → TMDB's episode of this season (a season split elsewhere: S02E01 = E13)
     alt = alt or {}
     for other in sorted({k[0] for k in alt}):
