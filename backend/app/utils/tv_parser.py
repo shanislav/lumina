@@ -37,8 +37,8 @@ _RELEASE_GROUP = re.compile(r"[\[\(]([^\]\)]+)[\]\)]")
 # Year pattern
 _YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
 
-# Video extensions
-VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".ts", ".m4v", ".wmv", ".flv", ".mov", ".webm"}
+# Video extensions (one list for the whole app)
+from app.core.release_name import VIDEO_EXTS  # noqa: E402,F401
 
 
 def parse_tv_filename(filename: str, file_path: str = "") -> dict | None:

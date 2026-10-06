@@ -10,13 +10,13 @@ from app.clients.aria2 import Aria2Client
 from app.clients.qbittorrent import QBittorrentClient
 from app.core import events
 from app.core.paths import map_path
+from app.core.release_name import VIDEO_EXTS
 from app.modules.downloads import queue
 from app.db import DB_PATH
 
 logger = logging.getLogger("app.modules.downloads.monitor")
 
 SEEDING_DIR = ".lumina-import"
-VIDEO_EXTS = ('.mkv', '.mp4', '.avi', '.ts', '.m4v')
 FIRST_EPISODES = 2       # a show pack: these of the wanted episodes get the highest priority (watch while it downloads)
 
 
