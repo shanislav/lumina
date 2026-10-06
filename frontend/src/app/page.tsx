@@ -307,8 +307,8 @@ function HomeContent() {
             </h2>
             {selectedMovie.media_type !== "tv" && mayDownload && <ProfileSelect value={profileId} onChange={setProfileId} />}
             {!filesLoading && files.length > 0 && <PickOfferView offer={pick} canDownload={can("download")} />}
-            {/* "+ Chci" = look for it later: when nothing here suits the profile */}
-            {!filesLoading && files.length > 0 && pick && !pick.pick.key && (
+            {/* "+ Chci" = let Lumina look for it (now or later), whatever is offered now */}
+            {!filesLoading && files.length > 0 && (
               <WantButton movie={selectedMovie} profileId={profileId} onProfileChange={setProfileId} />
             )}
             {resultsCollapsed && files.length > 0 && (

@@ -41,6 +41,11 @@ function Title() {
         </div>
       </div>
       <WantedBanner big movie={{ tmdb_id: tmdb, wikidata_id: wd, title, original_title: orig, year, overview: "", poster_url: poster || null }} />
+      {/* "+ Chci" with a profile: Lumina looks for it (now or later) */}
+      {can("download") && (tmdb || wd) ? (
+        <WantButton movie={{ tmdb_id: tmdb, wikidata_id: wd, title, original_title: orig, year, overview: "",
+          poster_url: poster || null }} />
+      ) : null}
       {/* who may not download (a child's account) sees no offers — only "Chci" (the admin decides) */}
       {!can("download") ? (
         owned.length === 0 && (tmdb || wd) ? (
