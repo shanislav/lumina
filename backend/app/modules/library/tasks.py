@@ -25,4 +25,24 @@ async def read() -> list[dict]:
         out.append({"id": "library-upgrades", "title": "Hledání lepších verzí",
                     "detail": f"{u.get('current') or ''} · nalezeno {u.get('found', 0)}".strip(" ·"),
                     "done": u.get("done"), "total": u.get("total"), "running": True, "link": "/library"})
+    out += _audio_language()
     return out
+
+
+def _audio_language() -> list[dict]:
+    """Writing the sound language of many episodes (the router's background job)."""
+    import importlib
+    j = importlib.import_module("app.modules.library.router").audio_language_job()
+    if not j.get("total"):
+        return []
+    title = f"Zápis jazyka zvuku ({(j.get('lang') or '').upper()}, {j['total']} dílů)"
+    if j.get("running"):
+        return [{"id": "library-audio-lang", "title": title, "detail": j.get("current") or "",
+                 "done": j.get("done"), "total": j.get("total"), "running": True}]
+    finished = datetime.fromisoformat(j["finished_at"]).timestamp() if j.get("finished_at") else 0
+    if datetime.now().timestamp() - finished > RECENT_S:
+        return []
+    errors = j.get("errors") or []
+    return [{"id": f"library-audio-lang-{int(finished)}", "title": title, "running": False, "finished_at": finished,
+             "detail": f"hotovo, chyby: {len(errors)} — {errors[0]}" if errors else "hotovo",
+             "error": errors[0] if errors and len(errors) >= j["total"] else None}]

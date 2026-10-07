@@ -13,7 +13,7 @@ import SeriesSources from "@/components/SeriesSources";
 import { AUTO_DUB, AUTO_NEW, AUTO_UPGRADE, AutoFields, ShowAutomation, WantShow } from "@/components/SeriesAuto";
 import { useAuth } from "@/components/AuthGate";
 import {
-  DownloadItem, getDownloads, setAudioLanguage,
+  DownloadItem, getAudioLanguageJob, getDownloads, setAudioLanguage,
   MovieContext, QualityProfile, ScoredFile, SeriesDetail, SeriesEpisode, SeriesLangMode, SeriesSeason,
   getProfiles, getSeries, saveSeriesSettings, searchFiles,
 } from "@/lib/api";
@@ -277,7 +277,21 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
     setLangBusy(`zapisuji ${ids.length}…`);
     try {
       const r = await setAudioLanguage(ids, lang);
-      setLangBusy(r.errors.length ? `chyba: ${r.errors[0]}` : "");
+      if (r.started) {
+        // many files: written in the background (an MP4 is copied whole) — follow it here and in the task list
+        for (;;) {
+          await new Promise((ok) => setTimeout(ok, 3000));
+          const j = await getAudioLanguageJob().catch(() => null);
+          if (!j) continue;
+          if (!j.running) {
+            setLangBusy(j.errors?.length ? `chyba (${j.errors.length}): ${j.errors[0]}` : "");
+            break;
+          }
+          setLangBusy(`zapisuji ${j.done ?? 0}/${j.total ?? ids.length}…`);
+        }
+      } else {
+        setLangBusy(r.errors.length ? `chyba: ${r.errors[0]}` : "");
+      }
       onChanged();
     } catch (e) {
       setLangBusy(e instanceof Error ? e.message : "Chyba");

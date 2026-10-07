@@ -1,8 +1,10 @@
 """Library router — movie/TV library listing, scan job control, manual match fixes."""
 
+import asyncio
 import json
 import os
 import logging
+from datetime import datetime
 from typing import Literal
 
 from fastapi import Depends, APIRouter
@@ -983,38 +985,90 @@ class AudioLanguage(BaseModel):
     track: int | None = None       # an audio track (0-based); None = every track without a language
 
 
+# more files than this: written in the background (an MP4 is copied whole — a season takes minutes, the page's
+# request would time out); the task list shows it, the page asks for its end
+AUDIO_LANG_NOW = 3
+_audio_job: dict = {"running": False}
+
+
+def audio_language_job() -> dict:
+    return dict(_audio_job)
+
+
 @router.post("/tv/audio-language", dependencies=[Depends(require("library.edit"))])
 async def tv_audio_language(body: AudioLanguage) -> dict:
     """The user's word on episodes' sound language — into the files (MKV, MP4) and Lumina."""
     from app.config import tv_library_dir
-    from app.modules.library import audio_lang
     root = os.path.realpath(tv_library_dir(await get_effective_settings()) or "/nonexistent")
     db = await get_db()
-    done, errors = [], []
     try:
         targets: list[tuple[int | None, str]] = []
         for ep_id in body.ids[:200]:
             row = await (await db.execute("SELECT file_path FROM library_episodes WHERE id = ? AND has_file = 1",
                                           (ep_id,))).fetchone()
             targets.append((ep_id, row[0] if row else ""))
-        for p in body.paths[:50]:
-            real = os.path.realpath(p)
-            targets.append((None, real if real.startswith(root + os.sep) else ""))   # the TV library only
+    finally:
+        await db.close()
+    for p in body.paths[:50]:
+        real = os.path.realpath(p)
+        targets.append((None, real if real.startswith(root + os.sep) else ""))   # the TV library only
+    if len(targets) <= AUDIO_LANG_NOW:
+        return await _write_languages(targets, body.lang, body.track)
+    if _audio_job.get("running"):
+        raise HTTPException(409, "Zápis jazyka zvuku už běží — počkej, až doběhne")
+    _audio_job.clear()
+    _audio_job.update(running=True, total=len(targets), done=0, current="", errors=[], lang=body.lang,
+                      started_at=datetime.now().isoformat(timespec="seconds"))
+
+    async def run() -> None:
+        try:
+            out = await _write_languages(targets, body.lang, body.track, _audio_job)
+            _audio_job["errors"] = out["errors"]
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Writing the sound language failed")
+            _audio_job["errors"] = [*_audio_job.get("errors", []), str(e)]
+        finally:
+            _audio_job.update(running=False, current="", finished_at=datetime.now().isoformat(timespec="seconds"))
+
+    asyncio.create_task(run())
+    return {"started": True, "total": len(targets)}
+
+
+@router.get("/tv/audio-language/status", dependencies=[Depends(require("library.view"))])
+async def tv_audio_language_status() -> dict:
+    return audio_language_job()
+
+
+async def _write_languages(targets: list[tuple[int | None, str]], lang: str, track: int | None,
+                           job: dict | None = None) -> dict:
+    from app.modules.library import audio_lang
+    done, errors = [], []
+    db = await get_db()
+    try:
         for ep_id, path in targets:
-            if not path or not os.path.exists(path):
-                errors.append(f"{ep_id or 'soubor'}: soubor nenalezen")
-                continue
-            cached = await (await db.execute("SELECT media FROM tv_media WHERE file_path = ?", (path,))).fetchone()
+            if job is not None:
+                job["current"] = os.path.basename(path)
             try:
-                out = await audio_lang.set_language(path, body.lang, body.track,
-                                                    json.loads(cached[0]) if cached and cached[0] else None)
-                langs = await audio_lang.save(db, path, out["media"])
-                await db.commit()
-                done.append({"id": ep_id, "path": path, "written": out["written"], "languages": langs,
-                             "tracks": out["tracks"]})
-            except (ValueError, RuntimeError, OSError) as e:
-                errors.append(f"{os.path.basename(path)}: {e}")
+                if not path or not os.path.exists(path):
+                    errors.append(f"{ep_id or 'soubor'}: soubor nenalezen")
+                    continue
+                cached = await (await db.execute("SELECT media FROM tv_media WHERE file_path = ?", (path,))).fetchone()
+                try:
+                    out = await audio_lang.set_language(path, lang, track,
+                                                        json.loads(cached[0]) if cached and cached[0] else None)
+                    langs = await audio_lang.save(db, path, out["media"])
+                    await db.commit()
+                    done.append({"id": ep_id, "path": path, "written": out["written"], "languages": langs,
+                                 "tracks": out["tracks"]})
+                except (ValueError, RuntimeError, OSError) as e:
+                    errors.append(f"{os.path.basename(path)}: {e}")
+            finally:
+                if job is not None:
+                    job["done"] = job.get("done", 0) + 1
+                    job["errors"] = list(errors)
         # the new language in the file's name too ("[SK]"), as the renamer names an imported episode
+        if job is not None:
+            job["current"] = "přejmenování a Plex"
         renamed = await _rename_now(db, [d["path"] for d in done if d["tracks"]])
         for d in done:
             new = renamed.get(d.pop("path"))

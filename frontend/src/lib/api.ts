@@ -2074,7 +2074,8 @@ export async function getTvFolder(folder: string): Promise<TvFolderDetail> {
 
 /** The user's word on which episode a file is (season/episode null = no word, the scan decides). */
 export async function setAudioLanguage(ids: number[], lang: string, track?: number, paths: string[] = []):
-    Promise<{ done: { id: number | null; written: boolean; languages: string; tracks: number; renamed?: string }[]; errors: string[] }> {
+    Promise<{ done: { id: number | null; written: boolean; languages: string; tracks: number; renamed?: string }[]; errors: string[];
+      started?: boolean; total?: number }> {
   const res = await apiFetch(`${API_BASE}/api/library/tv/audio-language`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids, paths, lang, track: track ?? null }),
@@ -2083,6 +2084,15 @@ export async function setAudioLanguage(ids: number[], lang: string, track?: numb
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `Uložení selhalo: ${res.status}`);
   }
+  return res.json();
+}
+
+/** Writing the sound language of many episodes runs in the background (an MP4 is copied whole). */
+export interface AudioLanguageJob { running: boolean; total?: number; done?: number; current?: string; errors?: string[] }
+
+export async function getAudioLanguageJob(): Promise<AudioLanguageJob> {
+  const res = await apiFetch(`${API_BASE}/api/library/tv/audio-language/status`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 

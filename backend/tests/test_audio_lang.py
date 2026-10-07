@@ -63,3 +63,45 @@ async def test_only_files_of_the_tv_library(tmp_path, monkeypatch):
     monkeypatch.setattr(audio_lang, "probe_async", probe)
     out = await router.tv_audio_language(router.AudioLanguage(paths=[str(inside), str(outside)], lang="cs", track=0))
     assert len(out["done"]) == 1 and out["done"][0]["languages"] == "CS" and len(out["errors"]) == 1
+
+
+async def test_a_whole_season_is_written_in_the_background(tmp_path, monkeypatch):
+    """An MP4 is copied whole — a season takes minutes, longer than the page's request may wait (504): more than a
+    few files go to the background, the task list shows them."""
+    import asyncio
+    import sqlite3
+    from app.core import registry
+    from app.db import DB_PATH, init_db
+    import importlib
+    router = importlib.import_module("app.modules.library.router")
+    tasks = importlib.import_module("app.modules.library.tasks")
+    await init_db(registry.discover())
+    season = tmp_path / "Serials" / "Show" / "Season 02"
+    season.mkdir(parents=True)
+    files = [season / f"Show - S02E{n:02d}.avi" for n in range(1, 6)]
+    for f in files:
+        f.write_bytes(b"x")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('tv_library_dir', ?)", (str(tmp_path / "Serials"),))
+    gate = asyncio.Event()
+
+    async def probe(path):
+        await gate.wait()
+        return {"audio": [{"lang": "en"}]}
+    monkeypatch.setattr(audio_lang, "probe_async", probe)
+    out = await router.tv_audio_language(router.AudioLanguage(paths=[str(f) for f in files], lang="cs", track=0))
+    assert out == {"started": True, "total": 5}
+    await asyncio.sleep(0)
+    assert router.audio_language_job()["running"]
+    assert (await tasks.read())[-1]["total"] == 5
+    with pytest.raises(Exception) as e:                     # one at a time
+        await router.tv_audio_language(router.AudioLanguage(paths=[str(f) for f in files], lang="cs", track=0))
+    assert getattr(e.value, "status_code", 0) == 409
+    gate.set()
+    for _ in range(100):
+        if not router.audio_language_job()["running"]:
+            break
+        await asyncio.sleep(0.01)
+    job = router.audio_language_job()
+    assert not job["running"] and job["done"] == 5 and job["errors"] == []
+    assert (await tasks.read())[-1]["detail"] == "hotovo"
