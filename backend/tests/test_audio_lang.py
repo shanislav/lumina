@@ -94,14 +94,17 @@ async def test_a_whole_season_is_written_in_the_background(tmp_path, monkeypatch
     await asyncio.sleep(0)
     assert router.audio_language_job()["running"]
     assert (await tasks.read())[-1]["total"] == 5
-    with pytest.raises(Exception) as e:                     # one at a time
-        await router.tv_audio_language(router.AudioLanguage(paths=[str(f) for f in files], lang="cs", track=0))
-    assert getattr(e.value, "status_code", 0) == 409
+    # the next season meanwhile: queued after the running one
+    more = [season / f"Show - S03E{n:02d}.avi" for n in range(1, 5)]
+    for f in more:
+        f.write_bytes(b"x")
+    out = await router.tv_audio_language(router.AudioLanguage(paths=[str(f) for f in more], lang="sk", track=0))
+    assert out["queued"] and router.audio_language_job()["total"] == 9
     gate.set()
     for _ in range(100):
         if not router.audio_language_job()["running"]:
             break
         await asyncio.sleep(0.01)
     job = router.audio_language_job()
-    assert not job["running"] and job["done"] == 5 and job["errors"] == []
+    assert not job["running"] and job["done"] == 9 and job["errors"] == [] and job["langs"] == ["cs", "sk"]
     assert (await tasks.read())[-1]["detail"] == "hotovo"

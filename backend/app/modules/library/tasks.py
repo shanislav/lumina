@@ -35,7 +35,7 @@ def _audio_language() -> list[dict]:
     j = importlib.import_module("app.modules.library.router").audio_language_job()
     if not j.get("total"):
         return []
-    title = f"Zápis jazyka zvuku ({(j.get('lang') or '').upper()}, {j['total']} dílů)"
+    title = f"Zápis jazyka zvuku ({'/'.join(j.get('langs') or []).upper()}, {j['total']} dílů)"
     if j.get("running"):
         return [{"id": "library-audio-lang", "title": title, "detail": j.get("current") or "",
                  "done": j.get("done"), "total": j.get("total"), "running": True}]

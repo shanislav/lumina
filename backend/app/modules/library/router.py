@@ -989,6 +989,7 @@ class AudioLanguage(BaseModel):
 # request would time out); the task list shows it, the page asks for its end
 AUDIO_LANG_NOW = 3
 _audio_job: dict = {"running": False}
+_audio_queue: list[tuple[list, str, int | None]] = []     # another season asked for meanwhile: after the running one
 
 
 def audio_language_job() -> dict:
@@ -1014,20 +1015,28 @@ async def tv_audio_language(body: AudioLanguage) -> dict:
         targets.append((None, real if real.startswith(root + os.sep) else ""))   # the TV library only
     if len(targets) <= AUDIO_LANG_NOW:
         return await _write_languages(targets, body.lang, body.track)
+    _audio_queue.append((targets, body.lang, body.track))
     if _audio_job.get("running"):
-        raise HTTPException(409, "Zápis jazyka zvuku už běží — počkej, až doběhne")
+        # one at a time (the disk): queued after the running one, its count joins the job's
+        _audio_job["total"] = _audio_job.get("total", 0) + len(targets)
+        if body.lang not in _audio_job["langs"]:
+            _audio_job["langs"].append(body.lang)
+        return {"started": True, "queued": True, "total": len(targets)}
     _audio_job.clear()
-    _audio_job.update(running=True, total=len(targets), done=0, current="", errors=[], lang=body.lang,
+    _audio_job.update(running=True, total=len(targets), done=0, current="", errors=[], langs=[body.lang],
                       started_at=datetime.now().isoformat(timespec="seconds"))
 
     async def run() -> None:
         try:
-            out = await _write_languages(targets, body.lang, body.track, _audio_job)
-            _audio_job["errors"] = out["errors"]
-        except Exception as e:  # noqa: BLE001
-            logger.exception("Writing the sound language failed")
-            _audio_job["errors"] = [*_audio_job.get("errors", []), str(e)]
+            while _audio_queue:
+                batch, lang, track = _audio_queue.pop(0)
+                try:
+                    await _write_languages(batch, lang, track, _audio_job)
+                except Exception as e:  # noqa: BLE001 — the next season still goes
+                    logger.exception("Writing the sound language failed")
+                    _audio_job["errors"] = [*_audio_job.get("errors", []), str(e)]
         finally:
+            _audio_queue.clear()
             _audio_job.update(running=False, current="", finished_at=datetime.now().isoformat(timespec="seconds"))
 
     asyncio.create_task(run())
@@ -1043,6 +1052,7 @@ async def _write_languages(targets: list[tuple[int | None, str]], lang: str, tra
                            job: dict | None = None) -> dict:
     from app.modules.library import audio_lang
     done, errors = [], []
+    before = list(job.get("errors") or []) if job is not None else []      # of the job's earlier seasons
     db = await get_db()
     try:
         for ep_id, path in targets:
@@ -1065,7 +1075,7 @@ async def _write_languages(targets: list[tuple[int | None, str]], lang: str, tra
             finally:
                 if job is not None:
                     job["done"] = job.get("done", 0) + 1
-                    job["errors"] = list(errors)
+                    job["errors"] = before + errors
         # the new language in the file's name too ("[SK]"), as the renamer names an imported episode
         if job is not None:
             job["current"] = "přejmenování a Plex"
