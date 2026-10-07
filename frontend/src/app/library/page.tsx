@@ -703,6 +703,7 @@ export default function LibraryPage() {
             {visibleGroups.slice(0, shown).map(({ key, main: movie, versions }) => (
               <div
                 key={key}
+                data-anchor={`film-${key}`}
                 onClick={() => (versions.length > 1 ? setVersionsOf({ key, main: movie, versions }) : openMovie(movie))}
                 className="group cursor-pointer rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-violet-500 transition-colors"
               >
@@ -881,6 +882,7 @@ export default function LibraryPage() {
               return (
                 <button
                   key={show.tmdb_id}
+                  data-anchor={`show-${show.tmdb_id ?? show.title}`}
                   onClick={() => handleShowClick(show)}
                   className="group rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-violet-500 transition-colors text-left"
                 >
