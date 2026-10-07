@@ -442,3 +442,18 @@ def test_a_files_own_episode_name_keeps_its_abbreviations_and_drops_the_part():
     assert title_in_name("MASH - S10E01 - To je showbyznys [1080p x265] [CS+EN] - pt2.mkv") == "To je showbyznys"
     assert title_in_name("Show.S01E02.Dr.Winchester.a.Mr.Hyde.720p.mkv") == "Dr Winchester a Mr Hyde"   # a dotted release
     assert bare_title("02.Panika.v.Oblázkovém.městě.avi") == "Panika v Oblázkovém městě"
+
+
+def test_a_part_in_brackets_is_the_names():
+    """"13. Běž, Bože, běž (2. část)" is TMDB's "Běž, Bože, běž, část druhá" — the brackets were dropped as a tag
+    and the 2nd part went to the 1st one (a duplicate, left out of a South Park pack)."""
+    from app.modules.library.episode_names import bare_title, release_episode
+    cat = {(10, 12): {"cs": "Běž, Bože, běž, část první", "en": "Go God Go (1)"},
+           (10, 13): {"cs": "Běž, Bože, běž, část druhá", "en": "Go God Go XII (2)"},
+           (11, 10): {"cs": "Říše fantazie, část první", "en": "Imaginationland"},
+           (11, 11): {"cs": "Říše fantazie, část druhá", "en": "Imaginationland, Episode II"},
+           (11, 12): {"cs": "Říše fantazie, část třetí", "en": "Imaginationland, Episode III"}}
+    assert release_episode("13. Běž, Bože, běž (2. část).mkv", cat, 10)[:2] == ((10, 13), True)
+    assert release_episode("12. Běž, Bože, běž (1. část).mkv", cat, 10)[:2] == ((10, 12), True)
+    assert release_episode("12. Říše fantazie (3. část).mkv", cat, 11)[:2] == ((11, 12), True)
+    assert bare_title("11. Říše fantazie (2. část).mkv") == "Říše fantazie, část 2"

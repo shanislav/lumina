@@ -190,13 +190,19 @@ _TITLE_NOISE = re.compile(r"(?i)\[[^\]]*\]|\([^)]*\)|\b(?:\d{3,4}p|x26[45]|h\.?2
 
 
 _PART_SUFFIX = re.compile(r"(?i)\s*-\s*pt\s?\d\s*$")
+# a part in brackets is the name's, not a tag: "Běž, Bože, běž (2. část)" is TMDB's "…, část druhá"
+_PART_IN_BRACKETS = re.compile(r"(?i)\s*\(\s*(?:(\d)\s*\.?\s*(?:část|cast|díl|dil)|(?:část|cast|díl|dil|part|pt)\.?\s*(\d))\s*\)")
+
+
+def _keep_part(text: str) -> str:
+    return _PART_IN_BRACKETS.sub(lambda m: f", část {m.group(1) or m.group(2)}", text)
 
 
 def _clean_title(raw: str) -> str:
     """A name out of the rest of a file name: dots are separators only in a dotted release name
     ("Dr.Winchester.a.Mr.Hyde" — a name with spaces keeps its "Dr." and "B.J."), no tags, no "- pt2" (the part
     of a two-part episode stored as two files, not its name)."""
-    raw = _PART_SUFFIX.sub("", raw)
+    raw = _keep_part(_PART_SUFFIX.sub("", raw))
     text = raw.replace("_", " ")
     if " " not in text.strip():
         text = text.replace(".", " ")
@@ -236,7 +242,7 @@ def release_titles(name: str, show_names=()) -> list[str]:
     S01E02-13 1997 CZ dab 1080p - Posilovač 4000.mkv" → ["Posilovač 4000"], "South.Park.S01E02.Posilovac.4000
     .DVDRip.XviD.CZ.ENG.mkv" → ["Posilovac 4000"]; none for "South Park S01E02 CZ Dabing FullHD+ by lfiq"."""
     stem = re.sub(r"(?i)\.(mkv|mp4|avi|m4v|ts|wmv)$", "", name or "")
-    stem = _TAGS.sub(" ", stem).replace("_", " ").replace("+", " + ")
+    stem = _TAGS.sub(" ", _keep_part(stem)).replace("_", " ").replace("+", " + ")
     stem = re.sub(r"(?<=\w)\.(?=\w)", " ", stem)
     m = _SE_AT.search(stem)
     lead = _LEAD_NUMBER.match(stem)
