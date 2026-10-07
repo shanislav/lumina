@@ -49,6 +49,7 @@ import {
 } from "@/lib/api";
 import SeriesQuality from "@/components/SeriesQuality";
 import { useAuth } from "@/components/AuthGate";
+import { useBackScroll } from "@/lib/backScroll";
 import RenameChecklist from "@/components/RenameChecklist";
 import { ON_BETTER } from "@/components/WatchedList";
 
@@ -344,6 +345,8 @@ export default function LibraryPage() {
     io.observe(el);
     return () => io.disconnect();
   }, [shown, visibleGroups]);
+  // "back" from a show's / film's page: where the list was (after the grid's reset above)
+  useBackScroll(`library:${tab}`, !loading, tab === "filmy" ? shown : undefined, setShown);
 
   function openMovie(movie: LibraryMovie) {
     setFixingMovie(movie);
