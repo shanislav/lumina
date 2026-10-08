@@ -170,3 +170,10 @@ RUNNER_NAMESAKES = [{"title": "Běžkyně", "titles": ["Běžkyně", "The Runner
 def test_namesakes_of_the_same_year(name, duration, status, reason):
     v = judge(name, ["Runner"], 2026, duration, 97, namesakes=RUNNER_NAMESAKES)
     assert (v.status, v.reasons[0]) == (status, reason)
+
+
+def test_a_subtitle_track_without_a_language():
+    """MediaInfo's "und" (a track without a language — "are there subtitles?" yes) is no language: the name's say."""
+    from app.core.quality import facts_from_media
+    f = facts_from_media({"subtitles": ["und"], "audio": [{"lang": "en"}]}, "Show S01E01 CZ tit 1080p.mkv")
+    assert "und" not in f.subtitle_langs and "cs" in f.subtitle_langs

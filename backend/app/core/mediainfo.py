@@ -93,7 +93,7 @@ def probe(path: str) -> dict:
     """Return technical info of a media file. Empty dict when MediaInfo cannot read it.
 
     Keys: duration_s, width, height, video_codec, hdr, bitrate,
-          audio: [{lang, codec, channels}], subtitles: [lang]
+          audio: [{lang, codec, channels}], subtitles: [lang] ("und" = a track without a language)
     """
     if not Path(path).is_file():
         return {}
@@ -126,9 +126,8 @@ def probe(path: str) -> dict:
                 "channels": _int(track.channel_s),
             })
         elif kind == "Text":
-            lang = normalize_language(track.language)
-            if lang:
-                result["subtitles"].append(lang)
+            # a track without a language is a track too ("are there subtitles in the file?")
+            result["subtitles"].append(normalize_language(track.language) or "und")
     return result
 
 

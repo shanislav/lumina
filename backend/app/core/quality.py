@@ -166,7 +166,7 @@ def facts_from_media(media: dict, name: str = "", size: int = 0) -> Facts:
         hdr=("" if hdr == "SDR" else hdr) if hdr else from_name.hdr,
         audio=audio,
         audio_langs=audio_langs or from_name.audio_langs,
-        subtitle_langs=list(dict.fromkeys(media.get("subtitles") or [])) or from_name.subtitle_langs,
+        subtitle_langs=list(dict.fromkeys(l for l in media.get("subtitles") or [] if l != "und")) or from_name.subtitle_langs,
         duration_s=duration, size=size, upscale=from_name.upscale_marker and res == "2160p",
         upscale_marker=from_name.upscale_marker,
         verified=bool(audio_langs or width),

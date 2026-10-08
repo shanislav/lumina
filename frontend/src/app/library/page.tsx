@@ -954,7 +954,7 @@ export default function LibraryPage() {
                 </p>
               )}
               {(fixingMovie.media?.subtitles?.length ?? 0) > 0 && (
-                <p className="text-zinc-500">Titulky: {fixingMovie.media.subtitles!.map((l) => l.toUpperCase()).join(", ")}</p>
+                <p className="text-zinc-500">Titulky: {fixingMovie.media.subtitles!.map((l) => (l === "und" ? "bez jazyka" : l.toUpperCase())).join(", ")}</p>
               )}
               <p className="text-zinc-400 flex items-center gap-2">
                 Kvalita: <ScoreBadge score={fixingMovie.quality_score} tip={fixingMovie.quality_parts} />

@@ -146,7 +146,7 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
                     </label>
                   )}
                   {!!v.media.subtitles?.length && (
-                    <p className="mt-0.5 text-zinc-500">💬 v souboru: {v.media.subtitles.map((l) => l.toUpperCase()).join(", ")}</p>
+                    <p className="mt-0.5 text-zinc-500">💬 v souboru: {v.media.subtitles.map((l) => (l === "und" ? "bez jazyka" : l.toUpperCase())).join(", ")}</p>
                   )}
                   {!Object.keys(v.media).length && <p className="mt-0.5 text-zinc-600">MediaInfo zatím není (proběhne při skenu knihovny).</p>}
                   <div className="mt-2 flex flex-wrap items-center gap-3">

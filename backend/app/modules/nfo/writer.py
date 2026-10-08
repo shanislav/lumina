@@ -57,7 +57,7 @@ def build_nfo(payload: dict) -> str:
         add(audio, "language", _lang3(track.get("lang") or ""))
         add(audio, "channels", track.get("channels"))
     for lang in media.get("subtitles", []):
-        add(add(stream, "subtitle"), "language", _lang3(lang))
+        add(add(stream, "subtitle"), "language", _lang3(lang) if lang != "und" else "")
 
     lumina = add(root, "lumina")
     add(lumina, "version", NFO_VERSION)
