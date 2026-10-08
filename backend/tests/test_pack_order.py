@@ -141,3 +141,30 @@ def test_owned_parts_of_a_two_part_episode_are_not_downloaded_again():
     assert _has(4, 1, 2, {(4, 1)}, {}, set()) and not _has(4, 1, 2, {(4, 1)}, {}, {(4, 1)})
     # a whole file in the pack: owned only when both parts are
     assert not _has(4, 1, None, {(4, 1)}, {(4, 1): {1}}, set()) and _has(4, 1, None, {(4, 1)}, {(4, 1): {1, 2}}, set())
+
+
+async def test_a_pack_started_again_replaces_only_what_is_worse(monkeypatch):
+    """A 2160p pack cancelled halfway, started again with "replace owned": the episodes it brought (2160p, Czech)
+    are not downloaded again — the 720p ones still are."""
+    import sqlite3
+
+    from app.core import registry
+    from app.db import DB_PATH, init_db
+    from app.modules.library import episode_names, pack_plan
+    await init_db(registry.discover())
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.executemany("INSERT INTO library_episodes (show_tmdb_id, season, episode, file_path, quality, language, has_file) "
+                         "VALUES (2190, 1, ?, ?, ?, ?, 1)",
+                         [(1, "/x/e1.mkv", "2160p", "CS"), (2, "/x/e2.mkv", "720p", "CS"), (3, "/x/e3.mkv", "2160p", "EN")])
+    cat = {(1, e): {"cs": f"Díl {e}", "en": "", "runtime": 22} for e in (1, 2, 3)}
+
+    async def checker(*a, **k):
+        return None, cat
+    monkeypatch.setattr(episode_names, "release_checker", checker)
+    files = [{"index": i, "name": f"South Park/01. série/0{e}. Díl {e}.mkv", "size": 1} for i, e in enumerate((1, 2, 3))]
+    plan = await pack_plan.make_plan(2190, files, None, True, "South Park", "South Park 1-28. série (CZ)[2160p]")
+    skip = set(pack_plan.skip_indexes(plan))
+    assert skip == {0}                          # E1 is 2160p with Czech already; E2 is 720p, E3 has no Czech
+    plan = await pack_plan.make_plan(2190, files, None, True, "South Park", "South Park komplet (CZ)")
+    assert pack_plan.skip_indexes(plan) == []    # no resolution in the name: everything replaced as before
+    assert pack_plan.release_resolution("Show S01 UHD HDR") == "2160p" and pack_plan.release_resolution("x") == ""

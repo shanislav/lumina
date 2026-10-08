@@ -217,9 +217,23 @@ def first_indexes(plan: dict, n: int = 2) -> tuple[list[int], list[int]]:
     return top, [e["index"] for e in eps if e["season"] == season and e["index"] not in top]
 
 
-async def make_plan(tmdb_id: int, files: list[dict], pack_season: int | None, replace_owned: bool, title: str) -> dict | None:
+_RES_RANK = {"480p": 1, "576p": 1, "sd": 1, "720p": 2, "1080p": 3, "2160p": 4}
+
+
+def release_resolution(name: str) -> str:
+    """The resolution a release's name says ("South Park 1-28. série … [2160p]" → "2160p"), "" when none."""
+    m = re.search(r"(?i)(?<![0-9])(2160|1080|720|576|480)p\b", name or "")
+    if m:
+        return f"{m.group(1)}p"
+    return "2160p" if re.search(r"(?i)\b(4k|uhd)\b", name or "") else ""
+
+
+async def make_plan(tmdb_id: int, files: list[dict], pack_season: int | None, replace_owned: bool, title: str,
+                    release: str = "") -> dict | None:
     """The plan of a pack being downloaded: TMDB's episodes of the show, the episodes owned with Czech / Slovak
-    sound (not downloaded again — unless they are to be replaced)."""
+    sound (not downloaded again — unless they are to be replaced). Replacing: an episode owned with Czech / Slovak
+    sound in the pack's resolution or better is not downloaded again either (the pack started again after a
+    part of it came: only the rest)."""
     from app.config import get_effective_settings
     from app.db import get_db
     cfg = await get_effective_settings()
@@ -229,18 +243,21 @@ async def make_plan(tmdb_id: int, files: list[dict], pack_season: int | None, re
     owned_local: set[tuple[int, int]] = set()
     owned_parts: dict[tuple[int, int], set[int]] = {}
     owned_short: set[tuple[int, int]] = set()
-    if not replace_owned:
+    target = _RES_RANK.get(release_resolution(release).lower(), 0) if replace_owned else 0
+    if not replace_owned or target:
         import json
 
         from app.modules.library.episodes import parts_of
         db = await get_db()
         try:
-            for s, e, lang, path, media in await (await db.execute(
-                    "SELECT e.season, e.episode, e.language, e.file_path, m.media FROM library_episodes e "
+            for s, e, lang, path, media, quality in await (await db.execute(
+                    "SELECT e.season, e.episode, e.language, e.file_path, m.media, e.quality FROM library_episodes e "
                     "LEFT JOIN tv_media m ON m.file_path = e.file_path WHERE e.show_tmdb_id = ? AND e.has_file = 1",
                     (tmdb_id,))).fetchall():
                 if not {"CS", "SK"} & set((lang or "").upper().split(",")):
                     continue
+                if replace_owned and _RES_RANK.get((quality or "").lower(), 0) < target:
+                    continue                                   # worse than the pack: replaced
                 owned_local.add((s, e))
                 parts = [n for n, _p in parts_of(path)]
                 if parts:
