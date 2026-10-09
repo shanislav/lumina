@@ -1295,7 +1295,9 @@ export type AudioVerdict = "constant" | "speed" | "cuts" | "no_match";
 
 export interface AudioSyncJob {
   running: boolean;
-  kind?: "map" | "apply";
+  kind?: "map" | "apply" | "dub";
+  season?: number;
+  tmdb_id?: number;
   map_id?: number;
   title?: string;
   finished_at?: number;
@@ -1328,6 +1330,18 @@ const jsonBody = (method: string, body: unknown): RequestInit => ({
 export const getAudioTracks = (movieId: number) =>
   audioSyncCall<{ id: number; filename: string; duration: number; audio: AudioTrackInfo[] }>(`/tracks/${movieId}`);
 export const getAudioSyncJob = () => audioSyncCall<AudioSyncJob>("/job");
+
+/** A season's dub moved from the old versions of its episodes (backend audiosync/episodes.py). */
+export interface DubEpisode {
+  episode: number; target: string; source: string;
+  status: "ready" | "done" | "skip" | "ok" | "unsure" | "error"; note: string;
+  verdict?: string; speed?: number; offset?: number; confidence?: number;
+}
+export const getSeasonDubPlan = (tmdbId: number, season: number, lang: string) =>
+  audioSyncCall<{ episodes: DubEpisode[] }>(`/series/${tmdbId}/season/${season}/dub?lang=${lang}`);
+export const startSeasonDub = (tmdbId: number, season: number, lang: string, deleteSource: boolean) =>
+  audioSyncCall<AudioSyncJob & { report?: DubEpisode[] }>(`/series/${tmdbId}/season/${season}/dub`,
+    jsonBody("POST", { lang, delete_source: deleteSource }));
 
 export interface AudioPreview { name: string; at: number; adjust_ms: number; saved_ms: number }
 /** A track of another version on the reference picture, placed by measurement ``resultId`` (+ a trial shift). */
