@@ -125,6 +125,7 @@ export interface ScoredFile {
   source_id: number;
   magnet_url: string | null;
   seeders: number | null;
+  page_url?: string;          // torrents: the torrent's page on the tracker
   audio_langs: string[];
   subtitle_langs: string[];
   // evaluation (backend app/modules/search/evaluate.py)

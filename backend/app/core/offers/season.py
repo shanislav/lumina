@@ -272,7 +272,7 @@ async def find_season_offers(cfg: dict, tmdb_id: int, season: int, wanted: list[
         if ev["film"] == "no":
             continue
         out.rows.append({"ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
-                         "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders,
+                         "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders, "page_url": r.page_url,
                          "quality": ev["resolution"] or "unknown", "relevance_score": 0, "episodes": mine, **ev,
                          **({"name_hit": episode["by_name"][r.name]} if hit else {})})
     out.sets = group_sets(out.rows, season, wanted, runtime)
@@ -329,7 +329,7 @@ async def find_show_packs(cfg: dict, tmdb_id: int) -> dict:
         ev["film"], ev["film_reasons"] = "yes", []        # the show's name, a pack: what it holds is "seasons"
         covered = [s for s in tmdb_seasons if s in held] if held else list(tmdb_seasons)
         packs.append({"ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
-                      "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders,
+                      "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders, "page_url": r.page_url,
                       "quality": ev["resolution"] or "unknown", "relevance_score": 0, **ev,
                       "seasons": held, "complete": info.complete or not held, "covers": len(covered)})
     packs.sort(key=lambda p: (-p["covers"], -(p.get("lang_tier", 0) >= 2), -(p.get("seeders") or 0), -p["quality_score"]))

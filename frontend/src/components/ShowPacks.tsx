@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ShowPack, ShowPacks as Packs, downloadShowPack, getShowPacks } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
+import { TrackerLink } from "@/components/SeasonPlan";
 
 // Torrents of the whole show ("komplet", "1-26. série", "S01-S10") — beside the search by seasons.
 export const gb = (b: number) => (b >= 1e12 ? `${(b / 1e12).toFixed(2)} TB` : `${(b / 1e9).toFixed(1)} GB`);
@@ -94,6 +95,7 @@ export default function ShowPacks({ tmdbId, onStarted, autoOpen = false, big = f
                     {p.is_dubbed && <span className="text-emerald-300"> · dabing</span>}
                     {!p.is_dubbed && p.lang_tier === 1 && <span className="text-sky-300"> · titulky</span>}
                     {p.film === "unsure" && <span className="text-amber-300" title={(p.film_reasons ?? []).join(", ")}> · název seriálu sedí jen zčásti</span>}
+                    {p.page_url && <> · <TrackerLink url={p.page_url} /></>}
                   </p>
                 </div>
                 {can("download") && (

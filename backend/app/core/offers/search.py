@@ -333,7 +333,8 @@ async def find_offers(cfg: dict, query: str, *, original_title: str = "", tmdb_i
             details = known.get((r.source_type.value, r.ident))
             ev = evaluate(r.name, r.size, ctx, prefs, details, r.duration_s, r.width, r.height)
             row = {"ident": r.ident, "name": r.name, "size": r.size, "source": r.source_type.value,
-                   "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders, "published": r.published}
+                   "source_id": r.source_id, "magnet_url": r.magnet_url, "seeders": r.seeders, "published": r.published,
+                   "page_url": r.page_url}
             if ctx.recorded or ctx.recorded_sizes or r.published:
                 ev = mark_before_release(ev, row, set(ctx.recorded), set(ctx.recorded_sizes),
                                          (ctx.releases or {}).get("digital") or "")

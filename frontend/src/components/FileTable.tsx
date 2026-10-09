@@ -88,7 +88,7 @@ function sourceLink(file: ScoredFile): string | null {
     return `https://fastshare.cloud/${file.ident}/${slug}${ext.toLowerCase()}`;
   }
   if (file.source === "webshare") return `https://webshare.cz/file/${file.ident}/`;
-  return null;
+  return file.page_url || null;                 // a torrent: its page on the tracker
 }
 
 /** One line in the table: the same file (same size to the byte) found on several places. */

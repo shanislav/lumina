@@ -88,6 +88,7 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, busyEpisodes
               <span className="w-14 text-zinc-500">{gb(s.size)}</span>
               <span className="w-10 text-zinc-500">{s.sources.map((x) => SRC[x] ?? x).join("/")}</span>
               <span className="min-w-0 flex-1 truncate text-zinc-300" title={s.label}>{s.label}</span>
+              <TrackerLink url={Object.values(s.episodes).find((f) => f.page_url)?.page_url} />
             </label>
           ))}
         </div>
@@ -106,6 +107,7 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, busyEpisodes
                   <span className="w-10 font-mono text-zinc-400">E{String(i.episode).padStart(2, "0")}</span>
                   <span className="w-14 text-zinc-500">{gb(i.row.size)}</span>
                   <span className="min-w-0 flex-1 truncate text-zinc-300" title={i.row.name}>{i.row.name}</span>
+                  <TrackerLink url={i.row.page_url} />
                   {other && <span className="text-amber-300" title={setOf(i.set)?.label}>z jiného vydání</span>}
                   {busy.has(i.episode) ? <span className="text-violet-300">už se stahuje</span>
                     : ownedEpisodes.includes(i.episode) && <span className="text-zinc-500">nahradí stažený</span>}
@@ -134,6 +136,7 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, busyEpisodes
               <span className="w-14 text-zinc-500">{gb(p.size)}</span>
               <span className="w-10 text-zinc-500">{p.seeders ?? 0} s</span>
               <span className="min-w-0 flex-1 truncate text-zinc-300" title={`${p.name}\n${(p.film_reasons ?? []).join(", ")}`}>{p.name}</span>
+              <TrackerLink url={p.page_url} />
               {can("download") && (
                 <button onClick={() => start([{ episode: offers.wanted[0], row: p }])} disabled={state === "busy"}
                   className="text-violet-300 hover:text-violet-200 disabled:opacity-40">Stáhnout balík</button>
@@ -143,5 +146,14 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, busyEpisodes
         </div>
       )}
     </div>
+  );
+}
+
+/** A torrent's page on the tracker (from Prowlarr) — to look at it there. */
+export function TrackerLink({ url }: { url?: string }) {
+  if (!url) return null;
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" title="Otevřít torrent na trackeru"
+      className="shrink-0 text-sky-300 hover:text-sky-200">↗ tracker</a>
   );
 }

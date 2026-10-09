@@ -23,7 +23,7 @@ class ProwlarrSource(BaseSource):
                 self._info_urls[ident] = t.link
             results.append(SearchResult(source_id=self.source_id, source_type=self.source_type, ident=ident,
                                         name=t.title, size=t.size, magnet_url=t.magnet_url, seeders=t.seeders,
-                                        published=getattr(t, "published_date", "") or ""))
+                                        published=getattr(t, "published_date", "") or "", page_url=t.link or ""))
         return results
 
     async def get_details(self, ident: str, name: str) -> dict | None:

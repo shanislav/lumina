@@ -34,6 +34,7 @@ class SearchResult(BaseModel):
     width: int = 0
     height: int = 0
     published: str = ""        # torrents: when the tracker got it ("2026-09-14") — WebShare / FastShare tell no date
+    page_url: str = ""         # torrents: the torrent's page on the tracker (Prowlarr's infoUrl)
 
 
 class BaseSource(ABC):
