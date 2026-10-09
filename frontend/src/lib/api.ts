@@ -1841,10 +1841,10 @@ export async function getSeasonOffers(tmdbId: number, season: number, episodes?:
 }
 
 export async function downloadSeason(tmdbId: number, season: number, items: { episode: number; row: ScoredFile }[],
-                                     replaceOwned = true): Promise<{ started: number; errors: string[] }> {
+                                     replaceOwned = true, keepOwned = false): Promise<{ started: number; errors: string[] }> {
   const res = await apiFetch(`${API_BASE}/api/series/${tmdbId}/season/${season}/download`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items, replace_owned: replaceOwned }),
+    body: JSON.stringify({ items, replace_owned: replaceOwned, keep_owned: keepOwned }),
   });
   if (!res.ok) throw new Error(`Stažení selhalo: ${res.status}`);
   return res.json();
@@ -1870,10 +1870,10 @@ export async function getShowPacks(tmdbId: number): Promise<ShowPacks> {
   return res.json();
 }
 
-export async function downloadShowPack(tmdbId: number, row: ShowPack, replaceOwned: boolean): Promise<{ started: boolean }> {
+export async function downloadShowPack(tmdbId: number, row: ShowPack, replaceOwned: boolean, keepOwned = false): Promise<{ started: boolean }> {
   const res = await apiFetch(`${API_BASE}/api/series/${tmdbId}/pack/download`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ row, replace_owned: replaceOwned }),
+    body: JSON.stringify({ row, replace_owned: replaceOwned, keep_owned: keepOwned }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

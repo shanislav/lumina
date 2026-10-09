@@ -44,6 +44,7 @@ MAX_CANDIDATES = 8
 SAMPLE_MAX_BYTES = 300 * 1024 * 1024
 # Statuses the scanner must never overwrite: decided by the user.
 USER_STATUSES = {"manual"}
+_QUALITY_RANK = {"480p": 1, "576p": 1, "720p": 2, "1080p": 3, "2160p": 4}
 
 _job: dict = {"running": False}
 _lock = asyncio.Lock()
@@ -748,8 +749,10 @@ async def _scan_tv(client: TMDBClient, db, tv_dir: str, stats: dict) -> None:
             held = {(d["season"], e) for d in episodes for e in d["holds"]}
             own_file = {(d["season"], d["episode"]) for d in episodes}    # episodes with a file of their own
 
-            # Mark episodes we have on disk
-            for ep_data in episodes:
+            # Mark episodes we have on disk — of two versions of one episode the better one last, so it is the
+            # episode's file (a new HEVC next to the old AVI whose dub is to be moved over)
+            for ep_data in sorted(episodes, key=lambda d: (_QUALITY_RANK.get(d.get("quality") or "", 0),
+                                                           d.get("file_size") or 0)):
                 matched_paths.add(ep_data["file_path"])
                 for n, e in enumerate(ep_data["holds"]):
                     if n and (ep_data["season"], e) in own_file:

@@ -367,6 +367,9 @@ def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: P
         srcdir.mkdir(exist_ok=True)
         for t in tracks:
             info = other["audio"][t]
+            if src.get("language") and info.get("language") in ("", "und"):
+                # an AVI keeps no language; Lumina knows it (the user said, a show's episodes)
+                info = {**info, "language": src["language"]}
             if cut:
                 file, tid, delay_ms = assemble_audio(src["path"], t, analysis["pieces"], analysis["speed"], srcdir,
                                                      info.get("channels") or 2, ref["start"])

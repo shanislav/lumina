@@ -750,3 +750,81 @@ async def _follow_reference(old: dict, new_path: str | None, new_track: int | No
         await db.close()
     if row:
         await _write_ref(old["tmdb_id"], movie_id=row["id"], track=new_track)
+
+
+# ── a dub moved between versions of a show's episodes, a season at once (episodes.py) ──
+
+class DubBody(BaseModel):
+    lang: str = "sk"                 # the dub to move (ISO 639-1)
+    delete_source: bool = True       # the old version goes once its dub is in (and checked)
+
+
+@router.get("/series/{tmdb_id:int}/season/{season:int}/dub", dependencies=[Depends(require("audiosync"))])
+async def season_dub_plan(tmdb_id: int, season: int, lang: str = "sk") -> dict:
+    """What would happen: each episode's file, the version its dub comes from, or why nothing."""
+    from app.modules.audiosync import episodes as dubs
+    return {"episodes": await dubs.pairs(tmdb_id, season, lang)}
+
+
+@router.post("/series/{tmdb_id:int}/season/{season:int}/dub")
+async def season_dub(tmdb_id: int, season: int, body: DubBody, user: User = Depends(require("audiosync"))) -> dict:
+    global _task
+    from app.modules.audiosync import episodes as dubs
+    if body.delete_source and not user.can("library.delete"):
+        raise HTTPException(403, "Na smazání starých verzí nemáš oprávnění (Mazat soubory)")
+    if busy():
+        raise HTTPException(409, "Už běží jiná práce se zvukem, počkej chvilku")
+    items = [i for i in await dubs.pairs(tmdb_id, season, body.lang) if i["status"] == "ready"]
+    if not items:
+        raise HTTPException(400, "Není co přenášet — žádný díl nemá jinou verzi s tímto dabingem")
+    db = await get_db()
+    try:
+        row = await (await db.execute("SELECT title FROM library_shows WHERE tmdb_id = ?", (tmdb_id,))).fetchone()
+    finally:
+        await db.close()
+    _job.clear()
+    _job.update(running=True, kind="dub", phase="start", done=0, total=len(items), error=None, report=[],
+                title=f"{row[0] if row else ''} S{season:02d} · {body.lang.upper()}", tmdb_id=tmdb_id, season=season)
+    _task = asyncio.create_task(_run_dub(items, body))
+    return _job
+
+
+async def _run_dub(items: list[dict], body: DubBody) -> None:
+    from app.modules.audiosync import episodes as dubs
+    async with _lock:
+        loop = asyncio.get_running_loop()
+
+        def progress(phase: str, done: int = 0, total: int = 0) -> None:
+            loop.call_soon_threadsafe(_job.update, {"phase": phase})
+
+        report: list[dict] = []
+        try:
+            for n, item in enumerate(items):
+                _job.update(done=n, phase="start", current=f"E{item['episode']:02d} · {item['source']}")
+                try:
+                    r = await dubs.move_dub(item, body.lang, body.delete_source, progress)
+                except Exception as e:  # noqa: BLE001 — the next episode still goes
+                    logger.exception("Dub of E%02d failed", item["episode"])
+                    r = {"status": "error", "note": str(e)}
+                report.append({"episode": item["episode"], **{k: v for k, v in r.items() if k != "path"}})
+                _job.update(report=list(report))
+                if r.get("path"):
+                    # its name says the new sound ("[CS+SK]"); Plex rescans
+                    await _rename_episode(r["path"])
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Season dub failed")
+            _job.update(error=str(e))
+        finally:
+            _job.update(running=False, done=len(items), current="", finished_at=time.time())
+
+
+async def _rename_episode(path: str) -> None:
+    import importlib
+    library = importlib.import_module("app.modules.library.router")
+    db = await get_db()
+    try:
+        await library._rename_now(db, [path])
+    except Exception as e:  # noqa: BLE001 — the name waits for the renamer
+        logger.info("Renaming %s after the dub: %s", path, e)
+    finally:
+        await db.close()

@@ -218,6 +218,7 @@ async def show_packs(tmdb_id: int) -> dict:
 class PackDownload(BaseModel):
     row: dict                    # the pack (a row of /packs)
     replace_owned: bool = False  # episodes the user has go for the pack's (else the pack's copies stay out)
+    keep_owned: bool = False     # the pack's episodes come as another version — nothing owned goes (a dub to move)
 
 
 @router.post("/{tmdb_id:int}/pack/download", dependencies=[Depends(require("download"))])
@@ -236,7 +237,8 @@ async def pack_download(tmdb_id: int, body: PackDownload) -> dict:
         "magnet_url": row.get("magnet_url"), "content_type": "tv", "tmdb_id": tmdb_id,
         "title": show.get("title") or "", "year": show.get("year") or 0, "file_name": row.get("name") or "",
         # the pack's one season: files named only "01 - Name" inside it ("Chalupáři S01")
-        "library_action": {"mode": "pack", "replace_owned": body.replace_owned, "pack_season": pack_season},
+        "library_action": {"mode": "pack", "replace_owned": body.replace_owned and not body.keep_owned,
+                           "keep_owned": body.keep_owned, "pack_season": pack_season},
         "requested_by": "series",
     })
     if payload.get("error"):
@@ -344,6 +346,7 @@ async def start_overview(tmdb_id: int) -> dict:
 class SeasonDownload(BaseModel):
     items: list[dict]          # [{"episode": 3, "row": <offer row>}] — a pack: any episode of it
     replace_owned: bool = True # owned episodes (EN waiting for the dub) are replaced by the new files
+    keep_owned: bool = False   # the new files come as another version — nothing owned goes (a dub to move)
 
 
 @router.post("/{tmdb_id:int}/season/{season}/download", dependencies=[Depends(require("download"))])
@@ -361,8 +364,9 @@ async def season_download(tmdb_id: int, season: int, body: SeasonDownload) -> di
             "magnet_url": row.get("magnet_url"), "content_type": "tv", "tmdb_id": tmdb_id,
             "title": show.get("title") or "", "year": show.get("year") or 0, "file_name": row.get("name") or "",
             "library_action": {"mode": "episode", "season": season, "episode": episode,
-                               "replace": bool(body.replace_owned and (season, episode) in owned),
-                               "replace_owned": body.replace_owned},
+                               "replace": bool(body.replace_owned and not body.keep_owned and (season, episode) in owned),
+                               "replace_owned": body.replace_owned and not body.keep_owned,
+                               "keep_owned": body.keep_owned},
             "requested_by": "series",
         })
         if payload.get("error"):

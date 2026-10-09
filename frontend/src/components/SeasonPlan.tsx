@@ -37,6 +37,7 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, busyEpisodes
   const [primary, setPrimary] = useState("");
   const [skip, setSkip] = useState<Set<number>>(new Set());
   const [state, setState] = useState<"" | "busy" | string>("");
+  const [mode, setMode] = useState<OwnedMode>("replace");
 
   useEffect(() => {
     let live = true;
@@ -59,7 +60,7 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, busyEpisodes
   async function start(list: { episode: number; row: ScoredFile }[]) {
     setState("busy");
     try {
-      const r = await downloadSeason(tmdbId, season, list);
+      const r = await downloadSeason(tmdbId, season, list, mode === "replace", mode === "version");
       setState(r.errors.length ? `Spuštěno ${r.started}, chyby: ${r.errors.join("; ")}` : `Spuštěno ${r.started} stahování — průběh je u dílů níže`);
       setSkip(new Set(list.map((i) => i.episode)));      // not offered again by a second click
       onStarted();
@@ -110,7 +111,8 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, busyEpisodes
                   <TrackerLink url={i.row.page_url} />
                   {other && <span className="text-amber-300" title={setOf(i.set)?.label}>z jiného vydání</span>}
                   {busy.has(i.episode) ? <span className="text-violet-300">už se stahuje</span>
-                    : ownedEpisodes.includes(i.episode) && <span className="text-zinc-500">nahradí stažený</span>}
+                    : ownedEpisodes.includes(i.episode) && (
+                      <span className="text-zinc-500">{mode === "version" ? "přibude jako další verze" : "nahradí stažený"}</span>)}
                 </label>
               );
             })}
@@ -122,6 +124,7 @@ export default function SeasonPlan({ tmdbId, season, ownedEpisodes, busyEpisodes
                 className="rounded bg-violet-600 px-3 py-1 font-medium text-white hover:bg-violet-500 disabled:opacity-40">
                 Stáhnout {chosen.length} {chosen.length === 1 ? "díl" : chosen.length < 5 ? "díly" : "dílů"} ({gb(chosen.reduce((a, i) => a + i.row.size, 0))})
               </button>
+              <OwnedModeSelect value={mode} onChange={setMode} only={["replace", "version"]} />
               {state && state !== "busy" && <span className="text-zinc-400">{state}</span>}
             </div>
           )}
@@ -155,5 +158,28 @@ export function TrackerLink({ url }: { url?: string }) {
   return (
     <a href={url} target="_blank" rel="noopener noreferrer" title="Otevřít torrent na trackeru"
       className="shrink-0 text-sky-300 hover:text-sky-200">↗ tracker</a>
+  );
+}
+
+/** What a download does with the episodes the user has: skip them, replace them, or keep them and add the new
+ *  files as another version (the old one's dub is then moved over — the audio editor). */
+export type OwnedMode = "skip" | "replace" | "version";
+
+const OWNED_MODES: Record<OwnedMode, [string, string]> = {
+  skip: ["díly, které mám: nestahovat", "Stáhne jen chybějící díly (a díly bez CZ/SK zvuku)"],
+  replace: ["díly, které mám: nahradit", "Stažené díly nahradí ty v knihovně (stejný soubor se znovu nestahuje)"],
+  version: ["díly, které mám: přidat jako další verzi", "Nic se nesmaže — nový soubor přibude vedle starého (např. abys z něj přenesl dabing)"],
+};
+
+export function OwnedModeSelect({ value, onChange, only }: {
+  value: OwnedMode; onChange: (m: OwnedMode) => void; only?: OwnedMode[];
+}) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value as OwnedMode)} title={OWNED_MODES[value][1]}
+      className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300">
+      {(only ?? (Object.keys(OWNED_MODES) as OwnedMode[])).map((m) => (
+        <option key={m} value={m} title={OWNED_MODES[m][1]}>{OWNED_MODES[m][0]}</option>
+      ))}
+    </select>
   );
 }

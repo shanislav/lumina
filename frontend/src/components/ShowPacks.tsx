@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ShowPack, ShowPacks as Packs, downloadShowPack, getShowPacks } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
-import { TrackerLink } from "@/components/SeasonPlan";
+import { OwnedMode, OwnedModeSelect, TrackerLink } from "@/components/SeasonPlan";
 
 // Torrents of the whole show ("komplet", "1-26. série", "S01-S10") — beside the search by seasons.
 export const gb = (b: number) => (b >= 1e12 ? `${(b / 1e12).toFixed(2)} TB` : `${(b / 1e9).toFixed(1)} GB`);
@@ -34,7 +34,7 @@ export default function ShowPacks({ tmdbId, onStarted, autoOpen = false, big = f
   const [data, setData] = useState<Packs | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [replace, setReplace] = useState(false);
+  const [mode, setMode] = useState<OwnedMode>("skip");
   const [started, setStarted] = useState<Record<string, string>>({});
 
   const search = () => {
@@ -52,7 +52,7 @@ export default function ShowPacks({ tmdbId, onStarted, autoOpen = false, big = f
   const start = async (p: ShowPack) => {
     setStarted((s) => ({ ...s, [p.ident]: "…" }));
     try {
-      await downloadShowPack(tmdbId, p, replace);
+      await downloadShowPack(tmdbId, p, mode === "replace", mode === "version");
       setStarted((s) => ({ ...s, [p.ident]: "stahuje se — díly se po dokončení zařadí do sérií" }));
       onStarted();
     } catch (e) {
@@ -72,10 +72,7 @@ export default function ShowPacks({ tmdbId, onStarted, autoOpen = false, big = f
     <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 text-xs">
       <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
         <h2 className="text-sm font-medium text-zinc-200">Celý seriál na torrentech</h2>
-        <label className="flex items-center gap-1.5 text-zinc-400" title="Bez zaškrtnutí zůstanou díly, které už máš, a jejich kopie z balíku se nepřesunou">
-          <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
-          nahradit díly, které už mám
-        </label>
+        <OwnedModeSelect value={mode} onChange={setMode} />
         <button onClick={() => { setOpen(false); onClose?.(); }} className="ml-auto text-zinc-500 hover:text-zinc-300">Zavřít</button>
       </div>
       {loading && <p className="text-zinc-500">Hledám na torrentech…</p>}

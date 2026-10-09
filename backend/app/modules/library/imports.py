@@ -656,10 +656,14 @@ async def import_episode(payload: dict) -> None:
                 # a part of a two-part episode TMDB keeps as one ("Vítej v Koreji II"): "- pt2" next to the first part
                 part = file_part(os.path.basename(path), cat, season, episodes, [title])
             dub_over = False
-            owned_path = owned.get((season, episodes[0])) if season is not None and episodes else None
+            # "keep_owned": the pack comes as another version of what is owned (its dub is moved over later) —
+            # nothing owned is skipped, replaced or made a part
+            keep = bool(action.get("keep_owned"))
+            owned_path = owned.get((season, episodes[0])) if season is not None and episodes and not keep else None
             if part is None and owned_path and _PT.search(owned_path) and _PT.search(owned_path).group(1) != "1":
                 part = 1                                    # the 2nd part came first: this one is the 1st
             if (path != src or pack) and season is not None and episodes and not action.get("replace_owned", True) \
+                    and not keep \
                     and all((season, ep) in owned for ep in episodes) and all((season, ep) in owned_foreign for ep in episodes):
                 new_langs = {a["lang"] for a in _lang_from_release(await probe_async(path), action.get("release") or
                                                                    os.path.basename(path)).get("audio", []) if a.get("lang")}
@@ -667,7 +671,7 @@ async def import_episode(payload: dict) -> None:
                 if dub_over:
                     logger.info("%s: S%02dE%02d owned only without CZ/SK — the dub takes its place", path, season, episodes[0])
             if (path != src or pack) and season is not None and episodes and not action.get("replace_owned", True) \
-                    and all((season, ep) in owned for ep in episodes) and not dub_over and part is None:
+                    and not keep and all((season, ep) in owned for ep in episodes) and not dub_over and part is None:
                 logger.info("%s: S%02dE%02d is owned already — left in downloads", path, season, episodes[0])
                 left.append([os.path.basename(path), f"S{season:02d}E{episodes[0]:02d} už máš"])
                 continue
@@ -690,7 +694,7 @@ async def import_episode(payload: dict) -> None:
             # (a file of more episodes holding the picked one replaces it: "S04E01-E02" for E01); "replace_owned"
             # is for every file of a pack (it imports them one by one as they complete) and a season's other files
             picked_here = picked is None or (picked[0] == season and picked[1][0] in episodes)
-            replacing = bool(tmdb_id and season is not None and episodes) and (
+            replacing = bool(tmdb_id and season is not None and episodes) and not keep and (
                 dub_over or (action.get("replace") and path == src and picked_here)
                 or (action.get("replace_owned") and (pack or path != src)))
             if part and part >= 2 and owned_path and os.path.exists(owned_path) and not _PT.search(owned_path) \

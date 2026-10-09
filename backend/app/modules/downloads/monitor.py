@@ -172,7 +172,8 @@ async def _monitor_loop():
                                         try:
                                             from app.modules.library.pack_plan import first_indexes, make_plan, skip_indexes
                                             plan = await make_plan(tmdb_id, files, intent.get("pack_season"),
-                                                                   bool(intent.get("replace_owned")), title)
+                                                                   bool(intent.get("replace_owned") or intent.get("keep_owned")),
+                                                                   title)
                                         except Exception as e:  # noqa: BLE001 — the file by file way then
                                             logger.warning("Pack %s: no plan: %s", title, e)
                                         if plan:
@@ -180,7 +181,7 @@ async def _monitor_loop():
                                             top, high = first_indexes(plan)
                                             prios = {7: top, 6: high}
                                         else:
-                                            skip = [] if intent.get("replace_owned") else pack_skip(files, owned, intent.get("pack_season"))
+                                            skip = [] if intent.get("replace_owned") or intent.get("keep_owned") else pack_skip(files, owned, intent.get("pack_season"))
                                             prios = pack_priorities(files, skip, intent.get("pack_season"))
                                         if skip:
                                             await qbt.set_file_priority(did, skip, 0)

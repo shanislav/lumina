@@ -457,3 +457,25 @@ def test_a_part_in_brackets_is_the_names():
     assert release_episode("12. Běž, Bože, běž (1. část).mkv", cat, 10)[:2] == ((10, 12), True)
     assert release_episode("12. Říše fantazie (3. část).mkv", cat, 11)[:2] == ((11, 12), True)
     assert bare_title("11. Říše fantazie (2. část).mkv") == "Říše fantazie, část 2"
+
+
+async def test_a_pack_as_another_version_keeps_what_is_owned(tmp_path, monkeypatch):
+    """Bones in HEVC next to the old AVI with the Slovak dub (to be moved over): "keep_owned" — the owned file
+    stays, the new one comes beside it and becomes the episode's file (the better one)."""
+    from app.db import get_db
+    season, owned, dl = await _setup(tmp_path, monkeypatch)
+    db = await get_db()
+    await db.execute("UPDATE library_episodes SET language = 'SK' WHERE file_path = ?", (str(owned),))
+    await db.commit()
+    await db.close()
+    f = dl / "Bones S01" / "South Park S01E02 Sopka 1080p HEVC.mkv"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"x" * 20)
+    await events.emit("download.completed", {
+        "download_id": "p", "tmdb_id": 2190, "title": "South Park", "year": "1997", "content_type": "tv",
+        "path": str(f), "extra_paths": [],
+        "library_action": {"mode": "pack", "replace_owned": False, "keep_owned": True}})
+    assert owned.exists() and not f.exists()                        # nothing owned goes
+    new = [p for p in season.iterdir() if p.suffix == ".mkv"]
+    assert len(new) == 1
+    assert _episodes()[0][:2] == (1, 2) and _episodes()[0][2] == new[0].name
