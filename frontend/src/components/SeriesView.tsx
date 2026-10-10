@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import FileTable from "@/components/FileTable";
 import SeasonPlan from "@/components/SeasonPlan";
 import WantButton from "@/components/WantButton";
+import SeasonDub from "@/components/SeasonDub";
 import ShowPacks from "@/components/ShowPacks";
 import EpisodeWindow from "@/components/EpisodeWindow";
 import SeriesSources from "@/components/SeriesSources";
@@ -267,6 +268,7 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
 }) {
   const { can } = useAuth();
   const [whole, setWhole] = useState(false);
+  const [dub, setDub] = useState(false);
   const [langBusy, setLangBusy] = useState("");
   const c = season.counts;
 
@@ -333,6 +335,15 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
               </button>
             </div>
           )}
+          {canEdit && can("audiosync") && season.season_number > 0 && c.owned + c.temp + c.unknown > 0 && (
+            <div className="flex items-center gap-3 px-4 py-1.5 text-xs">
+              <button onClick={() => setDub(!dub)} className="text-sky-300 hover:text-sky-200"
+                title="Díly mají dvě verze (nová v lepší kvalitě, stará s dabingem): dabing ze staré se přenese do nové">
+                {dub ? "Zavřít přenos dabingu" : "Přenést dabing z jiných verzí dílů…"}
+              </button>
+            </div>
+          )}
+          {dub && <SeasonDub tmdbId={tmdbId} season={season.season_number} onDone={onChanged} />}
           {canEdit && c.unknown > 0 && (
             <div className="flex flex-wrap items-center gap-2 px-4 py-1.5 text-xs text-sky-300">
               <span title="Zvukové stopy nemají v souboru jazyk. Lumina ho zapíše do souboru (MKV, MP4), u AVI si ho pamatuje sama.">
