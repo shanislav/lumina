@@ -220,6 +220,26 @@ def _positions(duration: float, count: int) -> list[float]:
     return [float(x) for x in np.linspace(duration * 0.03, min(usable, duration * 0.97 - WINDOW_S), count)]
 
 
+CLOSER_STEP_S = 0.9 * WINDOW_S
+
+
+def _closer_look(windows: list[Window], duration: float) -> list[float]:
+    """Where to measure more: next to a trustworthy window none of whose trustworthy neighbours shares its offset
+    (alone it is taken for noise — a stretch of 1–3 min between two cuts of an opening needs 2 windows), and the
+    film's start before the first window."""
+    good = [w for w in windows if w.good]
+    last = duration - WINDOW_S - 1
+    out: list[float] = []
+    for i, w in enumerate(good):
+        near = good[max(0, i - 1):i] + good[i + 1:i + 2]
+        if near and all(abs(x.offset - w.offset) > CONTINUES_S for x in near):
+            out += [w.at - CLOSER_STEP_S, w.at + CLOSER_STEP_S]
+    first = windows[0].at if windows else 0.0
+    out += [float(x) for x in np.arange(5.0, first - CLOSER_STEP_S / 2, CLOSER_STEP_S)]
+    taken = [w.at for w in windows]
+    return sorted({round(a, 1) for a in out if 0 <= a <= last and all(abs(a - t) > WINDOW_S / 3 for t in taken)})
+
+
 def segments_from(windows: list[Window]) -> list[Segment]:
     """Consecutive trustworthy windows that continue each other form a segment. Within one, the
     offset may drift slowly (a TV recording, a stretch at a hair different speed) — then the
@@ -310,6 +330,12 @@ def analyze(ref_path: str, ref_track: int, other_path: str, other_track: int, pr
         if progress:
             progress("windows", i + 1, len(positions))
 
+    # a lone window with its own offset may be a short stretch of another cut (a TV version's opening): two
+    # more windows next to it tell; the opening before the first window is measured too
+    extra = _closer_look(windows, ref["duration"])
+    if extra:
+        windows = sorted(windows + [_measure(ref_path, ref_track, other_path, other_track, at, best_speed)
+                                    for at in extra], key=lambda w: w.at)
     verdict, speed, offset, segs, confidence, note, drift = judge(windows, best_speed, ref["duration"])
     pieces: list[dict] = []
     if verdict in ("constant", "speed"):
