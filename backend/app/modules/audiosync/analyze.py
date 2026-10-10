@@ -363,6 +363,15 @@ _LANG = {"cze": "cs", "ces": "cs", "slo": "sk", "slk": "sk", "eng": "en", "ger":
 ISO3 = {v: k for k, v in reversed(list(_LANG.items()))}
 
 
+def speed_filter(speed: float) -> str:
+    """ffmpeg filters playing a track ``1 / speed`` times as long — by resampling, not by time-stretching.
+    ``atempo`` keeps the pitch by cutting the sound into grains and joining them again: speech gets a rasp on
+    every word. A PAL track (25 fps, broadcast 4 % fast and higher) slowed down by resampling gets its own pitch
+    back. The rate is set at 192 kHz so its rounding is ~3 ppm (0.01 s over an hour)."""
+    rate = round(192000 * speed)
+    return f"aresample=192000,asetrate={rate},aresample=48000"
+
+
 def language_from_title(title: str) -> str:
     """The one language a track title names ("CZ 2.0 AAC 128 kbps" → "cze"); "" when none or several."""
     from app.core.release_langs import parse_languages

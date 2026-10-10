@@ -1,8 +1,9 @@
 """Step 2: put the other version's audio track into the reference file (decisions/0007).
 
 - Same speed: the track is copied as it is (mkvmerge ``--sync`` shifts it), nothing is re-encoded.
-- Different speed (PAL …): the track is re-encoded to AC-3 with ffmpeg ``atempo`` first — players
-  handle a stretched timestamp track badly.
+- Different speed (PAL …): the track is re-encoded to AC-3, slowed down / sped up by resampling first
+  (``engine.speed_filter`` — not ``atempo``, which rasps on speech) — players handle a stretched timestamp
+  track badly.
 - Different cut: the track is assembled from the pieces of the analysis (ffmpeg: every piece from its
   own place, silence where the other version lacks the scene) and encoded to AC-3.
 
@@ -83,7 +84,7 @@ def prepare_audio(other_path: str, other_track: int, speed: float, offset: float
     bitrate = "640k" if channels > 2 else "224k"
     subprocess.run(
         ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", other_path, "-map", f"0:a:{other_track}",
-         "-af", f"atempo={speed:.8f}", "-c:a", "ac3", "-b:a", bitrate, str(out)],
+         "-af", engine.speed_filter(speed), "-c:a", "ac3", "-b:a", bitrate, str(out)],
         check=True, capture_output=True, timeout=3 * 3600)
     return str(out), 0, round((ref_start - offset / speed) * 1000)
 
@@ -115,7 +116,7 @@ def assemble_audio(other_path: str, other_track: int, pieces: list[dict], speed:
                 lead, start = -start / local, 0.0
             args += ["-ss", f"{start:.3f}", "-t", f"{local * (length - lead):.3f}", "-i", other_path]
             chain = f"[{n}:a:{other_track}]"
-            chain += f"atempo={local:.8f}," if abs(local - 1) > 1e-9 else ""
+            chain += f"{engine.speed_filter(local)}," if abs(local - 1) > 1e-9 else ""
             chain += f"aresample=48000,aformat=sample_rates=48000:channel_layouts={layout}"
             if lead:
                 chain += f",adelay={int(lead * 1000)}:all=1"

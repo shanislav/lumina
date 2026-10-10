@@ -10,6 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from app.modules.audiosync import analyze as engine
 from app.modules.audiosync.analyze import mapping_at
 
 PREVIEW_DIR = Path("data/audiosync-previews")
@@ -61,7 +62,7 @@ def make_clip(ref_path: str, other_path: str, other_track: int, analysis: dict, 
                 "-map", "0:v:0", "-map", f"1:a:{other_track}"]
         chain = []
         if abs(speed - 1) > 1e-9:
-            chain.append(f"atempo={speed:.8f}")
+            chain.append(engine.speed_filter(speed))
         if lead:
             chain.append(f"adelay={int(lead * 1000)}:all=1")
         audio_filter = ["-af", ",".join(chain)] if chain else []
