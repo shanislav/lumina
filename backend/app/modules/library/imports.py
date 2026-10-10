@@ -750,6 +750,16 @@ async def import_episode(payload: dict) -> None:
                     "file_path = excluded.file_path, file_size = excluded.file_size, quality = excluded.quality, "
                     "language = excluded.language, has_file = 1",
                     (tmdb_id, season, ep, *values))
+            # the TV inventory knows it at once (the renamer, the episode's versions) — not only after the next scan
+            try:
+                show_folder = os.path.relpath(target, root).split(os.sep)[0]
+                await db.execute(
+                    "INSERT OR REPLACE INTO tv_files (file_path, folder, show_tmdb_id, season, episodes, status, note, "
+                    "facts, scanned_at) VALUES (?, ?, ?, ?, ?, 'ok', '', ?, ?)",
+                    (target, show_folder, tmdb_id, season, json.dumps(episodes),
+                     json.dumps({"file": [season, episodes]}), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            except Exception as e:  # noqa: BLE001 — the inventory tables missing
+                logger.info("%s: not in the TV inventory yet: %s", target, e)
             logger.info("Imported episode S%02d%s → %s", season, "".join(f"E{e:02d}" for e in episodes), target)
             placed.append(f"S{season:02d}" + "".join(f"E{e:02d}" for e in episodes))
             if not (part and part >= 2):
