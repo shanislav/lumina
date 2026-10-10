@@ -142,20 +142,46 @@ def refine(analysis: dict, ref_path: str, ref_track: int, other_path: str) -> di
         data["picture"] = notes
         return data
     pieces = [dict(p) for p in data["pieces"]]
+    # the reference is one track muxed in: off its picture by one amount all along. The pieces' measurements
+    # that agree tell it; a lone other one (a TV opening) is the old recording's own matter
+    deltas = []
     for p in pieces:
         if p.get("offset") is None:
             continue
         found = piece_offset(ref_path, other_path, speed, p["offset"], p["start"], p["end"])
-        if found is None:
+        if found is not None:
+            # the offset at the probe's middle (a piece may drift: slope)
+            deltas.append(found - (p["offset"] + p.get("slope", 0.0) * ((p["end"] - p["start"]) / 2)))
+    if deltas:
+        med = float(np.median(deltas))
+        agree = [d for d in deltas if abs(d - med) <= DIFFERS_S]
+        if len(agree) >= max(2, (len(deltas) + 1) // 2) and DIFFERS_S < abs(med := float(np.median(agree))) <= MAX_FIX_S:
+            for p in pieces:
+                if p.get("offset") is not None:
+                    p["offset"] += med
+                    p["expect"] = -med / speed
+            notes.append(f"posun podle obrazu {med:+.2f} s ({len(agree)} z {len(deltas)} úseků)")
+        elif any(abs(d) > DIFFERS_S for d in deltas):
+            notes.append("obraz: " + ", ".join(f"{d:+.2f}" for d in deltas) + " s — nejednotné nebo moc, platí zvuk")
+    # a jump without a silence (the old version has extra material there): where the reference speaks, by the picture
+    for k in range(len(pieces) - 1):
+        before, after = pieces[k], pieces[k + 1]
+        if before.get("offset") is None or after.get("offset") is None:
             continue
-        # the offset at the probe's middle → at the piece's start (a piece may drift: slope)
-        delta = found - (p["offset"] + p.get("slope", 0.0) * ((p["start"] + p["end"]) / 2 - p["start"]))
-        if abs(delta) > MAX_FIX_S:
-            notes.append(f"{_clock(p['start'])}: obraz říká {delta:+.2f} s — moc, platí zvuk")
-        elif abs(delta) > DIFFERS_S:
-            p["offset"] += delta
-            p["expect"] = -delta / speed
-            notes.append(f"{_clock(p['start'])}: posun podle obrazu {delta:+.2f} s")
+        o1 = before["offset"] + before.get("slope", 0.0) * (before["end"] - before["start"])
+        o2 = after["offset"]
+        t = after["start"]
+        if abs(o1 - o2) <= engine.SAME_OFFSET_S or quiet(ref_path, ref_track, t - 0.5, t + 0.5)                 or in_black(ref_path, t - 0.5, t + 0.5):
+            continue
+        t1 = place_cut(ref_path, other_path, speed, o1, o2, t, 0.0)
+        if t1 is None:
+            data["unsure_cut"] = _clock(t)
+            notes.append(f"{_clock(t)}: skok v řeči, obraz nepomohl")
+            continue
+        if abs(t1 - t) > 0.2:
+            notes.append(f"skok {_clock(t)} → {_clock(t1)} (podle obrazu)")
+        after["offset"] += after.get("slope", 0.0) * (t1 - t)
+        before["end"] = after["start"] = t1
     # cuts: the silence where the reference speaks is placed again
     for k in range(len(pieces) - 2):
         before, gap, after = pieces[k], pieces[k + 1], pieces[k + 2]
