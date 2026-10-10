@@ -106,7 +106,7 @@ def assemble_audio(other_path: str, other_track: int, pieces: list[dict], speed:
             continue
         if p.get("offset") is None:
             args += ["-f", "lavfi", "-t", f"{length:.3f}", "-i", f"anullsrc=r=48000:cl={layout}"]
-            filters.append(f"[{n}:a]aformat=sample_rates=48000:channel_layouts={layout}[p{n}]")
+            filters.append(f"[{n}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts={layout}[p{n}]")
         else:
             # a drifting piece runs at its own speed: t_other = (speed + slope)·t + …
             local = speed + p.get("slope", 0.0)
@@ -117,7 +117,9 @@ def assemble_audio(other_path: str, other_track: int, pieces: list[dict], speed:
             args += ["-ss", f"{start:.3f}", "-t", f"{local * (length - lead):.3f}", "-i", other_path]
             chain = f"[{n}:a:{other_track}]"
             chain += f"{engine.speed_filter(local)}," if abs(local - 1) > 1e-9 else ""
-            chain += f"aresample=48000,aformat=sample_rates=48000:channel_layouts={layout}"
+            # the sample format fixed: ffmpeg would otherwise pick one for the whole concat — the silence's 8 bits
+            # (anullsrc is u8) unless a filter happened to need a finer one: a rasp on every word
+            chain += f"aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts={layout}"
             if lead:
                 chain += f",adelay={int(lead * 1000)}:all=1"
             # exact length: pad a short end, cut a long one
