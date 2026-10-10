@@ -87,6 +87,12 @@ def quiet(ref_path: str, ref_track: int, t1: float, t2: float) -> bool:
     return float(np.mean(rms[i1:i2])) < QUIET * usual
 
 
+def in_black(path: str, t1: float, t2: float) -> bool:
+    """Does the silence fall into a black screen (music may play over it)?"""
+    _, blacks = shots(path, t1 - 2, t2 - t1 + 4)
+    return any(min(e, t2) - max(s, t1) >= 0.8 * (t2 - t1) for s, e in blacks)
+
+
 def place_cut(new_path: str, old_path: str, speed: float, o1: float, o2: float, t1: float, gap: float
               ) -> float | None:
     """Where the cut is by the picture → t1 (o1 fits until t1, o2 from t1 + gap), None when it cannot tell."""
@@ -96,6 +102,9 @@ def place_cut(new_path: str, old_path: str, speed: float, o1: float, o2: float, 
     old, _ = shots(old_path, lo, speed * (b - a) + abs(o1 - o2) + 4)
     if len(new) < 2 or len(old) < 2:
         return None
+    # the sound's offsets may be a little off the picture (the reference's own offset): the shots' own
+    o1 = pair_offset([n for n in new if n < t1], old, speed, o1, 0.4)[0] or o1
+    o2 = pair_offset([n for n in new if n > t1 + gap], old, speed, o2, 0.4)[0] or o2
 
     def fits(n: float, off: float) -> bool:
         return any(abs(o - (speed * n + off)) <= MATCH_S for o in old)
@@ -144,7 +153,7 @@ def refine(analysis: dict, ref_path: str, ref_track: int, other_path: str) -> di
         before, gap, after = pieces[k], pieces[k + 1], pieces[k + 2]
         if gap.get("offset") is not None or before.get("offset") is None or after.get("offset") is None:
             continue
-        if quiet(ref_path, ref_track, gap["start"], gap["end"]):
+        if quiet(ref_path, ref_track, gap["start"], gap["end"]) or in_black(ref_path, gap["start"], gap["end"]):
             continue
         o1 = before["offset"] + before.get("slope", 0.0) * (gap["start"] - before["start"])
         o2 = after["offset"]
