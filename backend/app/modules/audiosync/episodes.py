@@ -17,6 +17,7 @@ from pathlib import Path
 from app.db import get_db
 from app.modules.audiosync import analyze as engine
 from app.modules.audiosync import transfer as muxer
+from app.modules.audiosync import video
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,13 @@ async def move_dub(item: dict, lang: str, delete_source: bool, progress=None) ->
     if data["verdict"] not in ("constant", "speed", "cuts") or (data.get("confidence") or 0) < MIN_CONFIDENCE:
         return {"status": "unsure", "note": f"zvuk k obrazu nesedí jistě ({data.get('note') or data['verdict']})",
                 "verdict": data["verdict"], "confidence": data.get("confidence")}
+    # the picture: each piece's offset checked, a cut in speech placed again (only where it is needed)
+    if progress:
+        progress("picture")
+    data = await asyncio.to_thread(video.refine, data, target, item["target_track"], source)
+    if data.get("unsure_cut"):
+        return {"status": "unsure", "note": f"střih kolem {data['unsure_cut']} padl do řeči a obraz neporadil",
+                "verdict": data["verdict"], "confidence": data.get("confidence"), "picture": data.get("picture")}
     work = folder / WORK_DIR
     out_name = f"{os.path.splitext(os.path.basename(target))[0]}.mkv"
     try:
@@ -105,7 +113,7 @@ async def move_dub(item: dict, lang: str, delete_source: bool, progress=None) ->
         os.remove(target)                       # an MP4 became an MKV
     await _library(target, final, source if delete_source else None)
     return {"status": "ok", "path": final, "verdict": data["verdict"], "speed": data["speed"],
-            "offset": data["offset"], "confidence": data.get("confidence")}
+            "offset": data["offset"], "confidence": data.get("confidence"), "picture": data.get("picture") or []}
 
 
 async def _library(old: str, new: str, delete: str | None) -> None:

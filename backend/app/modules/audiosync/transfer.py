@@ -172,8 +172,15 @@ def mux(ref_path: str, added: list[dict], out_path: str, progress=None, ref_keep
 
 
 def verify(out_path: str, ref_track: int, new_track: int, duration: float,
-           pieces: list[dict] | None = None) -> list[engine.Window]:
-    """The new track must line up with the reference track of the same file."""
+           pieces: list[dict] | None = None, expect: float = 0.0) -> list[engine.Window]:
+    """The new track must line up with the reference track of the same file — or sit where it is meant to
+    (``expect`` / a piece's ``expect``: placed by the picture, the reference itself being off its picture)."""
+
+    def meant(at: float) -> float:
+        for p in pieces or []:
+            if p["start"] <= at < p["end"] and p.get("offset") is not None:
+                return p.get("expect", 0.0)
+        return expect
     # the middle of the film — logos and credits are the least alike
     positions = [float(x) for x in np.linspace(duration * 0.08, duration * 0.88, VERIFY_WINDOWS)]
     if pieces and len(pieces) > 1:
@@ -190,17 +197,20 @@ def verify(out_path: str, ref_track: int, new_track: int, duration: float,
                     break
                 x -= b - a
     windows = []
+    errors = []
     for at in positions:
-        w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0)
+        w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0, meant(at))
         for alt in (at + 60, at - 60):          # a quiet place cannot be measured — try next to it
             if w.good or not (0 < alt < duration - engine.WINDOW_S):
                 continue
-            w = engine._measure(out_path, ref_track, out_path, new_track, alt, 1.0)
+            w = engine._measure(out_path, ref_track, out_path, new_track, alt, 1.0, meant(alt))
         windows.append(w)
+        if w.good:
+            errors.append(w.offset - meant(w.at))
     good = [w for w in windows if w.good]
-    typical = float(np.median([abs(w.offset) for w in good])) if good else 99.0
-    if len(good) < VERIFY_WINDOWS - 1 or typical > VERIFY_TYPICAL or any(abs(w.offset) > VERIFY_MAX for w in good):
-        offs = ", ".join(f"{w.offset:+.2f}" for w in good) or "žádná shoda"
+    typical = float(np.median([abs(e) for e in errors])) if errors else 99.0
+    if len(good) < VERIFY_WINDOWS - 1 or typical > VERIFY_TYPICAL or any(abs(e) > VERIFY_MAX for e in errors):
+        offs = ", ".join(f"{e:+.2f}" for e in errors) or "žádná shoda"
         raise TransferError(f"Kontrola výsledku neprošla (posuny {offs} s) — soubor nepoužit")
     # a different cut: next to every cut the audio must fit too. A quiet stretch cannot be measured,
     # so a few places are tried; any trustworthy one that is off fails, and so does none at all.
@@ -215,11 +225,11 @@ def verify(out_path: str, ref_track: int, new_track: int, duration: float,
         for spots in sides:
             confirmed = False
             for at in spots:
-                w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0)
+                w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0, p.get("expect", 0.0))
                 windows.append(w)
                 if not w.good:
                     continue
-                if abs(w.offset) > VERIFY_MAX:
+                if abs(w.offset - p.get("expect", 0.0)) > VERIFY_MAX:
                     raise TransferError(f"U střihu kolem {_clock(at)} zvuk nesedí ({w.offset:+.2f} s) — soubor nepoužit")
                 confirmed = True
                 break
@@ -379,7 +389,7 @@ def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: P
             info = as_added(info, analysis)
             added.append({"file": file, "tid": tid, "delay_ms": delay_ms, "language": info.get("language") or "",
                           "name": track_name(info, moved=True), "source": src["path"],
-                          "check": analysis.get("pieces") if cut else None})
+                          "check": (analysis.get("pieces") if cut else None, analysis.get("expect", 0.0))})
     if not added:
         raise NothingToAdd("Tyto dabingy už soubor má — není co přidat")
     added = output_order(added, lambda a: a["file"], lambda a: a["tid"])
@@ -395,8 +405,8 @@ def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: P
         progress("verify", 0, 1)
     duration = engine.probe(out_path)["duration"]
     kept = list(range(len(ref["audio"]))) if ref_keep is None else sorted(ref_keep)
-    for i, pieces in enumerate(checks):
-        verify(out_path, kept.index(ref_track), len(kept) + i, duration, pieces)
+    for i, (pieces, expect) in enumerate(checks):
+        verify(out_path, kept.index(ref_track), len(kept) + i, duration, pieces, expect)
     logger.info("audiosync: %s built (%d tracks from %d versions)", out_name, len(added), len(sources))
     return out_path
 
