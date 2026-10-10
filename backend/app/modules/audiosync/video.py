@@ -25,7 +25,9 @@ MATCH_S = 0.06                # a shot change of the other version within this i
 MIN_MATCHES = 3
 PIECE_PROBE_S = 30.0
 CUT_AROUND_S = 45.0
-DIFFERS_S = 0.08              # the picture overrules the sound from this difference on
+DIFFERS_S = 0.08              # the picture overrules the sound from this difference on …
+MAX_FIX_S = 0.3               # … up to this: a reference muxed in a little off its picture. More is the old
+                              # recording's own sound off its own picture (a TV opening) — the dub follows the sound
 QUIET = 0.3                   # the inserted silence's place: below this share of the reference's usual level
 
 
@@ -131,7 +133,9 @@ def refine(analysis: dict, ref_path: str, ref_track: int, other_path: str) -> di
     notes = []
     if data["verdict"] != "cuts":
         p = piece_offset(ref_path, other_path, speed, data["offset"], 0.0, engine.probe(ref_path)["duration"])
-        if p is not None and abs(p - data["offset"]) > DIFFERS_S:
+        if p is not None and abs(p - data["offset"]) > MAX_FIX_S:
+            notes.append(f"obraz říká {p - data['offset']:+.2f} s — moc, platí zvuk")
+        elif p is not None and abs(p - data["offset"]) > DIFFERS_S:
             data["expect"] = -(p - data["offset"]) / speed
             notes.append(f"posun podle obrazu {p - data['offset']:+.2f} s")
             data["offset"] = p
@@ -142,9 +146,13 @@ def refine(analysis: dict, ref_path: str, ref_track: int, other_path: str) -> di
         if p.get("offset") is None:
             continue
         found = piece_offset(ref_path, other_path, speed, p["offset"], p["start"], p["end"])
-        if found is not None and abs(found - p["offset"]) > DIFFERS_S:
-            # the offset at the probe's middle → at the piece's start (a piece may drift: slope)
-            delta = found - (p["offset"] + p.get("slope", 0.0) * ((p["start"] + p["end"]) / 2 - p["start"]))
+        if found is None:
+            continue
+        # the offset at the probe's middle → at the piece's start (a piece may drift: slope)
+        delta = found - (p["offset"] + p.get("slope", 0.0) * ((p["start"] + p["end"]) / 2 - p["start"]))
+        if abs(delta) > MAX_FIX_S:
+            notes.append(f"{_clock(p['start'])}: obraz říká {delta:+.2f} s — moc, platí zvuk")
+        elif abs(delta) > DIFFERS_S:
             p["offset"] += delta
             p["expect"] = -delta / speed
             notes.append(f"{_clock(p['start'])}: posun podle obrazu {delta:+.2f} s")
