@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 VERIFY_WINDOWS = 6
 VERIFY_TYPICAL = 0.06         # seconds — the typical (median) offset must be within lip-sync tolerance
 VERIFY_MAX = 0.2              # single pieces may be noisier (measured the same way as the analysis)
-NEAR_CUT_S = (3, 15, 30)      # where next to a cut the result is checked (the first trustworthy one counts)
+NEAR_CUT_S = (3, 15, 30, 45, 60)  # where next to a cut the result is checked (the first trustworthy one counts)
 
 
 class TransferError(Exception):
@@ -227,9 +227,15 @@ def verify(out_path: str, ref_track: int, new_track: int, duration: float,
             for at in spots:
                 w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0, p.get("expect", 0.0))
                 windows.append(w)
+                err = abs(w.offset - p.get("expect", 0.0))
                 if not w.good:
+                    # dialogue after an ad break: two dubs differ, the match stays weak — but one that lands
+                    # right where the track is meant to be is no chance
+                    if w.score >= engine.GOOD_SCORE and err <= VERIFY_TYPICAL:
+                        confirmed = True
+                        break
                     continue
-                if abs(w.offset - p.get("expect", 0.0)) > VERIFY_MAX:
+                if err > VERIFY_MAX:
                     raise TransferError(f"U střihu kolem {_clock(at)} zvuk nesedí ({w.offset:+.2f} s) — soubor nepoužit")
                 confirmed = True
                 break
