@@ -5,7 +5,8 @@
   uploader ("(CzAudio)") may itself sit 0.1–0.3 s off its picture — the lips follow the picture, so a clear
   difference from the picture wins.
 - A cut is trusted when the silence it inserts falls where the reference is quiet too (an ad break's black
-  screen). One that lands in speech is placed again: around it (±45 s) the shot changes tell up to where the
+  screen). One that lands in speech is placed again: around it (±45 s, wider while one side's shots
+  are missing) the shot changes tell up to where the
   old offset fits and from where the new one does — the silence goes between them, into a black screen if
   there is one."""
 
@@ -24,7 +25,7 @@ SCENE = 0.3                   # ffmpeg's scene score of a shot change
 MATCH_S = 0.06                # a shot change of the other version within this is the same one (~1.5 frame)
 MIN_MATCHES = 3
 PIECE_PROBE_S = 30.0
-CUT_AROUND_S = 45.0
+CUT_LOOK_S = (45.0, 120.0, 300.0)   # the look around a cut, widened while one side's shots are missing
 DIFFERS_S = 0.08              # the picture overrules the sound from this difference on …
 MAX_FIX_S = 0.3               # … up to this: a reference muxed in a little off its picture. More is the old
                               # recording's own sound off its own picture (a TV opening) — the dub follows the sound
@@ -98,24 +99,31 @@ def in_black(path: str, t1: float, t2: float) -> bool:
     return any(min(e, t2) - max(s, t1) >= 0.8 * (t2 - t1) for s, e in blacks)
 
 
-def place_cut(new_path: str, old_path: str, speed: float, o1: float, o2: float, t1: float, gap: float
-              ) -> float | None:
-    """Where the cut is by the picture → t1 (o1 fits until t1, o2 from t1 + gap), None when it cannot tell."""
-    a, b = t1 - CUT_AROUND_S, t1 + gap + CUT_AROUND_S
-    new, blacks = shots(new_path, a, b - a)
-    lo = speed * a + min(o1, o2) - 2
-    old, _ = shots(old_path, lo, speed * (b - a) + abs(o1 - o2) + 4)
-    if len(new) < 2 or len(old) < 2:
-        return None
-    # the sound's offsets may be a little off the picture (the reference's own offset): the shots' own
-    o1 = pair_offset([n for n in new if n < t1], old, speed, o1, 0.4)[0] or o1
-    o2 = pair_offset([n for n in new if n > t1 + gap], old, speed, o2, 0.4)[0] or o2
+def place_cut(new_path: str, old_path: str, speed: float, o1: float, o2: float, t1: float, gap: float,
+              lo: float = 0.0, hi: float = float("inf")) -> float | None:
+    """Where the cut is by the picture → t1 (o1 fits until t1, o2 from t1 + gap), None when it cannot tell.
+    The sound may place a cut a minute or more off (talk alike on both sides): while the shots around fit one
+    offset only, the look widens towards the other — within the neighbouring pieces (``lo``–``hi``)."""
+    s1, s2 = o1, o2
+    for around in CUT_LOOK_S:
+        a, b = max(lo, t1 - around), min(hi, t1 + gap + around)
+        new, blacks = shots(new_path, a, b - a)
+        old, _ = shots(old_path, speed * a + min(s1, s2) - 2, speed * (b - a) + abs(s1 - s2) + 4)
+        if len(new) < 2 or len(old) < 2:
+            return None
+        # the sound's offsets may be a little off the picture (the reference's own offset): the shots' own
+        o1 = pair_offset([n for n in new if n < t1], old, speed, s1, 0.4)[0] or s1
+        o2 = pair_offset([n for n in new if n > t1 + gap], old, speed, s2, 0.4)[0] or s2
 
-    def fits(n: float, off: float) -> bool:
-        return any(abs(o - (speed * n + off)) <= MATCH_S for o in old)
-    by1 = [n for n in new if fits(n, o1) and not fits(n, o2)]
-    by2 = [n for n in new if fits(n, o2) and not fits(n, o1)]
-    if not by1 or not by2:
+        def fits(n: float, off: float) -> bool:
+            return any(abs(o - (speed * n + off)) <= MATCH_S for o in old)
+        by1 = [n for n in new if fits(n, o1) and not fits(n, o2)]
+        by2 = [n for n in new if fits(n, o2) and not fits(n, o1)]
+        if by1 and by2:
+            break
+        if not by1 and not by2 or (a <= lo and b >= hi):
+            return None
+    else:
         return None
     last1 = max((n for n in by1 if n < min(by2) + gap), default=None)
     first2 = min((n for n in by2 if last1 is None or n > last1), default=None)
@@ -176,7 +184,7 @@ def refine(analysis: dict, ref_path: str, ref_track: int, other_path: str) -> di
         t = after["start"]
         if abs(o1 - o2) <= engine.SAME_OFFSET_S or quiet(ref_path, ref_track, t - 0.5, t + 0.5)                 or in_black(ref_path, t - 0.5, t + 0.5):
             continue
-        t1 = place_cut(ref_path, other_path, speed, o1, o2, t, 0.0)
+        t1 = place_cut(ref_path, other_path, speed, o1, o2, t, 0.0, before["start"], after["end"])
         if t1 is None:
             # no silence goes in: the sound's place stands (the old recording's own jump — the picture has none)
             notes.append(f"{_clock(t)}: skok podle zvuku")
@@ -195,7 +203,7 @@ def refine(analysis: dict, ref_path: str, ref_track: int, other_path: str) -> di
         o1 = before["offset"] + before.get("slope", 0.0) * (gap["start"] - before["start"])
         o2 = after["offset"]
         length = gap["end"] - gap["start"]
-        t1 = place_cut(ref_path, other_path, speed, o1, o2, gap["start"], length)
+        t1 = place_cut(ref_path, other_path, speed, o1, o2, gap["start"], length, before["start"], after["end"])
         if t1 is None:
             data["unsure_cut"] = _clock(gap["start"])
             notes.append(f"{_clock(gap['start'])}: střih v řeči, obraz nepomohl")
