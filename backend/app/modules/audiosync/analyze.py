@@ -221,6 +221,8 @@ def _positions(duration: float, count: int) -> list[float]:
 
 
 CLOSER_STEP_S = 0.9 * WINDOW_S
+TAIL_WINDOW_S = 20.0
+TAIL_STEP_S = 10.0
 
 
 def _closer_look(windows: list[Window], duration: float) -> list[float]:
@@ -335,10 +337,17 @@ def analyze(ref_path: str, ref_track: int, other_path: str, other_track: int, pr
 
     # a lone window with its own offset may be a short stretch of another cut (a TV version's opening): two
     # more windows next to it tell; the opening before the first window is measured too
+    regular_end = windows[-1].at if windows else 0.0
     extra = _closer_look(windows, ref["duration"])
     if extra:
         windows = sorted(windows + [_measure(ref_path, ref_track, other_path, other_track, at, best_speed)
                                     for at in extra], key=lambda w: w.at)
+    # the very end in short windows: the last scene after the last ad break is a minute — one 40 s window alone
+    # would be taken for noise
+    windows = sorted(windows + [
+        _measure(ref_path, ref_track, other_path, other_track, float(at), best_speed, window=TAIL_WINDOW_S)
+        for at in np.arange(regular_end + TAIL_WINDOW_S, ref["duration"] - TAIL_WINDOW_S - 1, TAIL_STEP_S)],
+        key=lambda w: w.at)
     verdict, speed, offset, segs, confidence, note, drift = judge(windows, best_speed, ref["duration"])
     pieces: list[dict] = []
     if verdict in ("constant", "speed"):
@@ -477,6 +486,33 @@ def cut_point(c1: np.ndarray, c2: np.ndarray, gap: int, guard: int, lo: int | No
     return int(t[np.argmax(pre[t] + suf[t + gap])])
 
 
+CLEARER = 1.4          # a short window decides between two offsets only when it fits one this much better
+
+
+def fit_both(ref_path: str, ref_track: int, other_path: str, other_track: int, at: float, window: float,
+             speed: float, o1: float, o2: float) -> tuple[float, float]:
+    """How well the reference's ``window`` at ``at`` fits the other file under offset o1 and under o2 (the best
+    normalized correlation within ±50 ms of each)."""
+    needle = onsets(extract(ref_path, ref_track, at, window))
+    lo = max(0.0, speed * at + min(o1, o2) - 1)
+    hay = stretch(onsets(extract(other_path, other_track, lo, speed * window + abs(o1 - o2) + 2)), speed)
+    n = len(needle)
+    if not n:
+        return 0.0, 0.0
+    nn = float(np.sqrt((needle.astype(np.float64) ** 2).sum())) or 1e-9
+
+    def fit(off: float) -> float:
+        k0 = int(round((speed * at + off - lo) / speed * FPS))
+        best = 0.0
+        for k in range(k0 - 5, k0 + 6):
+            if k < 0 or k + n > len(hay):
+                continue
+            piece = hay[k:k + n].astype(np.float64)
+            best = max(best, float((needle * piece).sum()) / (nn * (float(np.sqrt((piece ** 2).sum())) or 1e-9)))
+        return best
+    return fit(o1), fit(o2)
+
+
 def find_cut(ref_path: str, ref_track: int, other_path: str, other_track: int, speed: float,
              lo: float, hi: float, o1: float, o2: float) -> tuple[float, float]:
     """Between the window at ``lo`` (offset o1 fits) and the one at ``hi`` (o2 fits) → (t1, t2):
@@ -497,17 +533,15 @@ def find_cut(ref_path: str, ref_track: int, other_path: str, other_track: int, s
             s1 = max(s1, float(at))
         elif abs(w.offset - o2) <= SAME_OFFSET_S:
             s2 = min(s2, float(at))
-    # 2) short windows: the last one that still fits o1, the first one that fits o2
+    # 2) short windows: the last one that still fits o1, the first one that fits o2 — each judged by how well it
+    # fits the one offset against the other (a theme tune repeating its beat fits both: no say)
     fine_o1: float | None = None
     fine_o2: float | None = None
     for at in np.arange(s1, s2 + WINDOW_S - FINE_WINDOW_S + 0.01, FINE_STEP_S):
-        w = _measure(ref_path, ref_track, other_path, other_track, float(at), speed, (o1 + o2) / 2, margin,
-                     window=FINE_WINDOW_S)
-        if not w.good:
-            continue
-        if abs(w.offset - o1) <= SAME_OFFSET_S:
+        f1, f2 = fit_both(ref_path, ref_track, other_path, other_track, float(at), FINE_WINDOW_S, speed, o1, o2)
+        if f1 > CLEARER * f2 and f1 >= GOOD_SCORE:
             fine_o1 = float(at) if fine_o1 is None else max(fine_o1, float(at))
-        elif abs(w.offset - o2) <= SAME_OFFSET_S:
+        elif f2 > CLEARER * f1 and f2 >= GOOD_SCORE:
             fine_o2 = float(at) if fine_o2 is None else min(fine_o2, float(at))
     if fine_o1 is not None and fine_o2 is not None and fine_o2 + FINE_WINDOW_S <= fine_o1:
         fine_o1 = fine_o2 = None                 # contradicting short windows — trust the long ones
