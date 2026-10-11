@@ -80,14 +80,27 @@ def probe(path: str) -> dict:
     return {"duration": float(fmt.get("duration") or 0), "start": float(fmt.get("start_time") or 0), "audio": audio}
 
 
+NEAR_START_S = 2.0       # ffmpeg's -ss this close to 0 skips the first ~0.25–0.5 s of an AVI / MKV audio track
+
+
+def seek_args(start: float, duration: float) -> tuple[list[str], float]:
+    """ffmpeg input options reading from ``start`` for ``duration`` → (options, seconds still to cut off at the
+    start). Near the file's start -ss is not exact (measured: it skips 0.512 s of an XviD AVI's AC-3, 0.256 s of an
+    MKV's) — the file is read from its start and the beginning cut off instead."""
+    start = max(0.0, start)
+    if start < NEAR_START_S:
+        return ["-t", f"{start + duration:.3f}"], start
+    return ["-ss", f"{start:.3f}", "-t", f"{duration:.3f}"], 0.0
+
+
 def extract(path: str, track: int, start: float, duration: float) -> np.ndarray:
     """Mono 8 kHz float samples of one audio track, from ``start`` for ``duration`` seconds."""
-    start = max(0.0, start)
+    args, skip = seek_args(start, duration)
     raw = subprocess.run(
-        ["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", path,
+        ["ffmpeg", "-nostdin", "-v", "error", *args, "-i", path,
          "-map", f"0:a:{track}", "-ac", "1", "-ar", str(RATE), "-f", "f32le", "-"],
         capture_output=True, timeout=300, check=True).stdout
-    return np.frombuffer(raw, dtype=np.float32)
+    return np.frombuffer(raw, dtype=np.float32)[int(round(skip * RATE)):]
 
 
 # ── features ──

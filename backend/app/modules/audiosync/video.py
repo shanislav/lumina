@@ -34,16 +34,19 @@ QUIET = 0.3                   # the inserted silence's place: below this share o
 def shots(path: str, start: float, duration: float) -> tuple[list[float], list[tuple[float, float]]]:
     """(shot changes, black screens) between ``start`` and ``start + duration`` — times from the file's start."""
     start = max(0.0, start)
+    seek, skip = engine.seek_args(start, duration)
+    base = start - skip                       # read from the file's start near it (see analyze.seek_args)
     try:
         err = subprocess.run(
-            ["ffmpeg", "-nostdin", "-hide_banner", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", path, "-an",
+            ["ffmpeg", "-nostdin", "-hide_banner", *seek, "-i", path, "-an",
              "-vf", f"scale={SCALE}:-2,blackdetect=d=0.2:pix_th=0.12,select='gt(scene,{SCENE})',showinfo",
              "-f", "null", "-"], capture_output=True, text=True, timeout=300).stderr
     except (subprocess.SubprocessError, OSError) as e:
         logger.info("Shots of %s: %s", path, e)
         return [], []
-    scenes = [start + float(x) for x in re.findall(r"pts_time:([\d.]+)", err)]
-    blacks = [(start + float(a), start + float(b)) for a, b in re.findall(r"black_start:([\d.]+) black_end:([\d.]+)", err)]
+    scenes = [base + float(x) for x in re.findall(r"pts_time:([\d.]+)", err) if base + float(x) >= start]
+    blacks = [(base + float(a), base + float(b)) for a, b in re.findall(r"black_start:([\d.]+) black_end:([\d.]+)", err)
+              if base + float(b) > start]
     return scenes, blacks
 
 

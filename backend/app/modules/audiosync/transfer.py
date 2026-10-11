@@ -114,8 +114,11 @@ def assemble_audio(other_path: str, other_track: int, pieces: list[dict], speed:
             lead = 0.0
             if start < 0:                      # the other version starts later — silence first
                 lead, start = -start / local, 0.0
-            args += ["-ss", f"{start:.3f}", "-t", f"{local * (length - lead):.3f}", "-i", other_path]
+            seek, skip = engine.seek_args(start, local * (length - lead))
+            args += [*seek, "-i", other_path]
             chain = f"[{n}:a:{other_track}]"
+            if skip:                           # read from the file's start (see seek_args): its beginning off
+                chain += f"atrim=start={skip:.3f},asetpts=PTS-STARTPTS,"
             chain += f"{engine.speed_filter(local)}," if abs(local - 1) > 1e-9 else ""
             # the sample format fixed: ffmpeg would otherwise pick one for the whole concat — the silence's 8 bits
             # (anullsrc is u8) unless a filter happened to need a finer one: a rasp on every word
