@@ -210,6 +210,19 @@ def verify(out_path: str, ref_track: int, new_track: int, duration: float,
         windows.append(w)
         if w.good:
             errors.append(w.offset - meant(w.at))
+    # the end: the last scene comes after the last ad break (the spread above stops before it)
+    last = max((p for p in pieces or [] if p.get("offset") is not None), key=lambda p: p["end"], default=None)
+    tail_end = min(last["end"], duration) if last else duration
+    for back in (10, 40, 70):
+        at = tail_end - engine.WINDOW_S - back
+        if at <= (last["start"] if last else 0) or at < 0:
+            break
+        w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0, meant(at))
+        windows.append(w)
+        if w.good:
+            if abs(w.offset - meant(at)) > VERIFY_MAX:
+                raise TransferError(f"Ke konci kolem {_clock(at)} zvuk nesedí ({w.offset:+.2f} s) — soubor nepoužit")
+            break
     good = [w for w in windows if w.good]
     typical = float(np.median([abs(e) for e in errors])) if errors else 99.0
     if len(good) < VERIFY_WINDOWS - 1 or typical > VERIFY_TYPICAL or any(abs(e) > VERIFY_MAX for e in errors):

@@ -226,7 +226,7 @@ CLOSER_STEP_S = 0.9 * WINDOW_S
 def _closer_look(windows: list[Window], duration: float) -> list[float]:
     """Where to measure more: next to a trustworthy window none of whose trustworthy neighbours shares its offset
     (alone it is taken for noise — a stretch of 1–3 min between two cuts of an opening needs 2 windows), and the
-    film's start before the first window."""
+    film's start before the first window and its end after the last one."""
     good = [w for w in windows if w.good]
     last = duration - WINDOW_S - 1
     out: list[float] = []
@@ -236,6 +236,9 @@ def _closer_look(windows: list[Window], duration: float) -> list[float]:
             out += [w.at - CLOSER_STEP_S, w.at + CLOSER_STEP_S]
     first = windows[0].at if windows else 0.0
     out += [float(x) for x in np.arange(5.0, first - CLOSER_STEP_S / 2, CLOSER_STEP_S)]
+    # … and its end after the last one: a TV version has an ad break before the last scene too
+    final = windows[-1].at if windows else last
+    out += [float(x) for x in np.arange(final + CLOSER_STEP_S, last + 0.01, CLOSER_STEP_S)]
     taken = [w.at for w in windows]
     return sorted({round(a, 1) for a in out if 0 <= a <= last and all(abs(a - t) > WINDOW_S / 3 for t in taken)})
 

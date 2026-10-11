@@ -74,8 +74,9 @@ def _reference_track(media: dict) -> int:
     return 0
 
 
-async def move_dub(item: dict, lang: str, delete_source: bool, progress=None) -> dict:
-    """One episode: measure, build, check, replace. → {status, note, ...}."""
+async def move_dub(item: dict, lang: str, delete_source: bool, progress=None, redo: bool = False) -> dict:
+    """One episode: measure, build, check, replace. → {status, note, ...}. ``redo``: the target has a moved dub
+    already (a wrong one) — only its own track stays, the dub is moved again."""
     target, source = item["target_path"], item["source_path"]
     if not (os.path.isfile(target) and os.path.isfile(source)):
         return {"status": "error", "note": "soubor zmizel"}
@@ -102,7 +103,7 @@ async def move_dub(item: dict, lang: str, delete_source: bool, progress=None) ->
             muxer.transfer_many, target, item["target_track"],
             [{"path": source, "tracks": [item["source_track"]], "analysis": data,
               "language": engine.ISO3.get(lang, lang)}],
-            work, out_name, progress, None, None, False)
+            work, out_name, progress, None, [item["target_track"]] if redo else None, False)
     except muxer.TransferError as e:
         shutil.rmtree(work, ignore_errors=True)
         return {"status": "error", "note": str(e)}

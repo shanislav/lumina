@@ -175,8 +175,8 @@ def refine(analysis: dict, ref_path: str, ref_track: int, other_path: str) -> di
             continue
         t1 = place_cut(ref_path, other_path, speed, o1, o2, t, 0.0)
         if t1 is None:
-            data["unsure_cut"] = _clock(t)
-            notes.append(f"{_clock(t)}: skok v řeči, obraz nepomohl")
+            # no silence goes in: the sound's place stands (the old recording's own jump — the picture has none)
+            notes.append(f"{_clock(t)}: skok podle zvuku")
             continue
         if abs(t1 - t) > 0.2:
             notes.append(f"skok {_clock(t)} → {_clock(t1)} (podle obrazu)")
