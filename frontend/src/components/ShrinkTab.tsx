@@ -27,6 +27,45 @@ const SPEED = [
   { v: "fast", label: "Rychlejší", hint: "CPU, x265 fast — větší soubor, rychleji (GPU přijde s pracovníkem na PC)" },
 ] as const;
 
+// short explanations of the words on this tab (hover / tap); the long ones are in "Jak to funguje?"
+const TERMS = {
+  vmaf: "VMAF = skóre 0–100, jak moc se nový obraz podobá originálu očima diváka (měřítko od Netflixu). 95 a víc: rozdíl neuvidíš ani vedle sebe. 93: jen při přímém porovnání. 90: při pozorném sledování. Pod 85: rozdíl je zřejmý.",
+  crf: "CRF = nastavení kodéru (0–51): menší číslo = lepší obraz a větší soubor, větší číslo = menší soubor a horší obraz. Nevybíráš ho ty — Lumina ho najde tak, aby vyšla zvolená kvalita (VMAF).",
+  weight: "× = kolikrát víc dat má soubor, než obraz v tomto rozlišení a kodeku běžně potřebuje. ×1 = akorát, ×2 = dvakrát víc. Hrubý odhad podle datového toku (počítá i zvuk) — kolik se dá doopravdy ušetřit, změří až náhled.",
+  saving: "O kolik bude soubor menší. Odhad z krátkých vzorků — skutečnost bývá o pár procent jiná.",
+  samples: "Pokusy na vzorcích: každý řádek je jedno CRF a VMAF, které s ním vyšlo. Hledá se nejvyšší CRF (nejmenší soubor), které ještě dosáhne cíle.",
+};
+
+function Term({ k, children }: { k: keyof typeof TERMS; children: React.ReactNode }) {
+  return <abbr title={TERMS[k]} className="cursor-help underline decoration-zinc-500 decoration-dotted underline-offset-2">{children}</abbr>;
+}
+
+function Help() {
+  return (
+    <details className="rounded-lg border border-zinc-800 bg-zinc-800/30 px-3 py-2 text-xs text-zinc-400">
+      <summary className="cursor-pointer select-none font-medium text-zinc-300">❓ Jak to funguje a co znamenají ty zkratky</summary>
+      <div className="mt-2 space-y-2 leading-relaxed">
+        <p><b className="text-zinc-200">Co se děje.</b> Video se znovu zakóduje úspornějším kodekem (H.265) tak, aby bylo menší, ale vypadalo
+          (skoro) stejně. Zvuk a titulky zůstanou beze změny. Každé překódování trochu ubere — cílem je ubrat tak málo, aby to nebylo vidět.</p>
+        <p><b className="text-zinc-200">1. Náhled</b> (pár minut, soubor se nemění): Lumina vystřihne 4 krátké kousky filmu, zkusí je
+          zakódovat s různým nastavením a změří, jak moc se podobají originálu. Najde nastavení, které dá nejmenší soubor při tvé
+          zvolené kvalitě, a ukáže odhad velikosti, času a 3 snímky — originál a nový (přepínáš mezerníkem).</p>
+        <p><b className="text-zinc-200">2. Překódování</b> (dlouho — na serveru zhruba 2–3× délka filmu): celý soubor se zakóduje,
+          zkontroluje (délka, zvukové stopy, kvalita na dvou místech) a teprve pak nahradí originál. Když kontrola neprojde nebo by
+          úspora byla moc malá, originál zůstane.</p>
+        <p><b className="text-zinc-200">VMAF</b> — {TERMS.vmaf}</p>
+        <p><b className="text-zinc-200">CRF</b> — {TERMS.crf}</p>
+        <p><b className="text-zinc-200">×</b> — {TERMS.weight}</p>
+        <p><b className="text-zinc-200">Rychlost</b> — kodér může hledat úsporu důkladněji (pomaleji) nebo rychleji. Kvalita je pořád
+          stejná (drží ji VMAF); pomalejší jen dá menší soubor.</p>
+        <p><b className="text-zinc-200">Dolby Vision</b> se překódováním ztratí, proto takové soubory v seznamu nejsou.</p>
+        <p><b className="text-zinc-200">Jak začít:</b> nech „Nerozeznatelné (95)“ a „Vyvážený“, udělej náhled 2–3 souborů a prohlédni
+          si snímky na velké obrazovce. Když rozdíl nevidíš, můžeš zkusit 93.</p>
+      </div>
+    </details>
+  );
+}
+
 const gb = (b: number) => `${(b / 1024 ** 3).toFixed(2)} GB`;
 const dur = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : `${Math.max(1, Math.round(s / 60))} min`);
 const base = (p: string) => p.split("/").pop() ?? p;
@@ -115,11 +154,12 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
 
   return (
     <div className="space-y-4">
+      <Help />
       {error && <p className="rounded-lg bg-red-950/60 px-3 py-2 text-red-300">{error}</p>}
 
       <section className="grid gap-3 rounded-lg border border-zinc-800 p-3 sm:grid-cols-2">
         <label className="space-y-1">
-          <span className="text-xs text-zinc-400">Kvalita (VMAF — jak blízko originálu)</span>
+          <span className="text-xs text-zinc-400">Kvalita (<Term k="vmaf">VMAF</Term> — jak blízko originálu)</span>
           <select value={QUALITY.some((x) => x.v === opts.vmaf) ? opts.vmaf : "custom"}
             onChange={(e) => e.target.value !== "custom" && set({ vmaf: Number(e.target.value) })}
             className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-200">
@@ -209,7 +249,7 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
                     <span className="hidden min-w-0 flex-1 truncate text-zinc-500 sm:block">{base(f.path)}</span>
                     <span className="shrink-0 text-zinc-400">{f.height}p {f.codec} {f.hdr && f.hdr !== "SDR" ? f.hdr : ""} · {f.mbps} Mb/s · {gb(f.size)}</span>
                     <span className={`w-10 shrink-0 text-right ${f.weight >= 2 ? "text-amber-300" : f.weight >= 1.3 ? "text-amber-200/70" : "text-zinc-500"}`}
-                      title="Kolikrát víc dat, než obraz v tomto rozlišení a kodeku potřebuje">×{f.weight}</span>
+                      title={TERMS.weight}>×{f.weight}</span>
                   </label>
                 ))}
               </div>
@@ -241,14 +281,14 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
                 {ok && (
                   <>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-300">
-                      <span>{gb(r.src_size)} → <b className="text-emerald-300">~{gb(r.est_size ?? 0)}</b> (−{r.saving} %)</span>
-                      <span>VMAF {r.vmaf} (cíl {r.options.vmaf})</span>
-                      <span>CRF {r.crf}</span>
+                      <span>{gb(r.src_size)} → <b className="text-emerald-300">~{gb(r.est_size ?? 0)}</b> (<Term k="saving">−{r.saving} %</Term>)</span>
+                      <span><Term k="vmaf">VMAF</Term> {r.vmaf} (cíl {r.options.vmaf})</span>
+                      <span><Term k="crf">CRF</Term> {r.crf}</span>
                       <span>kódování ~{dur(r.est_seconds ?? 0)}</span>
                     </div>
                     {r.trials && (
                       <div className="text-zinc-500">
-                        Vzorky: {r.trials.map((t) => `CRF ${t.crf} → VMAF ${t.vmaf}`).join(" · ")}
+                        <Term k="samples">Vzorky</Term>: {r.trials.map((t) => `CRF ${t.crf} → VMAF ${t.vmaf}`).join(" · ")}
                       </div>
                     )}
                     {r.stills && (
