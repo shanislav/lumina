@@ -37,8 +37,9 @@ export default function FileChanges() {
       setJobs(j.jobs);
       const v = j.current.value;
       setPhases(j.phases);
+      const pct = j.current.phase === "encode" || j.current.phase === "parts";
       setPhase(j.current.phase ? (j.phases[j.current.phase] ?? j.current.phase)
-        + (v != null ? (j.current.phase === "encode" ? ` ${Math.round(v)} %` : ` ${v}`) : "") : "");
+        + (v != null ? (pct ? ` ${Math.round(v)} %` : ` ${v}`) : "") + (j.current.detail ? ` (${j.current.detail})` : "") : "");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }

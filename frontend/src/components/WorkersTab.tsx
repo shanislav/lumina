@@ -87,12 +87,14 @@ export default function WorkersTab({ phases }: { phases: Record<string, string> 
                 {w.info.cpu && (
                   <div className="text-zinc-500">
                     {w.info.system} · {w.info.cpu} ({w.info.threads} vláken){w.info.gpu ? ` · ${w.info.gpu}` : ""} · kodéry: {(w.info.encoders || []).join(", ") || "—"}
+                    {w.info.x265 ? ` · x265 ${w.info.x265}` : ""}
                   </div>
                 )}
+                {w.info.cpu && w.parts && <div className="text-zinc-500">Nekóduje části souborů se serverem: {w.parts}</div>}
                 {w.job ? (
                   <div className={p?.paused ? "text-amber-300" : "text-sky-300"}>
                     {p?.paused ? `pozastaveno (${p.paused})` : `${phases[p?.phase || ""] ?? p?.phase ?? "pracuje"}${p?.value != null ? ` ${p.phase === "encode" ? `${Math.round(p.value)} %` : p.value}` : ""}`}
-                    {" — "}{base(w.job.path)}
+                    {" — "}{w.job.part ? `část ${w.job.part.idx}/${w.job.part.count} z ` : ""}{base(w.job.path)}
                   </div>
                 ) : w.online && (
                   <div className={w.state.waiting ? "text-amber-300/80" : "text-zinc-400"}>

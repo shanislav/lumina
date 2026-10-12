@@ -33,7 +33,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HOME.parent / "backend" / "app" / "modules" / "convert"))   # the repository's shrink.py
 import shrink  # noqa: E402  — the same encoding and measuring as the server's
 
-VERSION = "0.1"
+VERSION = "0.2"
 CONFIG = HOME / "lumina-worker.json"
 TEMPLATE = {
     "server": "https://lumina.example.com",
@@ -307,7 +307,8 @@ def machine() -> dict:
         except OSError:
             pass
     return {"version": VERSION, "system": f"{platform.system()} {platform.release()}", "cpu": cpu,
-            "threads": os.cpu_count() or 0, "gpu": gpu, "encoders": encoders}
+            "threads": os.cpu_count() or 0, "gpu": gpu, "encoders": encoders,
+            "x265": shrink.x265_version() if "libx265" in encoders else ""}
 
 
 # ── one job ──
@@ -380,6 +381,8 @@ class Job:
             tmp.mkdir(parents=True, exist_ok=True)
             if job["kind"] == "plan":
                 self._plan(src, opts, tmp)
+            elif job["kind"] == "part":
+                self._part(src, opts, tmp)
             else:
                 self._shrink(src, opts, tmp)
         except KeyboardInterrupt:
@@ -418,6 +421,22 @@ class Job:
         if not r.get("ok"):
             log.warning("Lumina náhled nepřijala: %s", r.get("error"))
 
+    def _part(self, src: str, opts: dict, tmp: Path) -> None:
+        """One part of a file the server and the workers encode together: into the job's folder on the share."""
+        o = self.job["options"]
+        info = shrink.probe(src)
+        out = tmp / self.job["out_name"]
+        seconds = shrink.encode_part(src, float(o["start"]), int(o["frames"]), info, opts, float(opts.get("crf") or 0),
+                                     str(out), self.progress)
+        self.progress("upload")
+        share_work = Path(to_local(self.job["work"], self.cfg))
+        share_work.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(out, share_work / out.name)
+        r = self.lumina.call("POST", f"/worker/jobs/{self.job['id']}/done",
+                             {"data": {"seconds": seconds}, "out_name": out.name}, timeout=300)
+        log.info("Část %s/%s: %s", o["idx"] + 1, o.get("count", "?"),
+                 f"hotovo za {seconds:.0f} s" if r.get("counted") else r.get("error") or "jiný byl rychlejší")
+
     def _shrink(self, src: str, opts: dict, tmp: Path) -> None:
         crf = float(opts.get("crf") or 0)
         out, check = shrink.encode(src, crf, opts, str(tmp), self.progress)
@@ -441,8 +460,8 @@ def main() -> None:
         os.environ["PATH"] = cfg["ffmpeg_dir"] + os.pathsep + os.environ["PATH"]
     lumina = Lumina(cfg)
     info = machine()
-    log.info("Lumina worker %s — %s, %s, %s vláken, %s; kodéry %s", VERSION, info["system"], info["cpu"],
-             info["threads"], info["gpu"] or "bez NVIDIA", ", ".join(info["encoders"]) or "žádné")
+    log.info("Lumina worker %s — %s, %s, %s vláken, %s; kodéry %s; x265 %s", VERSION, info["system"], info["cpu"],
+             info["threads"], info["gpu"] or "bez NVIDIA", ", ".join(info["encoders"]) or "žádné", info["x265"] or "—")
     lumina.find()
     hello = lumina.call("POST", "/worker/hello", {**info, "state": {"waiting": ""}})
     log.info("Připojeno k Lumině jako „%s“", hello.get("name"))
@@ -469,7 +488,11 @@ def main() -> None:
             got = lumina.call("GET", f"/worker/next?wait={hello.get('poll_s', 55)}", timeout=90)
             job = got.get("job")
             if job:
-                log.info("Úloha %s: %s %s", job["id"], job["kind"], job["path"])
+                if job["kind"] == "part":
+                    o = job["options"]
+                    log.info("Úloha %s: část %s/%s z %s", job["id"], o["idx"] + 1, o.get("count", "?"), job["path"])
+                else:
+                    log.info("Úloha %s: %s %s", job["id"], job["kind"], job["path"])
                 Job(job, lumina, watch, cfg).run()
         except KeyboardInterrupt:
             log.info("Končím")

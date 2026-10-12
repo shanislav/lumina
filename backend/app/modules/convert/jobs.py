@@ -8,7 +8,8 @@ import json
 import logging
 import os
 import shutil
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.core import events
@@ -40,15 +41,21 @@ RESULT = add_column("convert_jobs", "result", "TEXT NOT NULL DEFAULT '{}'")
 WORKER = add_column("convert_jobs", "worker_id", "INTEGER")
 LEASE = add_column("convert_jobs", "lease_until", "TEXT")
 PROGRESS = add_column("convert_jobs", "progress", "TEXT NOT NULL DEFAULT '{}'")
-WORKER_KINDS = ("plan", "shrink")        # what a worker may do (Dolby Vision remux stays on the server)
+WORKER_KINDS = ("plan", "shrink", "part")   # what a worker may do (Dolby Vision remux stays on the server)
+# where = "together": the server leads the job and encodes its parts with the workers (shrink.split) — each part
+# is a job row of kind "part" (options: parent, idx, start, frames), taken like any job; a part may run twice at the
+# end (whoever finishes first wins, the other is stopped), the leader joins them
 
 WORK_DIR = ".lumina-convert"
 PREVIEW_DIR = Path("data/convert-previews")
 POLL_S = 60
-KINDS = {"dv": "Přebalení Dolby Vision do MP4", "plan": "Náhled zmenšení", "shrink": "Zmenšení souboru"}
+KINDS = {"dv": "Přebalení Dolby Vision do MP4", "plan": "Náhled zmenšení", "shrink": "Zmenšení souboru",
+         "part": "Část souboru"}
 PHASES = {"remux": "přebaluji", "verify": "kontroluji výsledek", "library": "předávám knihovně",
           "samples": "vybírám vzorky", "sample": "zkouším kvalitu na vzorcích", "stills": "připravuji snímky",
-          "encode": "kóduji", "upload": "nahrávám výsledek na server"}
+          "encode": "kóduji", "upload": "nahrávám výsledek na server", "split": "dělím na části",
+          "parts": "kódujeme po částech", "join": "spojuji části"}
+PART_FAILS = 3                           # a part failing this often fails its job
 
 _wake = asyncio.Event()
 _task: asyncio.Task | None = None
@@ -82,7 +89,7 @@ async def enqueue(kind: str, paths: list[str], auto: bool = False, options: dict
 async def recent(limit: int = 50) -> list[dict]:
     db = await get_db()
     try:
-        rows = await (await db.execute("SELECT * FROM convert_jobs ORDER BY CASE status WHEN 'running' THEN 0 "
+        rows = await (await db.execute("SELECT * FROM convert_jobs WHERE kind != 'part' ORDER BY CASE status WHEN 'running' THEN 0 "
                                        "WHEN 'queued' THEN 1 ELSE 2 END, id DESC LIMIT ?", (limit,))).fetchall()
         return [_row(r) for r in rows]
     finally:
@@ -124,9 +131,10 @@ async def start() -> None:
     global _task
     db = await get_db()
     try:
-        for job_id, path in await (await db.execute("SELECT id, path FROM convert_jobs WHERE status = 'running' "
-                                                    "AND worker_id IS NULL")).fetchall():
-            drop_work(path, job_id)
+        for row in await (await db.execute("SELECT * FROM convert_jobs WHERE status = 'running' "
+                                           "AND worker_id IS NULL")).fetchall():
+            if not _together(_row(row)) and row["kind"] != "part":      # a together job's parts done are kept
+                drop_work(row["path"], row["id"])
         await db.execute("UPDATE convert_jobs SET status = 'queued' WHERE status = 'running' AND worker_id IS NULL")
         await db.commit()
     finally:
@@ -153,9 +161,16 @@ def drop_work(path: str, job_id: int | str) -> None:
 
 
 def where(job: dict) -> str:
-    """Who may run a job: the server, a worker, or whoever is free first (the user's choice; DV remux: server)."""
+    """Who may run a job: the server, a worker, or whoever is free first (the user's choice; DV remux: server).
+    "together": its plan goes to whoever is free, the job itself to the server (it leads), its parts to anyone."""
     w = (job.get("options") or {}).get("where")
+    if job["kind"] == "part" or (job["kind"] == "plan" and w == "together"):
+        return "any"
     return w if job["kind"] in WORKER_KINDS and w in ("worker", "any") else "server"
+
+
+def _together(job: dict) -> bool:
+    return job["kind"] == "shrink" and (job.get("options") or {}).get("where") == "together"
 
 
 async def release_expired() -> int:
@@ -165,6 +180,7 @@ async def release_expired() -> int:
         cur = await db.execute("UPDATE convert_jobs SET status = 'queued', worker_id = NULL, lease_until = NULL, "
                                "progress = '{}' WHERE status = 'running' AND worker_id IS NOT NULL AND lease_until < ?",
                                (_now(),))
+        await db.execute(_SPARE_PARTS)
         await db.commit()
         if cur.rowcount:
             logger.info("Convert: %d job(s) of silent workers back in the queue", cur.rowcount)
@@ -173,11 +189,20 @@ async def release_expired() -> int:
         await db.close()
 
 
+# a part back in the queue (its worker went silent) that runs (or ran) in another row too is not needed twice
+_SPARE_PARTS = """DELETE FROM convert_jobs WHERE kind = 'part' AND status = 'queued' AND EXISTS (
+    SELECT 1 FROM convert_jobs o WHERE o.kind = 'part' AND o.id != convert_jobs.id
+    AND json_extract(o.options, '$.parent') = json_extract(convert_jobs.options, '$.parent')
+    AND json_extract(o.options, '$.idx') = json_extract(convert_jobs.options, '$.idx')
+    AND (o.status != 'queued' OR o.id < convert_jobs.id))"""
+
+
 async def _next() -> dict | None:
     await release_expired()
     db = await get_db()
     try:
-        rows = await (await db.execute("SELECT * FROM convert_jobs WHERE status = 'queued' ORDER BY id")).fetchall()
+        rows = await (await db.execute("SELECT * FROM convert_jobs WHERE status = 'queued' AND kind != 'part' "
+                                       "ORDER BY id")).fetchall()     # parts: their leader takes them (_run_together)
         for row in rows:
             if where(_row(row)) not in ("server", "any"):
                 continue
@@ -237,6 +262,8 @@ async def run(job: dict) -> dict:
     """One job by its kind → {path, note, data}."""
     if job["kind"] == "plan":
         return await _run_plan(job)
+    if _together(job):
+        return await _run_together(job)
     if job["kind"] == "shrink":
         return await _run_shrink(job)
     return await _run_dv(job)
@@ -315,6 +342,298 @@ async def shrink_done(job: dict, out: str, check: dict) -> dict:
             f"VMAF kontrola {', '.join(f'{v:g}' for v in check['vmaf_check'])}")
     logger.info("Shrunk %s → %s (%s)", src, final, note)
     return {"path": final, "note": note, "data": {**check, "saving": saving, "old_size": old_size, "crf": crf}}
+
+
+# ── one file in parts (where = "together") ──
+
+_spf: dict[int | None, float] = {}       # seconds per frame of each runner (None: the server), from its parts
+
+
+async def parts_of(parent: int) -> list[dict]:
+    db = await get_db()
+    try:
+        rows = await (await db.execute("SELECT * FROM convert_jobs WHERE kind = 'part' AND json_extract(options, "
+                                       "'$.parent') = ? ORDER BY json_extract(options, '$.idx'), id", (parent,))).fetchall()
+        return [_row(r) for r in rows]
+    finally:
+        await db.close()
+
+
+def part_dir(part: dict) -> str:
+    """The parts of a job lie in the job's work folder (next to the file: the leader joins them there)."""
+    return work_dir(part["path"], part["options"]["parent"])
+
+
+def part_name(part: dict) -> str:
+    return f"part-{part['options']['idx']:04d}-{part['id']}.mkv"
+
+
+def _left(part: dict) -> float | None:
+    """How long the part still runs where it runs (s) — infinite when its worker is paused, None when unknown."""
+    prog = part.get("progress") or {}
+    if prog.get("paused"):
+        return float("inf")
+    started = float(part["options"].get("started") or 0)
+    elapsed = max(1.0, datetime.now().timestamp() - started) if started else 0.0
+    share = float(prog.get("value") or 0) / 100
+    if share >= 0.03 and elapsed:
+        return elapsed * (1 - share) / share
+    spf = _spf.get(part.get("worker_id"))
+    return max(0.0, part["options"]["frames"] * spf - elapsed) if spf else None
+
+
+async def claim_part(runner: int | None, lease_s: int = 0, parent: int | None = None) -> dict | None:
+    """A part for the server (``runner`` None — its own job's parts) or a worker: the first nobody has; when none is
+    left, one running elsewhere that this runner would clearly finish sooner (a paused worker, a slow machine at the
+    end) — the same part twice, whoever finishes first wins (part_done)."""
+    await release_expired()
+    lease = (datetime.now() + timedelta(seconds=lease_s)).strftime("%Y-%m-%d %H:%M:%S") if lease_s else None
+    started = datetime.now().timestamp()
+    db = await get_db()
+    try:
+        sql = "SELECT * FROM convert_jobs WHERE kind = 'part' AND status IN ('queued', 'running')"
+        args: tuple = ()
+        if parent is not None:
+            sql, args = sql + " AND json_extract(options, '$.parent') = ?", (parent,)
+        rows = [_row(r) for r in await (await db.execute(sql + " ORDER BY id", args)).fetchall()]
+        for part in sorted((r for r in rows if r["status"] == "queued"),
+                           key=lambda r: (r["options"]["parent"], r["options"]["idx"])):
+            cur = await db.execute("UPDATE convert_jobs SET status = 'running', worker_id = ?, lease_until = ?, "
+                                   "progress = '{}', options = json_set(options, '$.started', ?) "
+                                   "WHERE id = ? AND status = 'queued'", (runner, lease, started, part["id"]))
+            await db.commit()
+            if cur.rowcount:
+                part["options"]["started"] = started
+                return {**part, "status": "running", "worker_id": runner, "progress": {}}
+        # nothing left to start: the same part a second time where it pays
+        mine = _spf.get(runner)
+        runs: dict[tuple, int] = {}
+        for r in rows:
+            key = (r["options"]["parent"], r["options"]["idx"])
+            runs[key] = runs.get(key, 0) + 1
+        best, gain = None, 0.0
+        for r in rows:
+            if r["status"] != "running" or r["worker_id"] == runner or runs[(r["options"]["parent"], r["options"]["idx"])] > 1:
+                continue
+            left = _left(r)
+            if left is None or (mine is None and left != float("inf")):
+                continue
+            ours = r["options"]["frames"] * (mine or 0)
+            if left == float("inf") or ours < left * 0.7:
+                g = 1e12 if left == float("inf") else left - ours
+                if g > gain:
+                    best, gain = r, g
+        if not best:
+            return None
+        options = {**best["options"], "started": started}
+        cur = await db.execute("INSERT INTO convert_jobs (kind, path, status, auto, created_at, options, worker_id, "
+                               "lease_until) VALUES ('part', ?, 'running', 0, ?, ?, ?, ?)",
+                               (best["path"], _now(), json.dumps(options), runner, lease))
+        await db.commit()
+        logger.info("Convert: part %s of job %s once more (%s)", options["idx"], options["parent"],
+                    "server" if runner is None else f"worker {runner}")
+        return {**best, "id": cur.lastrowid, "options": options, "worker_id": runner, "progress": {}}
+    finally:
+        await db.close()
+
+
+async def part_done(part: dict, path: str, seconds: float) -> bool:
+    """A part encoded (by the server or a worker): the first of its runs is the one — another still running is
+    dropped (its runner is told at its next report). → whether this one counts."""
+    o = part["options"]
+    db = await get_db()
+    try:
+        same = await (await db.execute(
+            "SELECT id, status FROM convert_jobs WHERE kind = 'part' AND json_extract(options, '$.parent') = ? AND "
+            "json_extract(options, '$.idx') = ? AND id != ?", (o["parent"], o["idx"], part["id"]))).fetchall()
+        mine = await (await db.execute("SELECT status FROM convert_jobs WHERE id = ?", (part["id"],))).fetchone()
+        if not mine or mine[0] != "running" or any(r[1] == "done" for r in same):
+            await db.execute("DELETE FROM convert_jobs WHERE id = ? AND status != 'done'", (part["id"],))
+            await db.commit()
+            if os.path.exists(path):
+                os.remove(path)
+            return False
+        await db.execute("UPDATE convert_jobs SET status = 'done', result_path = ?, result = ?, lease_until = NULL, "
+                         "finished_at = ? WHERE id = ?", (path, json.dumps({"seconds": round(seconds, 1)}), _now(), part["id"]))
+        if same:
+            await db.execute(f"DELETE FROM convert_jobs WHERE id IN ({','.join('?' * len(same))})", [r[0] for r in same])
+        await db.commit()
+    finally:
+        await db.close()
+    if o.get("frames"):
+        spf = seconds / o["frames"]
+        old = _spf.get(part.get("worker_id"))
+        _spf[part.get("worker_id")] = spf if old is None else old * 0.5 + spf * 0.5
+    return True
+
+
+async def part_back(part: dict, error: str = "") -> None:
+    """A part its runner gives back (``error``: it failed there) — to the queue again, unless it runs elsewhere
+    too; a part failing again and again fails its job (the leader sees it)."""
+    o = dict(part["options"])
+    fails = int(o.get("fails") or 0) + (1 if error else 0)
+    o["fails"] = fails
+    db = await get_db()
+    try:
+        if fails >= PART_FAILS:
+            await db.execute("UPDATE convert_jobs SET status = 'error', note = ?, options = ?, worker_id = NULL, "
+                             "lease_until = NULL WHERE id = ?", (error, json.dumps(o), part["id"]))
+        else:
+            await db.execute("UPDATE convert_jobs SET status = 'queued', options = ?, worker_id = NULL, "
+                             "lease_until = NULL, progress = '{}' WHERE id = ?", (json.dumps(o), part["id"]))
+            await db.execute(_SPARE_PARTS)
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def _drop_parts(parent: int) -> None:
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM convert_jobs WHERE kind = 'part' AND json_extract(options, '$.parent') = ?", (parent,))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def _overall(parts: list[dict]) -> tuple[int, int]:
+    """The leader's progress: frames done (running parts by their share) of all, who encodes now → (done, count)."""
+    frames_of = {p["options"]["idx"]: p["options"]["frames"] for p in parts}
+    total = sum(frames_of.values())
+    done_idx = {p["options"]["idx"] for p in parts if p["status"] == "done"}
+    share: dict[int, float] = {}
+    for p in parts:
+        i = p["options"]["idx"]
+        if p["status"] == "running" and i not in done_idx:
+            share[i] = max(share.get(i, 0.0), float((p.get("progress") or {}).get("value") or 0) / 100)
+    frames = sum(frames_of[i] for i in done_idx) + sum(frames_of[i] * v for i, v in share.items())
+    names = await _runner_names({p["worker_id"] for p in parts if p["status"] == "running"})
+    current.update(phase="parts", value=round(100 * frames / max(1, total), 1),
+                   detail=f"{len(done_idx)}/{len(frames_of)} částí" + (f" · kóduje {', '.join(names)}" if names else ""))
+    return len(done_idx), len(frames_of)
+
+
+async def _runner_names(ids: set) -> list[str]:
+    names = ["server"] if None in ids else []
+    ids = sorted(i for i in ids if i is not None)
+    if ids:
+        db = await get_db()
+        try:
+            names += [r[0] for r in await (await db.execute(
+                f"SELECT name FROM convert_workers WHERE id IN ({','.join('?' * len(ids))})", ids)).fetchall()]
+        finally:
+            await db.close()
+    return names
+
+
+async def _run_together(job: dict) -> dict:
+    """The server leads: cuts the file into parts, encodes them with the workers (each takes the next one), joins
+    them, checks the whole and only then it takes the file's place. A restart keeps the parts done."""
+    src = job["path"]
+    if not os.path.isfile(src):
+        raise shrink.ShrinkError("Soubor zmizel")
+    opts = shrink.options(job.get("options"))
+    crf = float((job.get("options") or {}).get("crf") or 0)
+    if not crf:
+        raise shrink.ShrinkError("Chybí náhled (CRF) — nejdřív udělej náhled")
+    if shrink.SPEEDS[opts["speed"]][0] != "libx265":
+        raise shrink.ShrinkError("Po částech kóduje jen procesor (x265) — grafická karta má jiný obraz")
+    info = await asyncio.to_thread(shrink.probe, src)
+    if info["dv"]:
+        raise shrink.ShrinkError("Dolby Vision by zaniklo — soubor nechávám")
+    work = work_dir(src, job["id"])
+    keep = False
+    try:
+        parts = await parts_of(job["id"])
+        if not parts:
+            if shutil.disk_usage(os.path.dirname(src)).free < os.path.getsize(src) * 1.5 + 1024**3:
+                raise shrink.ShrinkError("Málo místa na disku (části a výsledek vedle originálu)")
+            _progress("split")
+            cut = await asyncio.to_thread(shrink.split, src)
+            if not cut:                                   # cannot be cut frame-exact: the whole file here
+                return await _run_shrink(job)
+            os.makedirs(work, exist_ok=True)
+            db = await get_db()
+            try:
+                for p in cut:
+                    await db.execute("INSERT INTO convert_jobs (kind, path, auto, created_at, options) VALUES "
+                                     "('part', ?, 0, ?, ?)", (src, _now(), json.dumps(
+                                         {**(job.get("options") or {}), "parent": job["id"], "count": len(cut), **p})))
+                await db.commit()
+            finally:
+                await db.close()
+            logger.info("Convert: job %s in %d parts", job["id"], len(cut))
+        while True:
+            parts = await parts_of(job["id"])
+            broken = next((p for p in parts if p["status"] == "error"), None)
+            if broken:
+                raise shrink.ShrinkError(f"Část {broken['options']['idx'] + 1} selhala: {broken['note']}")
+            done, count = await _overall(parts)
+            if done == count:
+                break
+            mine = await claim_part(None, parent=job["id"])
+            if mine:
+                await _encode_part_here(job, mine, info, opts, crf)
+            else:
+                await asyncio.sleep(3)
+        done = {p["options"]["idx"]: p for p in parts if p["status"] == "done"}
+        order = sorted(done)
+        files = [done[i]["result_path"] for i in order]
+        seams = [done[order[k]]["options"]["start"] for k in sorted({len(order) // 3, 2 * len(order) // 3}) if k > 0]
+        total = sum(p["options"]["frames"] for p in done.values())
+        current.pop("detail", None)
+        out, check = await asyncio.to_thread(shrink.assemble, src, files, info, opts, work, total, seams, _progress)
+        by = await _runner_names({p["worker_id"] for p in done.values()})
+        result = await shrink_done(job, out, {**check, "parts": len(order)})
+        result["note"] += f" · {len(order)} částí ({', '.join(by)})"
+        return result
+    except asyncio.CancelledError:
+        keep = True                                       # a restart: the parts done wait for it
+        raise
+    finally:
+        current.pop("detail", None)
+        if not keep:
+            await _drop_parts(job["id"])
+            drop_work(src, job["id"])
+
+
+async def _encode_part_here(job: dict, part: dict, info: dict, opts: dict, crf: float) -> None:
+    """The server encodes one part itself; stopped when a worker finished the same part first."""
+    o = part["options"]
+    out = os.path.join(part_dir(part), part_name(part))
+    cancel = threading.Event()
+    state = {"value": 0.0}
+
+    def prog(phase: str, value: float | None = None) -> None:
+        state["value"] = value or 0.0
+
+    task = asyncio.ensure_future(asyncio.to_thread(shrink.encode_part, part["path"], o["start"], o["frames"], info,
+                                                   opts, crf, out, prog, cancel))
+    try:
+        while not task.done():
+            await asyncio.wait({task}, timeout=5)
+            if task.done():
+                break
+            db = await get_db()
+            try:
+                cur = await db.execute("UPDATE convert_jobs SET progress = ? WHERE id = ? AND status = 'running'",
+                                       (json.dumps({"phase": "encode", "value": state["value"]}), part["id"]))
+                await db.commit()
+            finally:
+                await db.close()
+            if not cur.rowcount:
+                cancel.set()                              # done elsewhere first
+            await _overall(await parts_of(job["id"]))
+        seconds = await task
+    except asyncio.CancelledError:
+        cancel.set()
+        raise
+    except shrink.ShrinkError as e:
+        if not cancel.is_set():
+            logger.warning("Convert: part %s of job %s failed on the server: %s", o["idx"], o["parent"], e)
+            await part_back(part, str(e))
+        return
+    await part_done(part, out, seconds)
 
 
 async def _rename(path: str) -> str:

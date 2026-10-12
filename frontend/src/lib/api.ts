@@ -2247,10 +2247,10 @@ async function convertCall<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const getConvertCandidates = () => convertCall<{ dv: ConvertCandidate[] }>("/candidates");
 export const getConvertJobs = () =>
-  convertCall<{ jobs: ConvertJob[]; current: { id?: number; phase?: string; value?: number | null }; phases: Record<string, string> }>("/jobs");
+  convertCall<{ jobs: ConvertJob[]; current: { id?: number; phase?: string; value?: number | null; detail?: string }; phases: Record<string, string> }>("/jobs");
 export const startConvertDv = (paths: string[]) => convertCall<{ added: number }>("/dv", jsonBody("POST", { paths }));
 
-export interface ShrinkOptions { vmaf: number; speed: "small" | "balanced" | "fast" | "gpu"; where: "server" | "worker" | "any"; max_height: number; audio: "copy" | "shrink"; min_saving: number; go: boolean; mode: "quality" | "rate"; mbps: number }
+export interface ShrinkOptions { vmaf: number; speed: "small" | "balanced" | "fast" | "gpu"; where: "server" | "worker" | "any" | "together"; max_height: number; audio: "copy" | "shrink"; min_saving: number; go: boolean; mode: "quality" | "rate"; mbps: number }
 export interface ShrinkFile { path: string; kind: "movie" | "episode"; group: string; title: string; size: number; codec: string; height: number; mbps: number; hdr: string; weight: number }
 export interface ShrinkPlan {
   src_size: number; duration: number; codec: string; height: number; options: ShrinkOptions; decision: string; note: string; src_mbps?: number; mbps?: number;
@@ -2268,9 +2268,10 @@ export const convertPreviewUrl = (jobId: number, name: string) => `${API_BASE}/a
 
 export interface ConvertWorker {
   id: number; name: string; online: boolean; last_seen: string | null;
-  info: { version?: string; system?: string; cpu?: string; threads?: number; gpu?: string; encoders?: string[] };
+  info: { version?: string; system?: string; cpu?: string; threads?: number; gpu?: string; encoders?: string[]; x265?: string };
+  parts: string;              // "" = may encode parts of a file with the server, else why not
   state: { waiting?: string };
-  job: { id: number; path: string; progress: { phase?: string; value?: number | null; paused?: string } } | null;
+  job: { id: number; path: string; progress: { phase?: string; value?: number | null; paused?: string }; part: { idx: number; count: number } | null } | null;
 }
 export const getConvertWorkers = () => convertCall<{ workers: ConvertWorker[] }>("/workers");
 export const addConvertWorker = (name: string) => convertCall<{ id: number; name: string; token: string }>("/workers", jsonBody("POST", { name }));

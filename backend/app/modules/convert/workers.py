@@ -90,6 +90,7 @@ class Hello(BaseModel):
     threads: int = 0
     gpu: str = ""
     encoders: list[str] = []          # ffmpeg's video encoders it has (libx265, hevc_nvenc …)
+    x265: str = ""                    # its x265's version (parts of one file: the same major version as the server's)
     state: dict = {}                  # "waiting": why it does not ask for work now (outside its hours …)
 
 
@@ -116,12 +117,35 @@ def _fits(job: dict, encoders: set[str]) -> bool:
     return encoder in encoders
 
 
+def parts_ok(info: dict) -> str:
+    """Whether a worker may encode parts of the server's files → "" or why not (the same encoder: x265 of the
+    same major version — the parts of one film must look alike)."""
+    if "libx265" not in (info.get("encoders") or []):
+        return "nemá x265"
+    theirs = info.get("x265") or ""
+    if not theirs:
+        return "neznámá verze x265 (starý pracovník)"
+    mine = shrink.x265_version()
+    if mine.split(".")[0] != theirs.split(".")[0]:
+        return f"jiná verze x265 ({theirs}, server {mine})"
+    return ""
+
+
 async def _claim(worker: dict) -> dict | None:
     await jobs.release_expired()
-    encoders = set(json.loads(worker.get("info") or "{}").get("encoders") or [])
+    info = json.loads(worker.get("info") or "{}")
+    if not parts_ok(info):
+        part = await jobs.claim_part(worker["id"], LEASE_S)
+        if part:
+            logger.info("Convert: worker %s took part %s of job %s", worker["name"], part["options"]["idx"],
+                        part["options"]["parent"])
+            folder = posixpath.join(posixpath.dirname(part["path"]), jobs.WORK_DIR, str(part["options"]["parent"]))
+            return {**part, "work": folder, "out_name": jobs.part_name(part)}
+    encoders = set(info.get("encoders") or [])
     db = await get_db()
     try:
-        rows = await (await db.execute("SELECT * FROM convert_jobs WHERE status = 'queued' ORDER BY id")).fetchall()
+        rows = await (await db.execute("SELECT * FROM convert_jobs WHERE status = 'queued' AND kind != 'part' "
+                                       "ORDER BY id")).fetchall()
         for row in rows:
             job = jobs._row(row)
             if not _fits(job, encoders):
@@ -199,6 +223,8 @@ class Done(BaseModel):
 @router.post("/worker/jobs/{job_id}/done")
 async def done(job_id: int, body: Done, worker: dict = Depends(worker_guard())) -> dict:
     job = await _mine(job_id, worker)
+    if job["kind"] == "part":
+        return await _part_done(job, body)
     work = jobs.work_dir(job["path"], f"w{job_id}")
     try:
         if job["kind"] == "plan":
@@ -222,6 +248,22 @@ async def done(job_id: int, body: Done, worker: dict = Depends(worker_guard())) 
         jobs.drop_work(job["path"], f"w{job_id}")
 
 
+async def _part_done(part: dict, body: Done) -> dict:
+    """A part from a worker: in the job's work folder with every frame it should have → it counts (unless the
+    same part was done elsewhere first)."""
+    path = os.path.join(jobs.part_dir(part), jobs.part_name(part))
+    if os.path.basename(body.out_name) != jobs.part_name(part) or not os.path.isfile(path):
+        await jobs.part_back(part, "Část od pracovníka ve složce chybí")
+        return {"ok": False, "error": "Část ve složce chybí"}
+    got = await asyncio.to_thread(shrink.count_frames, path)
+    if got != part["options"]["frames"]:
+        os.remove(path)
+        await jobs.part_back(part, f"Část má {got} snímků místo {part['options']['frames']}")
+        return {"ok": False, "error": "Špatný počet snímků"}
+    counted = await jobs.part_done(part, path, float(body.data.get("seconds") or 0))
+    return {"ok": True, "counted": counted}
+
+
 class Failed(BaseModel):
     error: str = ""
     give_back: bool = False           # not an error: the worker returns the job (paused too long, closed)
@@ -230,6 +272,9 @@ class Failed(BaseModel):
 @router.post("/worker/jobs/{job_id}/fail")
 async def fail(job_id: int, body: Failed, worker: dict = Depends(worker_guard())) -> dict:
     job = await _mine(job_id, worker)
+    if job["kind"] == "part":
+        await jobs.part_back(job, "" if body.give_back else f"Pracovník {worker['name']}: {body.error or 'chyba'}")
+        return {"ok": True}
     jobs.drop_work(job["path"], f"w{job_id}")
     if body.give_back:
         db = await get_db()
@@ -252,18 +297,24 @@ async def listing() -> list[dict]:
     try:
         rows = await (await db.execute("SELECT * FROM convert_workers ORDER BY id")).fetchall()
         busy = {r["worker_id"]: dict(r) for r in await (await db.execute(
-            "SELECT id, worker_id, path, progress FROM convert_jobs WHERE status = 'running' AND worker_id IS NOT NULL"
-        )).fetchall()}
+            "SELECT id, kind, worker_id, path, progress, options FROM convert_jobs WHERE status = 'running' "
+            "AND worker_id IS NOT NULL")).fetchall()}
     finally:
         await db.close()
     out = []
     for r in rows:
         seen = datetime.strptime(r["last_seen"], "%Y-%m-%d %H:%M:%S") if r["last_seen"] else None
         job = busy.get(r["id"])
-        out.append({"id": r["id"], "name": r["name"], "info": json.loads(r["info"] or "{}"),
+        info = json.loads(r["info"] or "{}")
+        part = None
+        if job and job["kind"] == "part":
+            o = json.loads(job["options"] or "{}")
+            part = {"idx": o.get("idx", 0) + 1, "count": o.get("count", 0)}
+        out.append({"id": r["id"], "name": r["name"], "info": info, "parts": parts_ok(info),
                     "state": json.loads(r["state"] or "{}"), "last_seen": r["last_seen"],
                     "online": bool(seen and (_now() - seen).total_seconds() < ONLINE_S),
-                    "job": {"id": job["id"], "path": job["path"], "progress": json.loads(job["progress"] or "{}")} if job else None})
+                    "job": {"id": job["id"], "path": job["path"], "progress": json.loads(job["progress"] or "{}"),
+                            "part": part} if job else None})
     return out
 
 
@@ -298,6 +349,7 @@ async def remove_worker(worker_id: int) -> dict:
     try:
         await db.execute("UPDATE convert_jobs SET status = 'queued', worker_id = NULL, lease_until = NULL, progress = '{}' "
                          "WHERE status = 'running' AND worker_id = ?", (worker_id,))
+        await db.execute(jobs._SPARE_PARTS)
         await db.execute("DELETE FROM convert_workers WHERE id = ?", (worker_id,))
         await db.commit()
     finally:

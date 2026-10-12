@@ -9,6 +9,7 @@ anything is encoded for real. The speed preset changes the time and the size, no
 Audio and subtitles are copied (or big audio tracks made smaller, by choice); HDR10 stays (10-bit, its static
 metadata). Dolby Vision would be lost — such files are left alone."""
 
+import functools
 import json
 import logging
 import math
@@ -22,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 SPEEDS = {"small": ("libx265", "slow"), "balanced": ("libx265", "medium"), "fast": ("libx265", "fast"),
           "gpu": ("hevc_nvenc", "p7")}         # NVIDIA's encoder (a worker's graphics card): fast, a bigger file
-WHERE = ("server", "worker", "any")        # who encodes: the server, a worker (the PC), whoever is free first
+WHERE = ("server", "worker", "any", "together")   # who encodes: the server, a worker (the PC), whoever is free
+#                                                   first, or all of them at once — the file in parts
 QUALITIES = (95, 93, 90)
 # mode "quality": the user's VMAF target, the size follows; mode "rate": the user's video bitrate (Mb/s) picks the
 # CRF (by the samples), the preview tells the quality it gives — the user decides whether it is good enough. Either
@@ -71,8 +73,8 @@ def options(raw: dict | None) -> dict:
     o["go"] = bool(raw.get("go"))
     o["mode"] = "rate" if raw.get("mode") == "rate" else "quality"
     o["where"] = raw.get("where") if raw.get("where") in WHERE else "server"
-    if o["speed"] == "gpu" and o["where"] == "server":
-        o["where"] = "worker"                       # the server has no NVIDIA card
+    if o["speed"] == "gpu" and o["where"] in ("server", "together"):
+        o["where"] = "worker"                       # the server has no NVIDIA card; parts: x265 only
     if raw.get("threads"):                          # a worker's own limit (its settings), not the user's choice
         try:
             o["threads"] = max(1, int(raw["threads"]))
@@ -423,8 +425,7 @@ def encode(path: str, crf: float, opts: dict, work: str, progress=None) -> tuple
     info = probe(path)
     if info["dv"]:
         raise ShrinkError("Dolby Vision by zaniklo — soubor nechávám")
-    ext = os.path.splitext(path)[1].lower()
-    out = os.path.join(work, os.path.splitext(os.path.basename(path))[0] + (".mp4" if ext in (".mp4", ".m4v") else ".mkv"))
+    out = _out_path(path, work)
     os.makedirs(work, exist_ok=True)
     cmd = [*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?",
            "-map", "0:s?", "-map", "0:t?", "-c", "copy", *_video_args(info, opts, crf), *_audio_args(info, opts),
@@ -453,15 +454,24 @@ def encode(path: str, crf: float, opts: dict, work: str, progress=None) -> tuple
     return out, check
 
 
-def verify(src: str, out: str, info: dict, opts: dict, work: str) -> dict:
+def _out_path(path: str, work: str) -> str:
+    ext = os.path.splitext(path)[1].lower()
+    return os.path.join(work, os.path.splitext(os.path.basename(path))[0] + (".mp4" if ext in (".mp4", ".m4v") else ".mkv"))
+
+
+def verify(src: str, out: str, info: dict, opts: dict, work: str, frames: int = 0, seams: list[float] = ()) -> dict:
+    """The result against the original: length, audio tracks, VMAF of two windows — of parts joined also the
+    frame count (not one lost or doubled at a join) and windows across a few joins."""
     b = probe(out)
     if abs(info["duration"] - b["duration"]) > 2:
         raise ShrinkError(f"Délka nesedí ({info['duration']:.0f} s vs {b['duration']:.0f} s)")
     if len(b["audio"]) != len(info["audio"]):
         raise ShrinkError(f"Zvukové stopy nesedí ({len(info['audio'])} vs {len(b['audio'])})")
+    if frames and (got := count_frames(out)) != frames:
+        raise ShrinkError(f"Počet snímků nesedí ({frames} vs {got})")
     scores = []
-    for k, share in enumerate(CHECK_AT):
-        at = info["duration"] * share
+    places = [info["duration"] * share for share in CHECK_AT] + [max(0.0, s - CHECK_S / 2) for s in seams]
+    for k, at in enumerate(places):
         a = window(src, at, CHECK_S, os.path.join(work, f"check{k}a.mkv"))
         z = window(out, at, CHECK_S, os.path.join(work, f"check{k}b.mkv"))
         scores.append(round(vmaf(z, a), 2))
@@ -475,3 +485,185 @@ def verify(src: str, out: str, info: dict, opts: dict, work: str) -> dict:
     if min(scores) < floor:
         raise ShrinkError(f"Kvalita výsledku pod cílem (VMAF {', '.join(f'{s:g}' for s in scores)})")
     return {"vmaf_check": scores, "size": os.path.getsize(out), "mbps": round(video_mbps(b), 2)}
+
+
+# ── one file in parts: the server and the workers at once ──
+#
+# The film is cut at keyframes of the original into parts of about PART_S; each part is encoded on its own — by
+# whoever is free (the server, a worker) — and the parts are joined without encoding again (concat), with the
+# original's audio, subtitles and chapters. A part begins with a keyframe of the new stream too: a cut at a scene
+# change costs nothing (the encoder puts a keyframe there anyway). Only the same encoder makes parts of one file
+# (x265 on the CPU: the same picture whoever encodes it).
+
+PART_S = 120
+PART_LOOK_S = 15                           # a cut may move this far from PART_S to sit on a keyframe
+SCENE_CUT = 0.15                           # ffmpeg's scene score of a frame that begins a new shot (soft cuts: ~0.2)
+CUT_FREE = (".ts", ".m2ts", ".mts")        # a transport stream's timestamps cannot be cut frame-exact
+
+
+def frame_times(path: str) -> tuple[list[float], list[float]]:
+    """Every frame's presentation time and the keyframes', in s from the file's start (what ffmpeg's -ss counts
+    from) — read from the packets, nothing decoded."""
+    run = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                          "packet=pts_time,flags:format=start_time", "-of", "compact=p=0:nk=0", path],
+                         capture_output=True, text=True, timeout=3 * 3600, **SPAWN)
+    if run.returncode != 0:
+        raise ShrinkError(f"ffprobe: {run.stderr.strip()[-200:]}")
+    times, keys, start = [], [], None
+    for line in run.stdout.splitlines():
+        f = dict(x.partition("=")[::2] for x in line.split("|"))
+        if "start_time" in f:
+            start = float(f["start_time"]) if f["start_time"] not in ("", "N/A") else None
+            continue
+        try:
+            t = float(f.get("pts_time", ""))
+        except ValueError:
+            continue
+        times.append(t)
+        if "K" in f.get("flags", ""):
+            keys.append(t)
+    if not times:
+        raise ShrinkError("Soubor nemá snímky s časem")
+    times.sort()
+    zero = start if start is not None else times[0]
+    return [t - zero for t in times], sorted(k - zero for k in keys)
+
+
+def split(path: str, every: float = PART_S) -> list[dict]:
+    """The parts: [{"idx", "start" (a keyframe, s from the file's start), "frames"}] — [] when the file is not cut
+    (a transport stream, a short file)."""
+    if os.path.splitext(path)[1].lower() in CUT_FREE:
+        return []
+    times, keys = frame_times(path)
+    if times[-1] < every * 1.5:
+        return []
+    cuts, t = [], every
+    while t < times[-1] - every / 2:
+        near = [k for k in keys if abs(k - t) <= PART_LOOK_S and (not cuts or k > cuts[-1])]
+        if near:
+            scores = scene_scores(path, near[0], near[-1]) if len(near) > 1 else {}
+
+            def scene(k: float) -> float:
+                close = [s for at, s in scores.items() if abs(at - k) < 0.02]
+                return max(close, default=0.0)
+            # the nearest keyframe at a scene change (the new stream needs one there anyway), else the nearest
+            cuts.append(max(near, key=lambda k: (scene(k) >= SCENE_CUT, -abs(k - t))))
+            t = cuts[-1] + every
+        else:
+            t += PART_LOOK_S                  # no keyframe near (a long shot): a bit further
+    bounds = [times[0], *cuts, math.inf]
+    parts, at = [], 0
+    for k in range(len(bounds) - 1):
+        end = at
+        while end < len(times) and times[end] < bounds[k + 1]:
+            end += 1
+        parts.append({"idx": k, "start": round(bounds[k], 6), "frames": end - at})
+        at = end
+    return [p for p in parts if p["frames"]]
+
+
+def scene_scores(path: str, start: float, end: float) -> dict[float, float]:
+    """How much each frame from ``start`` to ``end`` differs from the one before (0–1, a scene change: ~0.3+) →
+    {time rounded to 0.01 s: score}. A small picture decoded — a few seconds per cut."""
+    pre = max(0.0, start - 1)
+    run = subprocess.run([*NICE, "ffmpeg", "-nostdin", "-v", "error", "-ss", f"{pre:.3f}", "-i", path, "-t",
+                          f"{end - pre + 0.5:.3f}", "-map", "0:v:0", "-vf",
+                          "scale=160:-2,select='gte(scene\\,0)',metadata=print:file=-", "-an", "-f", "null", "-"],
+                         capture_output=True, text=True, timeout=600, **SPAWN)
+    scores, at = {}, None
+    for line in run.stdout.splitlines():
+        if line.startswith("frame:"):
+            found = re.search(r"pts_time:([\d.]+)", line)
+            at = pre + float(found.group(1)) if found else None
+        elif "scene_score=" in line and at is not None:
+            try:
+                scores[round(at, 2)] = float(line.split("=")[1])
+            except ValueError:
+                pass
+    return scores
+
+
+@functools.cache
+def x265_version() -> str:
+    """This machine's x265 ("4.2+1-e444744"), "" without it."""
+    try:
+        run = subprocess.run(["ffmpeg", "-hide_banner", "-f", "lavfi", "-i", "color=size=64x64:d=0.04", "-frames:v", "1",
+                              "-c:v", "libx265", "-f", "null", "-"], capture_output=True, text=True, timeout=60, **SPAWN)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    found = re.search(r"HEVC encoder version (\S+)", run.stderr)
+    return found.group(1) if found else ""
+
+
+def count_frames(path: str) -> int:
+    run = _run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries",
+                "stream=nb_read_packets", "-of", "csv=p=0", path], 3600)
+    try:
+        return int(run.stdout.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+def encode_part(path: str, start: float, frames: int, info: dict, opts: dict, crf: float, out: str,
+                progress=None, cancel=None) -> float:
+    """One part: ``frames`` frames from the keyframe at ``start`` — decoded from a few seconds earlier and cut by
+    the decoded timestamps (frame-exact, no broken frames after the seek) → the seconds it took. ``cancel``: a
+    threading.Event — set, the encoder stops (another got the part done first)."""
+    pre = max(0.0, start - PREROLL_S)
+    skip = max(0.0, start - pre - 0.5 / info["fps"])      # half a frame early: the keyframe itself is kept
+    args = _video_args(info, opts, crf)
+    if "-x265-params" in args:                            # each part carries its own stream headers
+        k = args.index("-x265-params") + 1
+        args[k] += "" if "repeat-headers" in args[k] else ":repeat-headers=1"
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    cmd = [*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{pre:.6f}", "-i", path, "-ss", f"{skip:.6f}",
+           "-frames:v", str(frames), "-map", "0:v:0", *args, "-progress", "pipe:1", "-nostats", out]
+    t0 = time.time()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **SPAWN)
+    try:
+        for line in proc.stdout:
+            if cancel is not None and cancel.is_set():
+                raise ShrinkError("Část už je hotová jinde")
+            if line.startswith("frame=") and progress:
+                try:
+                    progress("encode", min(99.0, int(line.split("=")[1]) / max(1, frames) * 100))
+                except ValueError:
+                    pass
+        err = proc.stderr.read()
+        proc.wait()
+        if proc.returncode != 0:
+            raise ShrinkError(f"ffmpeg: {err.strip()[-300:] or 'chyba'}")
+        if (got := count_frames(out)) != frames:
+            raise ShrinkError(f"Část má {got} snímků místo {frames}")
+    except BaseException:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        if os.path.exists(out):
+            os.remove(out)
+        raise
+    return time.time() - t0
+
+
+def assemble(path: str, files: list[str], info: dict, opts: dict, work: str, frames: int, seams: list[float],
+             progress=None) -> tuple[str, dict]:
+    """The encoded parts joined (no encoding again) with the original's audio, subtitles, attachments and
+    chapters → (path, its check: the frame count and VMAF across a few joins too)."""
+    listing = os.path.join(work, "parts.txt")
+    with open(listing, "w", encoding="utf-8") as f:
+        f.writelines("file '" + p.replace("'", "'\''") + "'\n" for p in files)
+    out = _out_path(path, work)
+    if progress:
+        progress("join")
+    try:
+        _run([*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", listing, "-i", path,
+              "-map", "0:v:0", "-map", "1:a?", "-map", "1:s?", "-map", "1:t?", "-map_metadata", "1", "-map_chapters", "1",
+              "-c", "copy", *_audio_args(info, opts), out], 6 * 3600)
+        if progress:
+            progress("verify")
+        check = verify(path, out, info, opts, work, frames, seams)
+    except BaseException:
+        if os.path.exists(out):
+            os.remove(out)
+        raise
+    return out, check
