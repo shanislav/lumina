@@ -36,6 +36,8 @@ Known events:
                            must not start new ones (library upgrades, wanted stop their jobs)
     scheduler.run          {wanted, upgrades, auto_download_wanted, auto_download_upgrades} — the nightly
                            run; wanted / library enqueue their checks
+    convert.finished       {kind, path, ok, note, result_path, auto} — a file change of the convert module
+                           (Dolby Vision MKV → MP4) ended; ok = the result took the file's place
 """
 
 import logging

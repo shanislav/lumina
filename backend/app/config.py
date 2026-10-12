@@ -64,6 +64,8 @@ async def get_effective_settings() -> dict[str, str]:
         "qbittorrent_path_map": db_settings.get("qbittorrent_path_map") or "",
         "max_concurrent_downloads": db_settings.get("max_concurrent_downloads") or "3",
         "movies_torrent": db_settings.get("movies_torrent") or "true",
+        # convert: a downloaded Dolby Vision MKV goes to MP4 on its own (Android TV players do not play DV in MKV)
+        "convert_dv_auto": db_settings.get("convert_dv_auto") or "true",
         "min_relevance_score": db_settings.get("min_relevance_score") or "70",
         "languages": db_settings.get("languages") or "cs",
         # language of titles/overviews from TMDB (Objevit, search) — separate from the audio preference

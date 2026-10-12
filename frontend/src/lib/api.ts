@@ -2222,3 +2222,28 @@ export async function getPlexPlaying(): Promise<{ configured: boolean; items: No
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+// ─── Úpravy souborů (backend modules/convert) ───
+
+export interface ConvertCandidate { path: string; kind: "movie" | "episode"; title: string; size: number; queued: boolean }
+export interface ConvertJob {
+  id: number; kind: string; path: string; status: "queued" | "running" | "done" | "error"; note: string;
+  result_path: string; auto: number; created_at: string; finished_at: string | null;
+}
+
+async function convertCall<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await apiFetch(`${API_BASE}/api/convert${path}`, init);
+  if (!res.ok) {
+    let detail = `Chyba ${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+export const getConvertCandidates = () => convertCall<{ dv: ConvertCandidate[] }>("/candidates");
+export const getConvertJobs = () =>
+  convertCall<{ jobs: ConvertJob[]; current: { id?: number; phase?: string }; phases: Record<string, string> }>("/jobs");
+export const startConvertDv = (paths: string[]) => convertCall<{ added: number }>("/dv", jsonBody("POST", { paths }));

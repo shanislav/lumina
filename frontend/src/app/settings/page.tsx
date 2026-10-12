@@ -186,6 +186,10 @@ const GENERAL_SECTIONS = [
     fields: [
       { key: "movies_library_dir", label: "Knihovna filmů", type: "folder", hint: "Kde leží hotová knihovna filmů. Stažené filmy se sem přesunou (složka + název podle pravidel pojmenování). Pokud prázdné, zůstanou ve složce pro stahování" },
       { key: "tv_library_dir", label: "Knihovna seriálů", type: "folder", hint: "Kde leží hotová knihovna seriálů. Stažené epizody se sem přesunou do „Seriál (rok)/Season NN“. Pokud prázdné, zůstanou ve složce pro stahování" },
+      { key: "convert_dv_auto", label: "Dolby Vision v MKV", type: "select_static", options: [
+        { value: "true", label: "po stažení přebalit do MP4" },
+        { value: "false", label: "nechat, přebalím ručně" },
+      ], hint: "Android TV přehrávače (Google TV Streamer) Dolby Vision v MKV nepřehrají. Přebalení je bez ztráty kvality (stejný obraz, zvuk; titulky vedle souboru), originál se smaže až po kontrole. Ručně: Knihovna → Úpravy souborů" },
     ],
   },
   {

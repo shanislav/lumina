@@ -777,6 +777,7 @@ async def import_episode(payload: dict) -> None:
         payload["placed"] = bool(targets)
     if targets:
         payload["path"] = targets[0]
+        payload["placed_paths"] = list(targets)      # every episode file of the import (a pack has more)
         payload["imported"] = True
     if targets or unsorted:
         await events.emit("library.files_added", {"folders": sorted({os.path.dirname(t) for t in targets + unsorted})})

@@ -5,6 +5,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import BulkFilmSettings from "@/components/BulkFilmSettings";
 import SubtitlesPanel from "@/components/SubtitlesPanel";
 import { useRouter } from "next/navigation";
+import FileChanges from "@/components/FileChanges";
 import TvInventory from "@/components/TvInventory";
 import TvRename from "@/components/TvRename";
 import Image from "next/image";
@@ -515,6 +516,7 @@ export default function LibraryPage() {
           <h1 className="text-2xl font-bold text-zinc-100">Knihovna</h1>
         </div>
         {canEdit && <div className="flex flex-wrap items-center gap-2">
+          {can("convert") && <FileChanges />}
           {tab === "serialy" ? <><TvRename onChanged={loadData} /><TvInventory /></> : (
           <button
             onClick={() => openBulk()}

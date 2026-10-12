@@ -117,3 +117,14 @@ async def on_series_found(p: dict) -> None:
     if started:
         await store.add("series", f"Automatika stahuje: {p.get('title') or '?'}", store._body(started, ""),
                         link=link, permission="download")
+
+
+async def on_convert_finished(p: dict) -> None:
+    """A file change ended (Úpravy souborů): an error always, success merged into one notice per hour."""
+    name = os.path.basename(p.get("result_path") or p.get("path") or "")
+    if not p.get("ok"):
+        await store.add("convert", f"Úprava souboru selhala: {name}", f"{p.get('note') or ''} · originál zůstal",
+                        level="warn", link="/library?convert=1", permission="convert")
+    else:
+        await store.add("convert", "Přebaleno do MP4 (Dolby Vision)", "", link="/library?convert=1",
+                        permission="convert", group="convert-done", item=name)
