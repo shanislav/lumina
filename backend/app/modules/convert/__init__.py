@@ -11,10 +11,10 @@ module = Module(
     title="Úpravy souborů",
     order=45,
     routers=[router],
-    migrations=[jobs.JOBS],
+    migrations=[jobs.JOBS, jobs.OPTIONS, jobs.RESULT],
     subscriptions=[Subscription("download.completed", handlers.on_download_completed, priority=90)],
     on_startup=[jobs.start],
     on_shutdown=[jobs.stop],
-    permissions=[Permission("convert", "Úpravy souborů: přebalit Dolby Vision do MP4")],
+    permissions=[Permission("convert", "Úpravy souborů: přebalit Dolby Vision do MP4, zmenšit soubory")],
     tasks=[TaskSource(tasks.read, "convert")],
 )

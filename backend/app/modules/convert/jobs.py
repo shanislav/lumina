@@ -9,10 +9,12 @@ import logging
 import os
 import shutil
 from datetime import datetime
+from pathlib import Path
 
 from app.core import events
+from app.core.migrations import add_column
 from app.db import get_db
-from app.modules.convert import dv
+from app.modules.convert import dv, shrink
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +33,17 @@ CREATE TABLE IF NOT EXISTS convert_jobs (
 CREATE INDEX IF NOT EXISTS idx_convert_jobs_status ON convert_jobs(status);
 """
 
+# later columns: the job's choices (shrink: quality, speed …) and what came out (a plan's estimate)
+OPTIONS = add_column("convert_jobs", "options", "TEXT NOT NULL DEFAULT '{}'")
+RESULT = add_column("convert_jobs", "result", "TEXT NOT NULL DEFAULT '{}'")
+
 WORK_DIR = ".lumina-convert"
+PREVIEW_DIR = Path("data/convert-previews")
 POLL_S = 60
-KINDS = {"dv": "Přebalení Dolby Vision do MP4"}
-PHASES = {"remux": "přebaluji", "verify": "kontroluji výsledek", "library": "předávám knihovně"}
+KINDS = {"dv": "Přebalení Dolby Vision do MP4", "plan": "Náhled zmenšení", "shrink": "Zmenšení souboru"}
+PHASES = {"remux": "přebaluji", "verify": "kontroluji výsledek", "library": "předávám knihovně",
+          "samples": "vybírám vzorky", "sample": "zkouším kvalitu na vzorcích", "stills": "připravuji snímky",
+          "encode": "kóduji"}
 
 _wake = asyncio.Event()
 _task: asyncio.Task | None = None
@@ -45,7 +54,7 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-async def enqueue(kind: str, paths: list[str], auto: bool = False) -> int:
+async def enqueue(kind: str, paths: list[str], auto: bool = False, options: dict | None = None) -> int:
     """Queue ``paths`` (not the ones queued or running already). → how many were added."""
     db = await get_db()
     added = 0
@@ -54,8 +63,8 @@ async def enqueue(kind: str, paths: list[str], auto: bool = False) -> int:
             if await (await db.execute("SELECT 1 FROM convert_jobs WHERE path = ? AND kind = ? AND status IN "
                                        "('queued', 'running')", (path, kind))).fetchone():
                 continue
-            await db.execute("INSERT INTO convert_jobs (kind, path, auto, created_at) VALUES (?, ?, ?, ?)",
-                             (kind, path, int(auto), _now()))     # local time, like finished_at
+            await db.execute("INSERT INTO convert_jobs (kind, path, auto, created_at, options) VALUES (?, ?, ?, ?, ?)",
+                             (kind, path, int(auto), _now(), json.dumps(options or {})))  # local time like finished_at
             added += 1
         await db.commit()
     finally:
@@ -70,9 +79,39 @@ async def recent(limit: int = 50) -> list[dict]:
     try:
         rows = await (await db.execute("SELECT * FROM convert_jobs ORDER BY CASE status WHEN 'running' THEN 0 "
                                        "WHEN 'queued' THEN 1 ELSE 2 END, id DESC LIMIT ?", (limit,))).fetchall()
-        return [dict(r) for r in rows]
+        return [_row(r) for r in rows]
     finally:
         await db.close()
+
+
+def _row(r) -> dict:
+    d = dict(r)
+    for k in ("options", "result"):
+        try:
+            d[k] = json.loads(d.get(k) or "{}")
+        except ValueError:
+            d[k] = {}
+    return d
+
+
+async def get(job_id: int) -> dict | None:
+    db = await get_db()
+    try:
+        row = await (await db.execute("SELECT * FROM convert_jobs WHERE id = ?", (job_id,))).fetchone()
+        return _row(row) if row else None
+    finally:
+        await db.close()
+
+
+async def drop(job_id: int) -> None:
+    """A finished job out of the list (a plan the user does not want) with its frames."""
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM convert_jobs WHERE id = ? AND status IN ('done', 'error')", (job_id,))
+        await db.commit()
+    finally:
+        await db.close()
+    shutil.rmtree(PREVIEW_DIR / str(job_id), ignore_errors=True)
 
 
 async def start() -> None:
@@ -101,16 +140,16 @@ async def _next() -> dict | None:
         if row:
             await db.execute("UPDATE convert_jobs SET status = 'running' WHERE id = ?", (row["id"],))
             await db.commit()
-        return dict(row) if row else None
+        return _row(row) if row else None
     finally:
         await db.close()
 
 
-async def _finish(job: dict, status: str, note: str = "", result: str = "") -> None:
+async def _finish(job: dict, status: str, note: str = "", result: str = "", data: dict | None = None) -> None:
     db = await get_db()
     try:
-        await db.execute("UPDATE convert_jobs SET status = ?, note = ?, result_path = ?, finished_at = ? WHERE id = ?",
-                         (status, note, result, _now(), job["id"]))
+        await db.execute("UPDATE convert_jobs SET status = ?, note = ?, result_path = ?, finished_at = ?, result = ? "
+                         "WHERE id = ?", (status, note, result, _now(), json.dumps(data or {}), job["id"]))
         await db.commit()
     finally:
         await db.close()
@@ -132,8 +171,8 @@ async def _loop() -> None:
         current.update(id=job["id"], kind=job["kind"], path=job["path"], phase="")
         try:
             result = await run(job)
-            await _finish(job, "done", result.get("note", ""), result["path"])
-        except (dv.RemuxError, OSError) as e:
+            await _finish(job, "done", result.get("note", ""), result.get("path", ""), result.get("data"))
+        except (dv.RemuxError, shrink.ShrinkError, OSError) as e:
             await _finish(job, "error", str(e))
         except Exception as e:  # noqa: BLE001 — a job must never stop the queue
             logger.exception("Convert job %s failed", job["id"])
@@ -142,12 +181,110 @@ async def _loop() -> None:
             current.clear()
 
 
-def _progress(phase: str) -> None:
+def _progress(phase: str, value: float | None = None) -> None:
     current["phase"] = phase
+    current["value"] = value
 
 
 async def run(job: dict) -> dict:
-    """One job: the change in the work folder, its check, then the file's place and the library."""
+    """One job by its kind → {path, note, data}."""
+    if job["kind"] == "plan":
+        return await _run_plan(job)
+    if job["kind"] == "shrink":
+        return await _run_shrink(job)
+    return await _run_dv(job)
+
+
+async def _run_plan(job: dict) -> dict:
+    """The estimate (samples, VMAF, frames to compare); with "go" a file worth it goes on to be encoded."""
+    src = job["path"]
+    if not os.path.isfile(src):
+        raise shrink.ShrinkError("Soubor zmizel")
+    opts = shrink.options(job.get("options"))
+    work = os.path.join(os.path.dirname(src), WORK_DIR)
+    preview = PREVIEW_DIR / str(job["id"])
+    try:
+        data = await asyncio.to_thread(shrink.plan, src, opts, work, str(preview), _progress)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    note = data.get("note") or (f"{data['src_size'] / 1024**3:.2f} GB → ~{data['est_size'] / 1024**3:.2f} GB "
+                                f"(−{data['saving']:g} %), VMAF {data['vmaf']:g}, CRF {data['crf']:g}")
+    if opts["go"] and data.get("decision") == "ok":
+        await enqueue("shrink", [src], bool(job["auto"]), {**opts, "crf": data["crf"], "plan_id": job["id"]})
+        note += " · zařazeno ke kódování"
+    return {"note": note, "data": data}
+
+
+async def _run_shrink(job: dict) -> dict:
+    """The whole file encoded, checked, and only when it saves enough it takes the file's place."""
+    src = job["path"]
+    if not os.path.isfile(src):
+        raise shrink.ShrinkError("Soubor zmizel")
+    opts = shrink.options(job.get("options"))
+    crf = float((job.get("options") or {}).get("crf") or 0)
+    if not crf:
+        raise shrink.ShrinkError("Chybí náhled (CRF) — nejdřív udělej náhled")
+    folder = os.path.dirname(src)
+    if shutil.disk_usage(folder).free < os.path.getsize(src) + 1024**3:
+        raise shrink.ShrinkError("Málo místa na disku")
+    work = os.path.join(folder, WORK_DIR)
+    old_size = os.path.getsize(src)
+    try:
+        out, check = await asyncio.to_thread(shrink.encode, src, crf, opts, work, _progress)
+        saving = round(100 * (1 - check["size"] / old_size), 1)
+        if saving < opts["min_saving"]:
+            raise shrink.ShrinkError(f"Ušetřilo by jen {saving:g} % — soubor nechávám")
+        _progress("library")
+        final = os.path.join(folder, os.path.basename(out))
+        if final != src and os.path.exists(final):
+            raise shrink.ShrinkError(f"{os.path.basename(final)} už ve složce je")
+        _same_owner(out, src)
+        os.replace(out, final)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    if final != src:
+        os.remove(src)
+    await _library(src, final)
+    final = await _rename(final)
+    note = (f"{old_size / 1024**3:.2f} GB → {check['size'] / 1024**3:.2f} GB (−{saving:g} %), "
+            f"VMAF kontrola {', '.join(f'{v:g}' for v in check['vmaf_check'])}")
+    logger.info("Shrunk %s → %s (%s)", src, final, note)
+    return {"path": final, "note": note, "data": {**check, "saving": saving, "old_size": old_size, "crf": crf}}
+
+
+async def _rename(path: str) -> str:
+    """The name follows the new codec ("x264" → "x265") — by the naming rules; the folder stays (Plex keeps the
+    item). Episodes through the library's own rename, films by their plan's names only."""
+    from app.config import get_effective_settings, movies_library_dir
+    from app.modules.library import organize
+    from app.modules.library.notify import emit_movie_updated
+    db = await get_db()
+    try:
+        movie = await (await db.execute("SELECT id FROM library_movies WHERE file_path = ? AND status IN "
+                                        "('matched', 'manual')", (path,))).fetchone()
+        if not movie:
+            from app.modules.library.router import _rename_now
+            return (await _rename_now(db, [path])).get(path, path)
+        from app.clients.tmdb import TMDBClient
+        cfg = await get_effective_settings()
+        client = TMDBClient(cfg.get("tmdb_api_key", ""))
+        try:
+            plan = organize.names_only(await organize.plan_movie(db, client, movie[0], movies_library_dir(cfg)))
+            if plan["ops"]:
+                await organize.apply_plan(db, plan, movies_library_dir(cfg))
+                await emit_movie_updated(db, movie[0])
+        except organize.OrganizeError as e:
+            logger.info("Rename after shrinking %s: %s", path, e)
+        finally:
+            await client.close()
+        row = await (await db.execute("SELECT file_path FROM library_movies WHERE id = ?", (movie[0],))).fetchone()
+        return row[0] if row else path
+    finally:
+        await db.close()
+
+
+async def _run_dv(job: dict) -> dict:
+    """Dolby Vision MKV → MP4: the change in the work folder, its check, then the file's place and the library."""
     src = job["path"]
     if not os.path.isfile(src):
         raise dv.RemuxError("Soubor zmizel")

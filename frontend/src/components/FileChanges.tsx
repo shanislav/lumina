@@ -5,6 +5,7 @@
  * Android TV players do not play — and the queue. A button in the library's header; the list opens over the page.
  */
 import { useCallback, useEffect, useState } from "react";
+import ShrinkTab from "@/components/ShrinkTab";
 import { ConvertCandidate, ConvertJob, getConvertCandidates, getConvertJobs, startConvertDv } from "@/lib/api";
 
 const STATUS: Record<ConvertJob["status"], { label: string; cls: string }> = {
@@ -24,13 +25,16 @@ export default function FileChanges() {
   const [phase, setPhase] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [tab, setTab] = useState<"dv" | "shrink">("shrink");
 
   const load = useCallback(async () => {
     try {
       const [c, j] = await Promise.all([getConvertCandidates(), getConvertJobs()]);
       setDv(c.dv);
       setJobs(j.jobs);
-      setPhase(j.current.phase ? j.phases[j.current.phase] ?? j.current.phase : "");
+      const v = j.current.value;
+      setPhase(j.current.phase ? (j.phases[j.current.phase] ?? j.current.phase)
+        + (v != null ? (j.current.phase === "encode" ? ` ${Math.round(v)} %` : ` ${v}`) : "") : "");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -83,7 +87,18 @@ export default function FileChanges() {
             </div>
             {error && <p className="rounded-lg bg-red-950/60 px-3 py-2 text-red-300">{error}</p>}
 
-            <section className="space-y-2">
+            <div className="flex gap-1 rounded-lg bg-zinc-800/60 p-1 text-xs">
+              {([["shrink", "Zmenšit soubory"], ["dv", `Dolby Vision v MKV (${dv.length})`]] as const).map(([k, label]) => (
+                <button key={k} onClick={() => setTab(k)}
+                  className={`flex-1 rounded-md px-3 py-1.5 ${tab === k ? "bg-violet-600 text-white" : "text-zinc-400 hover:text-zinc-200"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {tab === "shrink" && <ShrinkTab jobs={jobs} phase={phase} onChanged={load} />}
+
+            {tab === "dv" && <section className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="font-medium text-zinc-200">Dolby Vision v MKV <span className="text-zinc-500">({dv.length})</span></h4>
                 {waiting.length > 1 && (
@@ -118,13 +133,13 @@ export default function FileChanges() {
                   ))}
                 </ul>
               )}
-            </section>
+            </section>}
 
-            {jobs.length > 0 && (
+            {jobs.some((j) => j.kind !== "plan") && (
               <section className="space-y-2">
                 <h4 className="font-medium text-zinc-200">Fronta a historie</h4>
                 <ul className="divide-y divide-zinc-800 rounded-lg border border-zinc-800 text-xs">
-                  {jobs.map((j) => (
+                  {jobs.filter((j) => j.kind !== "plan").map((j) => (
                     <li key={j.id} className="flex items-start gap-3 px-3 py-2">
                       <span className={`w-20 shrink-0 ${STATUS[j.status].cls}`}>
                         {STATUS[j.status].label}{j.status === "running" && phase ? ` — ${phase}` : ""}

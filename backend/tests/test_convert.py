@@ -109,3 +109,40 @@ async def test_after_a_download_its_dv_mkvs_are_queued(tmp_path, monkeypatch):
     await handlers.on_download_completed({"imported": False, "path": str(b)})     # not in the library: nothing
     queued = [j["path"] for j in await jobs.recent()]
     assert queued == [str(a)]
+
+
+# ── smaller files ──
+
+from app.modules.convert import shrink  # noqa: E402
+
+
+def test_the_users_choices_are_checked():
+    o = shrink.options({"vmaf": "93", "speed": "warp", "max_height": "1080", "audio": "shrink", "min_saving": 500, "go": 1})
+    assert o == {"vmaf": 93.0, "speed": "balanced", "max_height": 1080, "audio": "shrink", "min_saving": 80, "go": True}
+    assert shrink.options({"vmaf": 20})["vmaf"] == 95                      # nonsense → the default
+    assert shrink.options(None) == shrink.DEFAULTS
+
+
+def test_hdr10_stays_hdr10():
+    info = {"hdr10": True, "light": {"max_content": 1000, "max_average": 400},
+            "mastering": {"red_x": "35400/50000", "red_y": "14600/50000", "green_x": "8500/50000",
+                          "green_y": "39850/50000", "blue_x": "6550/50000", "blue_y": "2300/50000",
+                          "white_point_x": "15635/50000", "white_point_y": "16450/50000",
+                          "max_luminance": "10000000/10000", "min_luminance": "50/10000"}}
+    p = shrink.x265_params(info)
+    assert "hdr10=1" in p and "transfer=smpte2084" in p and "max-cll=1000,400" in p
+    assert "master-display=G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L(10000000,50)" in p
+    assert shrink.x265_params({"hdr10": False}) == "log-level=error"
+
+
+def test_the_highest_crf_that_reaches_the_target(monkeypatch):
+    # quality falls by 1 per CRF step from 99 at CRF 14: CRF 18 → 95, 19 → 94
+    def fake(ref, info, opts, crf, work):
+        return {"crf": crf, "vmaf": 99 - (crf - 14), "size": 1000 - crf * 10, "seconds": 1, "path": f"crf{crf}"}
+    monkeypatch.setattr(shrink, "encode_sample", fake)
+    best, trials = shrink.find_crf("ref", {"height": 1080}, {"vmaf": 95}, "w")
+    assert best["crf"] == 18 and len(trials) <= 5
+    best, _ = shrink.find_crf("ref", {"height": 1080}, {"vmaf": 99.5}, "w")       # unreachable
+    assert best is None
+    best, _ = shrink.find_crf("ref", {"height": 1080}, {"vmaf": 70}, "w")         # even the top CRF passes
+    assert best["crf"] == shrink.CRF_RANGE[1]

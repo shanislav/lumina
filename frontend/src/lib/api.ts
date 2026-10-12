@@ -2229,6 +2229,7 @@ export interface ConvertCandidate { path: string; kind: "movie" | "episode"; tit
 export interface ConvertJob {
   id: number; kind: string; path: string; status: "queued" | "running" | "done" | "error"; note: string;
   result_path: string; auto: number; created_at: string; finished_at: string | null;
+  options: Record<string, unknown>; result: Record<string, unknown>;
 }
 
 async function convertCall<T>(path: string, init?: RequestInit): Promise<T> {
@@ -2245,5 +2246,21 @@ async function convertCall<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const getConvertCandidates = () => convertCall<{ dv: ConvertCandidate[] }>("/candidates");
 export const getConvertJobs = () =>
-  convertCall<{ jobs: ConvertJob[]; current: { id?: number; phase?: string }; phases: Record<string, string> }>("/jobs");
+  convertCall<{ jobs: ConvertJob[]; current: { id?: number; phase?: string; value?: number | null }; phases: Record<string, string> }>("/jobs");
 export const startConvertDv = (paths: string[]) => convertCall<{ added: number }>("/dv", jsonBody("POST", { paths }));
+
+export interface ShrinkOptions { vmaf: number; speed: "small" | "balanced" | "fast"; max_height: number; audio: "copy" | "shrink"; min_saving: number; go: boolean }
+export interface ShrinkFile { path: string; kind: "movie" | "episode"; group: string; title: string; size: number; codec: string; height: number; mbps: number; hdr: string; weight: number }
+export interface ShrinkPlan {
+  src_size: number; duration: number; codec: string; height: number; options: ShrinkOptions; decision: string; note: string;
+  crf?: number; vmaf?: number; est_size?: number; saving?: number; est_seconds?: number;
+  trials?: { crf: number; vmaf: number; size: number }[]; stills?: { a: string; b: string }[];
+}
+export const getShrinkCandidates = (q: string, all: boolean) =>
+  convertCall<{ files: ShrinkFile[]; total: number }>(`/shrink/candidates?q=${encodeURIComponent(q)}&all=${all}`);
+export const startShrinkPlan = (paths: string[], options: ShrinkOptions) =>
+  convertCall<{ added: number }>("/shrink/plan", jsonBody("POST", { paths, options }));
+export const startShrink = (planId: number, crf?: number) =>
+  convertCall<{ added: number }>(`/shrink/${planId}`, jsonBody("POST", { crf: crf ?? null }));
+export const dropConvertJob = (id: number) => convertCall<{ ok: boolean }>(`/jobs/${id}`, { method: "DELETE" });
+export const convertPreviewUrl = (jobId: number, name: string) => `${API_BASE}/api/convert/preview/${jobId}/${name}`;
