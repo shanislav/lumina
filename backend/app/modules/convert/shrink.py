@@ -23,6 +23,7 @@ QUALITIES = (95, 93, 90)
 DEFAULTS = {"vmaf": 95, "speed": "balanced", "max_height": 0, "audio": "copy", "min_saving": 25, "go": False}
 SAMPLES = (0.15, 0.38, 0.62, 0.85)        # where in the film the samples are (share of its length)
 SAMPLE_S = 8
+PREROLL_S = 5                              # decoded before a sample and thrown away (see cut_samples)
 CRF_RANGE = (14, 34)
 CHECK_AT = (0.3, 0.7)                      # the full result's own check: VMAF of these windows …
 CHECK_S = 10
@@ -172,13 +173,18 @@ def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
 
 
 def cut_samples(path: str, info: dict, work: str) -> list[str]:
-    """The video of a few places of the film, each copied (no re-encoding) into its own file — the references.
-    Not joined into one: a transport stream's timestamps break at the joins and frames slip against each other."""
+    """The video of a few places of the film, each into its own file — the references.
+    Decoded from a few seconds before the place and kept losslessly (FFV1): right after a seek the decoder gives
+    broken frames until its references fill up (open GOP), and noise like that cannot be encoded well — a sample
+    beginning with it measured VMAF 65 at any CRF. Not joined into one file either: a transport stream's
+    timestamps break at the joins and frames slip against each other."""
     parts = []
     for k, share in enumerate(SAMPLES):
+        at = info["duration"] * share
+        start = max(0.0, at - PREROLL_S)
         part = os.path.join(work, f"sample{k}.mkv")
-        _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{info['duration'] * share:.2f}", "-i", path,
-              "-t", str(SAMPLE_S), "-map", "0:v:0", "-c", "copy", part], 600)
+        _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.2f}", "-i", path, "-ss", f"{at - start:.2f}",
+              "-t", str(SAMPLE_S), "-map", "0:v:0", "-c:v", "ffv1", "-level", "3", "-g", "1", part], 1800)
         parts.append(part)
     return parts
 
@@ -186,9 +192,12 @@ def cut_samples(path: str, info: dict, work: str) -> list[str]:
 def vmaf(distorted: str, reference: str, seek: float = 0, length: float = 0) -> float:
     """VMAF of ``distorted`` against ``reference`` (both read from ``seek`` for ``length`` s when given), at most
     1080p — the model is made for it; a smaller result is scaled up to the reference."""
-    win = (["-ss", f"{seek:.2f}"] if seek else []) + (["-t", f"{length:g}"] if length else [])
-    graph = ("[1:v]scale='min(1920,iw)':-2:flags=bicubic,format=yuv420p10le,setpts=PTS-STARTPTS,split[r1][r2];"
-             "[0:v][r1]scale=rw:rh:flags=bicubic,format=yuv420p10le,setpts=PTS-STARTPTS[d];"
+    # from a seek both are decoded a few seconds earlier and those frames dropped (broken frames after a seek)
+    pre = min(PREROLL_S, seek) if seek else 0.0
+    win = (["-ss", f"{seek - pre:.2f}"] if seek else []) + (["-t", f"{length + pre:g}"] if length else [])
+    cut = f"setpts=PTS-STARTPTS,trim=start={pre:g}," if pre else ""
+    graph = (f"[1:v]{cut}setpts=PTS-STARTPTS,scale='min(1920,iw)':-2:flags=bicubic,format=yuv420p10le,split[r1][r2];"
+             f"[0:v]{cut}setpts=PTS-STARTPTS[d0];[d0][r1]scale=rw:rh:flags=bicubic,format=yuv420p10le[d];"
              f"[d][r2]libvmaf=n_threads={os.cpu_count() or 2}")
     run = subprocess.run([*NICE, "ffmpeg", "-nostdin", "-hide_banner", *win, "-i", distorted, *win, "-i", reference,
                           "-lavfi", graph, "-f", "null", "-"], capture_output=True, text=True, timeout=6 * 3600)
