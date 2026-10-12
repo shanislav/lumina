@@ -41,7 +41,7 @@ const TERMS = {
   saving: "O kolik bude soubor menší. Odhad z krátkých vzorků — skutečnost bývá o pár procent jiná.",
   rate: "Kolik dat za sekundu má obraz (megabity za sekundu) — čím víc, tím větší soubor a obvykle lepší obraz. Pro 1080p H.265 je 2–5 Mb/s běžné, pro 4K 10–20 Mb/s. Kolik obraz doopravdy potřebuje, záleží na něm (zrno, tma, pohyb chtějí víc).",
   mode_quality: "Zvolíš kvalitu, Lumina najde nejmenší soubor, který ji drží. Velikost vyjde pro každý soubor jinak.",
-  mode_rate: "Zvolíš datový tok (velikost), Lumina ukáže, jakou kvalitu to dá. Každý soubor bude mít stejný tok, kvalita vyjde různě.",
+  mode_rate: "Zvolíš datový tok (velikost), Lumina ukáže, jakou kvalitu to dá. Každý soubor bude mít zhruba stejný tok, kvalita vyjde různě.",
   samples: "Pokusy na vzorcích: každý řádek je jedno CRF a VMAF, které s ním vyšlo. Hledá se nejvyšší CRF (nejmenší soubor), které ještě dosáhne cíle.",
 };
 
@@ -66,7 +66,9 @@ function Help() {
           filmu). Náhled si rychlost změří přímo tady a ukáže odhad času překódování pro tenhle soubor.</p>
         <p><b className="text-zinc-200">Kvalitou, nebo datovým tokem?</b> „Řídit kvalitou“: zvolíš, jak blízko originálu má obraz
           být, a velikost vyjde pro každý soubor jinak. „Řídit datovým tokem“: zvolíš, kolik dat má obraz mít (tedy velikost), a náhled
-          ukáže, jakou kvalitu to dá — rozhodneš se sám, jestli je přijatelná. Stejný tok ale neznamená stejnou kvalitu: zrnitý nebo
+          ukáže, jakou kvalitu to dá — rozhodneš se sám, jestli je přijatelná. Tok není pevný strop: Lumina podle vzorků najde
+          nastavení (CRF), které na něj zhruba vyjde, a tím zakóduje celý film — náročné scény dostanou víc dat, klidné míň, a výsledek
+          bývá o pár procent jiný. Stejný tok ale neznamená stejnou kvalitu: zrnitý nebo
           tmavý díl potřebuje víc dat než klidný.</p>
         <p><b className="text-zinc-200">VMAF</b> — {TERMS.vmaf}</p>
         <p><b className="text-zinc-200">CRF</b> — {TERMS.crf}</p>
@@ -216,8 +218,9 @@ export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onCle
               <input type="number" min={0.2} max={80} step={0.1} value={opts.mbps}
                 onChange={(e) => set({ mbps: Number(e.target.value) || 4 })}
                 className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-200" />
-              <span className="text-xs text-zinc-500">Soubor bude mít obraz s tímto tokem (zvuk zůstává navíc). Náhled ukáže, jakou kvalitu
-                (VMAF) to dá — rozhodneš se, jestli je přijatelná. Soubory s nižším tokem se nechají.</span>
+              <span className="text-xs text-zinc-500">Lumina najde nastavení, se kterým obraz vyjde zhruba na tento tok (zvuk zůstává navíc),
+                a zakóduje jím celý soubor — kvalita je stejná v celém filmu, tok vyjde přibližně. Náhled ukáže, jakou kvalitu (VMAF) to dá
+                — rozhodneš se, jestli je přijatelná. Soubory s nižším tokem se nechají.</span>
             </label>
           )}
         </div>

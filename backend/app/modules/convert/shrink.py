@@ -24,8 +24,9 @@ SPEEDS = {"small": ("libx265", "slow"), "balanced": ("libx265", "medium"), "fast
           "gpu": ("hevc_nvenc", "p7")}         # NVIDIA's encoder (a worker's graphics card): fast, a bigger file
 WHERE = ("server", "worker", "any")        # who encodes: the server, a worker (the PC), whoever is free first
 QUALITIES = (95, 93, 90)
-# mode "quality": the user's VMAF target, the size follows; mode "rate": the user's video bitrate (Mb/s), the preview
-# tells the quality it gives — the user decides whether it is good enough
+# mode "quality": the user's VMAF target, the size follows; mode "rate": the user's video bitrate (Mb/s) picks the
+# CRF (by the samples), the preview tells the quality it gives — the user decides whether it is good enough. Either
+# way the film is encoded at that one CRF: an even quality, the bitrate about the chosen one (not held to it)
 DEFAULTS = {"vmaf": 95, "speed": "balanced", "max_height": 0, "audio": "copy", "min_saving": 25, "go": False,
             "mode": "quality", "mbps": 4.0, "where": "server"}
 RATE_CRF_MAX = 45                          # rate mode: a low bitrate may need a CRF above the quality search's range
@@ -170,23 +171,19 @@ def _scale_filter(info: dict, opts: dict) -> list[str]:
     return ["-vf", f"scale=-2:{h}:flags=lanczos"] if h and info["height"] > h else []
 
 
-def _video_args(info: dict, opts: dict, crf: float, rate: bool = False) -> list[str]:
-    """x265 10-bit at ``crf`` — or, for the whole file in rate mode, at the user's average bitrate (the samples
-    found the CRF giving about it; over a whole film the encoder holds the average exactly)."""
+def _video_args(info: dict, opts: dict, crf: float) -> list[str]:
+    """x265 10-bit at ``crf`` (NVENC: its CQ)."""
     encoder, preset = SPEEDS[opts["speed"]]
     if encoder == "hevc_nvenc":
         # the slowest, best NVENC: two passes in full resolution, lookahead, adaptive quantization in space and
         # time, B-frames as references; its CQ scale is about x265's CRF. HDR: colour tags and the 10-bit pass
         # through (ffmpeg writes the static metadata from the frames)
-        mb = opts["mbps"]
-        control = ["-rc", "vbr", "-b:v", f"{mb:g}M", "-maxrate", f"{mb * 2:g}M", "-bufsize", f"{mb * 4:g}M"] if rate \
-            else ["-rc", "vbr", "-cq", f"{crf:g}", "-b:v", "0"]
-        return ["-c:v", "hevc_nvenc", "-preset", preset, "-tune", "hq", *control, "-multipass", "fullres",
+        return ["-c:v", "hevc_nvenc", "-preset", preset, "-tune", "hq", "-rc", "vbr", "-cq", f"{crf:g}", "-b:v", "0",
+                "-multipass", "fullres",
                 "-rc-lookahead", "32", "-spatial-aq", "1", "-temporal-aq", "1", "-b_ref_mode", "middle",
                 "-pix_fmt", "p010le", *_scale_filter(info, opts)]
-    control = ["-b:v", f"{opts['mbps']:g}M"] if rate else ["-crf", f"{crf:g}"]
     params = x265_params(info) + (f":pools={opts['threads']}" if opts.get("threads") else "")
-    return ["-c:v", encoder, "-preset", preset, *control, "-pix_fmt", "yuv420p10le",
+    return ["-c:v", encoder, "-preset", preset, "-crf", f"{crf:g}", "-pix_fmt", "yuv420p10le",
             "-x265-params", params, *_scale_filter(info, opts)]
 
 
@@ -402,8 +399,7 @@ def plan(path: str, opts: dict, work: str, preview_dir: str, progress=None) -> d
                 "note": f"Ani CRF {CRF_RANGE[0]} nedosáhne VMAF {opts['vmaf']:g} — soubor nechávám"}
     audio = _audio_bytes(info, opts)
     ref_s = best["duration"] or SAMPLE_S * len(SAMPLES)
-    # rate mode: the encoder holds the user's average over the whole film
-    video_new = opts["mbps"] * 1e6 / 8 * info["duration"] if rate else best["size"] / ref_s * info["duration"]
+    video_new = best["size"] / ref_s * info["duration"]
     est = int(video_new + audio + info["size"] * 0.002)          # + container, subtitles
     saving = round(100 * (1 - est / info["size"]), 1) if info["size"] else 0
     frames = info["duration"] * info["fps"]
@@ -416,7 +412,7 @@ def plan(path: str, opts: dict, work: str, preview_dir: str, progress=None) -> d
     note = "" if decision == "ok" else f"Ušetří jen {saving:g} % (méně než {opts['min_saving']} %)"
     return {**base, "decision": decision, "note": note, "crf": best["crf"], "vmaf": best["vmaf"], "est_size": est,
             "saving": saving, "est_seconds": est_seconds, "trials": view, "stills": shots,
-            "mbps": opts["mbps"] if rate else round(best["size"] * 8 / ref_s / 1e6, 2)}
+            "mbps": round(best["size"] * 8 / ref_s / 1e6, 2)}
 
 
 # ── the real thing ──
@@ -431,7 +427,7 @@ def encode(path: str, crf: float, opts: dict, work: str, progress=None) -> tuple
     out = os.path.join(work, os.path.splitext(os.path.basename(path))[0] + (".mp4" if ext in (".mp4", ".m4v") else ".mkv"))
     os.makedirs(work, exist_ok=True)
     cmd = [*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?",
-           "-map", "0:s?", "-map", "0:t?", "-c", "copy", *_video_args(info, opts, crf, rate=opts["mode"] == "rate"), *_audio_args(info, opts),
+           "-map", "0:s?", "-map", "0:t?", "-c", "copy", *_video_args(info, opts, crf), *_audio_args(info, opts),
            "-progress", "pipe:1", "-nostats", out]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **SPAWN)
     try:
@@ -474,9 +470,6 @@ def verify(src: str, out: str, info: dict, opts: dict, work: str) -> dict:
     if opts["mode"] == "rate":
         # the quality is the user's choice by the preview — only a result far below it is broken
         floor = float(opts.get("expect_vmaf") or 0) - RATE_SLACK
-        got = video_mbps(b)
-        if got > opts["mbps"] * 1.2:
-            raise ShrinkError(f"Datový tok obrazu {got:.2f} Mb/s místo {opts['mbps']:g}")
     else:
         floor = opts["vmaf"] - CHECK_SLACK
     if min(scores) < floor:

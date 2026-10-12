@@ -119,7 +119,7 @@ from app.modules.convert import shrink  # noqa: E402
 def test_the_users_choices_are_checked():
     o = shrink.options({"vmaf": "93", "speed": "warp", "max_height": "1080", "audio": "shrink", "min_saving": 500, "go": 1})
     assert o == {"vmaf": 93.0, "speed": "balanced", "max_height": 1080, "audio": "shrink", "min_saving": 80, "go": True,
-                 "mode": "quality", "mbps": 4.0}
+                 "mode": "quality", "mbps": 4.0, "where": "server"}
     assert shrink.options({"mode": "rate", "mbps": "2.5"})["mbps"] == 2.5
     assert shrink.options({"vmaf": 20})["vmaf"] == 95                      # nonsense → the default
     assert shrink.options(None) == shrink.DEFAULTS
@@ -173,3 +173,11 @@ def test_rate_mode_finds_the_crf_giving_the_users_bitrate(monkeypatch):
     monkeypatch.setattr(shrink, "encode_sample", fake)
     best, trials = shrink.find_crf_for_rate("ref", {"height": 1080}, {"mbps": 2.0}, "w")
     assert best["crf"] == 28 and best["vmaf"] == 72 and len(trials) == 2
+
+
+def test_rate_mode_encodes_at_the_found_crf_not_a_held_bitrate():
+    info = {"hdr10": False, "height": 1080}
+    args = shrink._video_args(info, shrink.options({"mode": "rate", "mbps": 2}), 28)
+    assert args[args.index("-crf") + 1] == "28" and "-b:v" not in args
+    gpu = shrink._video_args(info, shrink.options({"mode": "rate", "mbps": 2, "speed": "gpu"}), 28)
+    assert gpu[gpu.index("-cq") + 1] == "28" and gpu[gpu.index("-b:v") + 1] == "0"
