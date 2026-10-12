@@ -21,7 +21,14 @@ logger = logging.getLogger(__name__)
 
 SPEEDS = {"small": ("libx265", "slow"), "balanced": ("libx265", "medium"), "fast": ("libx265", "fast")}
 QUALITIES = (95, 93, 90)
-DEFAULTS = {"vmaf": 95, "speed": "balanced", "max_height": 0, "audio": "copy", "min_saving": 25, "go": False}
+# mode "quality": the user's VMAF target, the size follows; mode "rate": the user's video bitrate (Mb/s), the preview
+# tells the quality it gives — the user decides whether it is good enough
+DEFAULTS = {"vmaf": 95, "speed": "balanced", "max_height": 0, "audio": "copy", "min_saving": 25, "go": False,
+            "mode": "quality", "mbps": 4.0}
+RATE_CRF_MAX = 45                          # rate mode: a low bitrate may need a CRF above the quality search's range
+RATE_CLOSE = 0.07                          # a sample bitrate this close to the target is the one
+CRF_PER_HALF_SIZE = 6                      # x265: about +6 CRF halves the size (first guess of the next CRF)
+RATE_SLACK = 4.0                           # rate mode: the result's VMAF may be this much under the preview's
 SAMPLES = (0.15, 0.38, 0.62, 0.85)        # where in the film the samples are (share of its length)
 SAMPLE_S = 8
 PREROLL_S = 5                              # decoded before a sample and thrown away (see cut_samples)
@@ -56,6 +63,17 @@ def options(raw: dict | None) -> dict:
     except (TypeError, ValueError):
         pass
     o["go"] = bool(raw.get("go"))
+    o["mode"] = "rate" if raw.get("mode") == "rate" else "quality"
+    if raw.get("expect_vmaf") is not None:          # rate mode: the quality the preview showed (the result's check)
+        try:
+            o["expect_vmaf"] = float(raw["expect_vmaf"])
+        except (TypeError, ValueError):
+            pass
+    try:
+        m = float(raw.get("mbps", o["mbps"]))
+        o["mbps"] = m if 0.2 <= m <= 80 else o["mbps"]
+    except (TypeError, ValueError):
+        pass
     return o
 
 
@@ -139,10 +157,19 @@ def _scale_filter(info: dict, opts: dict) -> list[str]:
     return ["-vf", f"scale=-2:{h}:flags=lanczos"] if h and info["height"] > h else []
 
 
-def _video_args(info: dict, opts: dict, crf: float) -> list[str]:
+def _video_args(info: dict, opts: dict, crf: float, rate: bool = False) -> list[str]:
+    """x265 10-bit at ``crf`` — or, for the whole file in rate mode, at the user's average bitrate (the samples
+    found the CRF giving about it; over a whole film the encoder holds the average exactly)."""
     encoder, preset = SPEEDS[opts["speed"]]
-    return ["-c:v", encoder, "-preset", preset, "-crf", f"{crf:g}", "-pix_fmt", "yuv420p10le",
+    control = ["-b:v", f"{opts['mbps']:g}M"] if rate else ["-crf", f"{crf:g}"]
+    return ["-c:v", encoder, "-preset", preset, *control, "-pix_fmt", "yuv420p10le",
             "-x265-params", x265_params(info), *_scale_filter(info, opts)]
+
+
+def video_mbps(info: dict) -> float:
+    """The video's own bitrate — the file's minus its audio tracks."""
+    audio = sum(a["bit_rate"] or (640_000 if a["channels"] > 2 else 192_000) for a in info["audio"])
+    return max(0.0, (info["size"] * 8 / max(1.0, info["duration"]) - audio) / 1e6)
 
 
 def _audio_args(info: dict, opts: dict) -> list[str]:
@@ -260,6 +287,29 @@ def find_crf(ref: list[str], info: dict, opts: dict, work: str, progress=None) -
     return best, trials
 
 
+def find_crf_for_rate(refs: list[str], info: dict, opts: dict, work: str, progress=None) -> tuple[dict, list[dict]]:
+    """Rate mode: the CRF whose samples come out at the user's bitrate → (that trial, every trial). The size halves
+    about every 6 CRF steps, so the next CRF is where the measured size points; mostly 2–3 encodes."""
+    target = opts["mbps"] * 1e6
+    trials: list[dict] = []
+    crf = 24 if info["height"] > 1200 else 22
+    for _ in range(5):
+        if progress:
+            progress("sample", len(trials) + 1)
+        t = encode_sample(refs, info, opts, crf, work)
+        t["mbps"] = round(t["size"] * 8 / max(0.1, t["duration"]) / 1e6, 2)
+        trials.append(t)
+        ratio = t["mbps"] * 1e6 / target
+        if abs(ratio - 1) <= RATE_CLOSE:
+            break
+        nxt = min(max(round(crf + CRF_PER_HALF_SIZE * math.log2(ratio)), CRF_RANGE[0]), RATE_CRF_MAX)
+        if any(x["crf"] == nxt for x in trials):
+            break
+        crf = nxt
+    best = min(trials, key=lambda x: abs(math.log(x["mbps"] * 1e6 / target)))
+    return best, trials
+
+
 def stills(refs: list[str], encoded: list[str], info: dict, out_dir: str) -> list[dict]:
     """Frames of the original and the new one at the same moments (the middle of three samples) — tone-mapped
     for a normal screen when the film is HDR."""
@@ -288,18 +338,27 @@ def plan(path: str, opts: dict, work: str, preview_dir: str, progress=None) -> d
         return {**base, "decision": "dv", "note": "Dolby Vision by překódováním zaniklo — soubor nechávám"}
     if info["duration"] < 60:
         return {**base, "decision": "short", "note": "Příliš krátké"}
+    rate = opts["mode"] == "rate"
+    src_mbps = round(video_mbps(info), 2)
+    base["src_mbps"] = src_mbps
+    if rate and src_mbps <= opts["mbps"] * (1 + RATE_CLOSE):
+        return {**base, "decision": "already", "note": f"Obraz má už teď jen {src_mbps:g} Mb/s — soubor nechávám"}
     os.makedirs(work, exist_ok=True)
     if progress:
         progress("samples")
     refs = cut_samples(path, info, work)
-    best, trials = find_crf(refs, info, opts, work, progress)
-    view = [{k: t[k] for k in ("crf", "vmaf", "size", "worst")} for t in trials]
+    if rate:
+        best, trials = find_crf_for_rate(refs, info, opts, work, progress)
+    else:
+        best, trials = find_crf(refs, info, opts, work, progress)
+    view = [{k: t.get(k) for k in ("crf", "vmaf", "size", "worst", "mbps")} for t in trials]
     if not best:
         return {**base, "decision": "quality", "trials": view,
                 "note": f"Ani CRF {CRF_RANGE[0]} nedosáhne VMAF {opts['vmaf']:g} — soubor nechávám"}
     audio = _audio_bytes(info, opts)
     ref_s = best["duration"] or SAMPLE_S * len(SAMPLES)
-    video_new = best["size"] / ref_s * info["duration"]
+    # rate mode: the encoder holds the user's average over the whole film
+    video_new = opts["mbps"] * 1e6 / 8 * info["duration"] if rate else best["size"] / ref_s * info["duration"]
     est = int(video_new + audio + info["size"] * 0.002)          # + container, subtitles
     saving = round(100 * (1 - est / info["size"]), 1) if info["size"] else 0
     frames = info["duration"] * info["fps"]
@@ -311,7 +370,8 @@ def plan(path: str, opts: dict, work: str, preview_dir: str, progress=None) -> d
     decision = "ok" if saving >= opts["min_saving"] else "low_saving"
     note = "" if decision == "ok" else f"Ušetří jen {saving:g} % (méně než {opts['min_saving']} %)"
     return {**base, "decision": decision, "note": note, "crf": best["crf"], "vmaf": best["vmaf"], "est_size": est,
-            "saving": saving, "est_seconds": est_seconds, "trials": view, "stills": shots}
+            "saving": saving, "est_seconds": est_seconds, "trials": view, "stills": shots,
+            "mbps": opts["mbps"] if rate else round(best["size"] * 8 / ref_s / 1e6, 2)}
 
 
 # ── the real thing ──
@@ -326,7 +386,7 @@ def encode(path: str, crf: float, opts: dict, work: str, progress=None) -> tuple
     out = os.path.join(work, os.path.splitext(os.path.basename(path))[0] + (".mp4" if ext in (".mp4", ".m4v") else ".mkv"))
     os.makedirs(work, exist_ok=True)
     cmd = [*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?",
-           "-map", "0:s?", "-map", "0:t?", "-c", "copy", *_video_args(info, opts, crf), *_audio_args(info, opts),
+           "-map", "0:s?", "-map", "0:t?", "-c", "copy", *_video_args(info, opts, crf, rate=opts["mode"] == "rate"), *_audio_args(info, opts),
            "-progress", "pipe:1", "-nostats", out]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
@@ -366,6 +426,14 @@ def verify(src: str, out: str, info: dict, opts: dict, work: str) -> dict:
         scores.append(round(vmaf(z, a), 2))
         for p in (a, z):
             os.remove(p)
-    if min(scores) < opts["vmaf"] - CHECK_SLACK:
+    if opts["mode"] == "rate":
+        # the quality is the user's choice by the preview — only a result far below it is broken
+        floor = float(opts.get("expect_vmaf") or 0) - RATE_SLACK
+        got = video_mbps(b)
+        if got > opts["mbps"] * 1.2:
+            raise ShrinkError(f"Datový tok obrazu {got:.2f} Mb/s místo {opts['mbps']:g}")
+    else:
+        floor = opts["vmaf"] - CHECK_SLACK
+    if min(scores) < floor:
         raise ShrinkError(f"Kvalita výsledku pod cílem (VMAF {', '.join(f'{s:g}' for s in scores)})")
-    return {"vmaf_check": scores, "size": os.path.getsize(out)}
+    return {"vmaf_check": scores, "size": os.path.getsize(out), "mbps": round(video_mbps(b), 2)}

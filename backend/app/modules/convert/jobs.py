@@ -208,9 +208,10 @@ async def _run_plan(job: dict) -> dict:
     finally:
         shutil.rmtree(work, ignore_errors=True)
     note = data.get("note") or (f"{data['src_size'] / 1024**3:.2f} GB → ~{data['est_size'] / 1024**3:.2f} GB "
-                                f"(−{data['saving']:g} %), VMAF {data['vmaf']:g}, CRF {data['crf']:g}")
+                                f"(−{data['saving']:g} %), obraz {data.get('src_mbps', 0):g} → {data.get('mbps', 0):g} Mb/s, "
+                                f"VMAF {data['vmaf']:g}")
     if opts["go"] and data.get("decision") == "ok":
-        await enqueue("shrink", [src], bool(job["auto"]), {**opts, "crf": data["crf"], "plan_id": job["id"]})
+        await enqueue("shrink", [src], bool(job["auto"]), {**opts, "crf": data["crf"], "plan_id": job["id"], "expect_vmaf": data.get("vmaf")})
         note += " · zařazeno ke kódování"
     return {"note": note, "data": data}
 

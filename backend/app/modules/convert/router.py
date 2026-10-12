@@ -157,7 +157,7 @@ async def shrink_from_plan(plan_id: int, body: ShrinkBody) -> dict:
     if not plan or plan["kind"] != "plan" or plan["status"] != "done" or not plan["result"].get("crf"):
         raise HTTPException(400, "Náhled není hotový")
     crf = body.crf if body.crf and shrink.CRF_RANGE[0] <= body.crf <= shrink.CRF_RANGE[1] else plan["result"]["crf"]
-    opts = {**plan["options"], "crf": crf, "plan_id": plan_id}
+    opts = {**plan["options"], "crf": crf, "plan_id": plan_id, "expect_vmaf": plan["result"].get("vmaf")}
     if body.force:
         opts["min_saving"] = 1          # still smaller than the original, or it stays
     added = await jobs.enqueue("shrink", [plan["path"]], options=opts)

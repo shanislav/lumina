@@ -18,7 +18,7 @@ export interface ShrinkScope { movie?: number; show?: number; season?: number; l
 /** window event: a film's window on the library page opens the tab for that film */
 export const OPEN_EVENT = "lumina:shrink";
 
-const DEFAULTS: ShrinkOptions = { vmaf: 95, speed: "balanced", max_height: 0, audio: "copy", min_saving: 25, go: false };
+const DEFAULTS: ShrinkOptions = { vmaf: 95, speed: "balanced", max_height: 0, audio: "copy", min_saving: 25, go: false, mode: "quality", mbps: 4 };
 const STORE = "lumina.shrink.options";
 
 const QUALITY = [
@@ -38,6 +38,9 @@ const TERMS = {
   crf: "Nastavení kodéru (0–51): menší číslo = lepší obraz a větší soubor, větší číslo = menší soubor a horší obraz. Nevybíráš ho ty — Lumina ho najde tak, aby vyšla zvolená kvalita (VMAF).",
   weight: "Kolikrát víc dat má soubor, než obraz v tomto rozlišení a kodeku běžně potřebuje. ×1 = akorát, ×2 = dvakrát víc. Hrubý odhad podle datového toku (počítá i zvuk) — kolik se dá doopravdy ušetřit, změří až náhled.",
   saving: "O kolik bude soubor menší. Odhad z krátkých vzorků — skutečnost bývá o pár procent jiná.",
+  rate: "Kolik dat za sekundu má obraz (megabity za sekundu) — čím víc, tím větší soubor a obvykle lepší obraz. Pro 1080p H.265 je 2–5 Mb/s běžné, pro 4K 10–20 Mb/s. Kolik obraz doopravdy potřebuje, záleží na něm (zrno, tma, pohyb chtějí víc).",
+  mode_quality: "Zvolíš kvalitu, Lumina najde nejmenší soubor, který ji drží. Velikost vyjde pro každý soubor jinak.",
+  mode_rate: "Zvolíš datový tok (velikost), Lumina ukáže, jakou kvalitu to dá. Každý soubor bude mít stejný tok, kvalita vyjde různě.",
   samples: "Pokusy na vzorcích: každý řádek je jedno CRF a VMAF, které s ním vyšlo. Hledá se nejvyšší CRF (nejmenší soubor), které ještě dosáhne cíle.",
 };
 
@@ -60,6 +63,10 @@ function Help() {
           úspora byla moc malá, originál zůstane.</p>
         <p><b className="text-zinc-200">Jak dlouho?</b> Záleží jen na výkonu počítače, na kterém Lumina běží (a na délce a rozlišení
           filmu). Náhled si rychlost změří přímo tady a ukáže odhad času překódování pro tenhle soubor.</p>
+        <p><b className="text-zinc-200">Kvalitou, nebo datovým tokem?</b> „Řídit kvalitou“: zvolíš, jak blízko originálu má obraz
+          být, a velikost vyjde pro každý soubor jinak. „Řídit datovým tokem“: zvolíš, kolik dat má obraz mít (tedy velikost), a náhled
+          ukáže, jakou kvalitu to dá — rozhodneš se sám, jestli je přijatelná. Stejný tok ale neznamená stejnou kvalitu: zrnitý nebo
+          tmavý díl potřebuje víc dat než klidný.</p>
         <p><b className="text-zinc-200">VMAF</b> — {TERMS.vmaf}</p>
         <p><b className="text-zinc-200">CRF</b> — {TERMS.crf}</p>
         <p><b className="text-zinc-200">×</b> — {TERMS.weight}</p>
@@ -168,21 +175,42 @@ export default function ShrinkTab({ jobs, phase, onChanged, scope, onClearScope 
       {error && <p className="rounded-lg bg-red-950/60 px-3 py-2 text-red-300">{error}</p>}
 
       <section className="grid gap-3 rounded-lg border border-zinc-800 p-3 sm:grid-cols-2">
-        <label className="space-y-1">
-          <span className="text-xs text-zinc-400">Kvalita (<Term k="vmaf">VMAF</Term> — jak blízko originálu)</span>
-          <select value={QUALITY.some((x) => x.v === opts.vmaf) ? opts.vmaf : "custom"}
-            onChange={(e) => e.target.value !== "custom" && set({ vmaf: Number(e.target.value) })}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-200">
-            {QUALITY.map((x) => <option key={x.v} value={x.v}>{x.label}</option>)}
-            <option value="custom">vlastní…</option>
-          </select>
-          <span className="flex items-center gap-2 text-xs text-zinc-500">
-            {QUALITY.find((x) => x.v === opts.vmaf)?.hint ?? "Vlastní cíl"}
-            <input type="number" min={80} max={99} step={0.5} value={opts.vmaf}
-              onChange={(e) => set({ vmaf: Number(e.target.value) || 95 })}
-              className="ml-auto w-16 rounded border border-zinc-700 bg-zinc-800 px-1 text-right text-zinc-200" />
-          </span>
-        </label>
+        <div className="space-y-1">
+          <div className="flex gap-1 text-xs">
+            {([["quality", "Řídit kvalitou"], ["rate", "Řídit datovým tokem"]] as const).map(([m, label]) => (
+              <button key={m} onClick={() => set({ mode: m })} title={TERMS[m === "quality" ? "mode_quality" : "mode_rate"]}
+                className={`rounded-md px-2 py-0.5 ${opts.mode === m ? "bg-violet-600 text-white" : "text-zinc-400 hover:text-zinc-200"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {opts.mode === "quality" ? (
+            <label className="block space-y-1">
+              <span className="text-xs text-zinc-400">Kvalita (<Term k="vmaf">VMAF</Term> — jak blízko originálu)</span>
+              <select value={QUALITY.some((x) => x.v === opts.vmaf) ? opts.vmaf : "custom"}
+                onChange={(e) => e.target.value !== "custom" && set({ vmaf: Number(e.target.value) })}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-200">
+                {QUALITY.map((x) => <option key={x.v} value={x.v}>{x.label}</option>)}
+                <option value="custom">vlastní…</option>
+              </select>
+              <span className="flex items-center gap-2 text-xs text-zinc-500">
+                {QUALITY.find((x) => x.v === opts.vmaf)?.hint ?? "Vlastní cíl"}
+                <input type="number" min={80} max={99} step={0.5} value={opts.vmaf}
+                  onChange={(e) => set({ vmaf: Number(e.target.value) || 95 })}
+                  className="ml-auto w-16 rounded border border-zinc-700 bg-zinc-800 px-1 text-right text-zinc-200" />
+              </span>
+            </label>
+          ) : (
+            <label className="block space-y-1">
+              <span className="text-xs text-zinc-400"><Term k="rate">Datový tok obrazu</Term> (Mb/s)</span>
+              <input type="number" min={0.2} max={80} step={0.1} value={opts.mbps}
+                onChange={(e) => set({ mbps: Number(e.target.value) || 4 })}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-200" />
+              <span className="text-xs text-zinc-500">Soubor bude mít obraz s tímto tokem (zvuk zůstává navíc). Náhled ukáže, jakou kvalitu
+                (VMAF) to dá — rozhodneš se, jestli je přijatelná. Soubory s nižším tokem se nechají.</span>
+            </label>
+          )}
+        </div>
         <label className="space-y-1">
           <span className="text-xs text-zinc-400">Rychlost (mění čas a velikost, ne kvalitu)</span>
           <select value={opts.speed} onChange={(e) => set({ speed: e.target.value as ShrinkOptions["speed"] })}
@@ -297,13 +325,21 @@ export default function ShrinkTab({ jobs, phase, onChanged, scope, onClearScope 
                   <>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-300">
                       <span>{gb(r.src_size)} → <b className="text-emerald-300">~{gb(r.est_size ?? 0)}</b> (<Term k="saving">−{r.saving} %</Term>)</span>
-                      <span><Term k="vmaf">VMAF</Term> {r.vmaf} (cíl {r.options.vmaf})</span>
+                      {r.src_mbps != null && r.mbps != null && <span><Term k="rate">obraz</Term> {r.src_mbps} → {r.mbps} Mb/s</span>}
+                      <span className={(r.vmaf ?? 100) < 90 ? "text-amber-300" : ""}>
+                        <Term k="vmaf">VMAF</Term> {r.vmaf}{r.options.mode === "rate" ? "" : ` (cíl ${r.options.vmaf})`}
+                      </span>
                       <span><Term k="crf">CRF</Term> {r.crf}</span>
                       <span>kódování ~{dur(r.est_seconds ?? 0)}</span>
                     </div>
+                    {(r.vmaf ?? 100) < 90 && (
+                      <div className="text-amber-300">
+                        Kvalita pod 90 — rozdíl proti originálu bude vidět. Prohlédni si snímky, než se rozhodneš.
+                      </div>
+                    )}
                     {r.trials && (
                       <div className="text-zinc-500">
-                        <Term k="samples">Vzorky</Term>: {r.trials.map((t) => `CRF ${t.crf} → VMAF ${t.vmaf}`).join(" · ")}
+                        <Term k="samples">Vzorky</Term>: {r.trials.map((t) => `CRF ${t.crf} → ${t.mbps != null ? `${t.mbps} Mb/s, ` : ""}VMAF ${t.vmaf}`).join(" · ")}
                       </div>
                     )}
                     {r.stills && (

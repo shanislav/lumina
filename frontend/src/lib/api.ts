@@ -2249,12 +2249,12 @@ export const getConvertJobs = () =>
   convertCall<{ jobs: ConvertJob[]; current: { id?: number; phase?: string; value?: number | null }; phases: Record<string, string> }>("/jobs");
 export const startConvertDv = (paths: string[]) => convertCall<{ added: number }>("/dv", jsonBody("POST", { paths }));
 
-export interface ShrinkOptions { vmaf: number; speed: "small" | "balanced" | "fast"; max_height: number; audio: "copy" | "shrink"; min_saving: number; go: boolean }
+export interface ShrinkOptions { vmaf: number; speed: "small" | "balanced" | "fast"; max_height: number; audio: "copy" | "shrink"; min_saving: number; go: boolean; mode: "quality" | "rate"; mbps: number }
 export interface ShrinkFile { path: string; kind: "movie" | "episode"; group: string; title: string; size: number; codec: string; height: number; mbps: number; hdr: string; weight: number }
 export interface ShrinkPlan {
-  src_size: number; duration: number; codec: string; height: number; options: ShrinkOptions; decision: string; note: string;
+  src_size: number; duration: number; codec: string; height: number; options: ShrinkOptions; decision: string; note: string; src_mbps?: number; mbps?: number;
   crf?: number; vmaf?: number; est_size?: number; saving?: number; est_seconds?: number;
-  trials?: { crf: number; vmaf: number; size: number }[]; stills?: { a: string; b: string }[];
+  trials?: { crf: number; vmaf: number; size: number; mbps?: number }[]; stills?: { a: string; b: string }[];
 }
 export const getShrinkCandidates = (q: string, byWeight = false, scope?: { movie?: number; show?: number; season?: number } | null) =>
   convertCall<{ files: ShrinkFile[]; total: number }>(`/shrink/candidates?q=${scope ? "" : encodeURIComponent(q)}&by_weight=${byWeight}${scope?.movie ? `&movie=${scope.movie}` : ""}${scope?.show ? `&show=${scope.show}` : ""}${scope?.season != null ? `&season=${scope.season}` : ""}`);

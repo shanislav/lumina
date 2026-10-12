@@ -118,7 +118,9 @@ from app.modules.convert import shrink  # noqa: E402
 
 def test_the_users_choices_are_checked():
     o = shrink.options({"vmaf": "93", "speed": "warp", "max_height": "1080", "audio": "shrink", "min_saving": 500, "go": 1})
-    assert o == {"vmaf": 93.0, "speed": "balanced", "max_height": 1080, "audio": "shrink", "min_saving": 80, "go": True}
+    assert o == {"vmaf": 93.0, "speed": "balanced", "max_height": 1080, "audio": "shrink", "min_saving": 80, "go": True,
+                 "mode": "quality", "mbps": 4.0}
+    assert shrink.options({"mode": "rate", "mbps": "2.5"})["mbps"] == 2.5
     assert shrink.options({"vmaf": 20})["vmaf"] == 95                      # nonsense → the default
     assert shrink.options(None) == shrink.DEFAULTS
 
@@ -161,3 +163,13 @@ def test_two_encodes_when_the_first_guess_is_close(monkeypatch):
                         {"crf": crf, "vmaf": seen[crf], "size": 1, "seconds": 1})
     best, trials = shrink.find_crf("ref", {"height": 1080}, {"vmaf": 95}, "w")
     assert best["crf"] == 22 and [t["crf"] for t in trials] == [22, 23]
+
+
+def test_rate_mode_finds_the_crf_giving_the_users_bitrate(monkeypatch):
+    # the samples' bitrate halves every 6 CRF: 4 Mb/s at CRF 22 → 2 Mb/s at CRF 28
+    def fake(ref, info, opts, crf, work):
+        return {"crf": crf, "vmaf": 100 - crf, "size": int(4e6 / 8 * 32 * 2 ** ((22 - crf) / 6)), "seconds": 1,
+                "duration": 32, "paths": []}
+    monkeypatch.setattr(shrink, "encode_sample", fake)
+    best, trials = shrink.find_crf_for_rate("ref", {"height": 1080}, {"mbps": 2.0}, "w")
+    assert best["crf"] == 28 and best["vmaf"] == 72 and len(trials) == 2
