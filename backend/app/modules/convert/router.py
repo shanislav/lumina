@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import unicodedata
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -104,15 +105,21 @@ async def _roots() -> list[str]:
     return [os.path.normpath(r) + os.sep for r in (movies_library_dir(cfg), tv_library_dir(cfg)) if r]
 
 
+def _fold(text: str) -> str:
+    """"Sběratelé kostí" → "sberatele kosti": the search needs no accents."""
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+
+
 @router.get("/shrink/candidates", dependencies=[Depends(require("convert"))])
-async def shrink_candidates(q: str = "", all: bool = False, by_weight: bool = False) -> dict:
-    """Library files to shrink: by default the ones well above a plenty bitrate, the heaviest first; ``q`` filters
-    by title / show, ``all`` shows every one."""
+async def shrink_candidates(q: str = "", by_weight: bool = False) -> dict:
+    """Library files to shrink: without a search the ones well above a plenty bitrate; a search (title / show /
+    file name, accents not needed) looks through the whole library."""
     files = await _library_files(await _roots())
-    needle = q.strip().lower()
-    if needle:
-        files = [f for f in files if needle in f"{f['group']} {f['title']} {os.path.basename(f['path'])}".lower()]
-    if not all:
+    words = _fold(q).split()
+    if words:
+        files = [f for f in files
+                 if all(w in _fold(f"{f['group']} {f['title']} {os.path.basename(f['path'])}") for w in words)]
+    else:
         files = [f for f in files if f["weight"] >= 1.3]
     files.sort(key=(lambda f: -f["weight"]) if by_weight else (lambda f: (f["group"] != "Filmy", f["group"], f["title"])))
     return {"files": files[:600], "total": len(files)}

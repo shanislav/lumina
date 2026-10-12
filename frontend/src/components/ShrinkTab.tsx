@@ -83,7 +83,6 @@ function loadOptions(): ShrinkOptions {
 export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob[]; phase: string; onChanged: () => void }) {
   const [opts, setOpts] = useState<ShrinkOptions>(DEFAULTS);
   const [q, setQ] = useState("");
-  const [all, setAll] = useState(false);
   const [byWeight, setByWeight] = useState(false);
   const [files, setFiles] = useState<ShrinkFile[]>([]);
   const [total, setTotal] = useState(0);
@@ -101,13 +100,13 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
 
   const load = useCallback(async () => {
     try {
-      const r = await getShrinkCandidates(q, all, byWeight);
+      const r = await getShrinkCandidates(q, byWeight);
       setFiles(r.files);
       setTotal(r.total);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [q, all, byWeight]);
+  }, [q, byWeight]);
   useEffect(() => {
     const t = setTimeout(load, 300);
     return () => clearTimeout(t);
@@ -213,11 +212,8 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
 
       <section className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Hledat film nebo seriál…"
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Hledat v celé knihovně — film, seriál (např. kosti)…"
             className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-zinc-200" />
-          <label className="flex items-center gap-1 text-xs text-zinc-400">
-            <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> i soubory s rozumnou velikostí
-          </label>
           <button onClick={() => setByWeight(!byWeight)}
             title="×: kolikrát víc dat, než obraz v tomto rozlišení a kodeku běžně potřebuje (hrubý odhad — přesně to změří náhled)"
             className={`rounded-lg border px-2.5 py-1.5 text-xs ${byWeight ? "border-violet-500 text-violet-300" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>
@@ -229,7 +225,8 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
           </button>
         </div>
         <p className="text-xs text-zinc-500">
-          {all ? "Všechny soubory knihovny" : "Soubory s datovým tokem výrazně nad tím, co obraz potřebuje"} — {total}.
+          {q.trim() ? `Nalezeno v knihovně: ${total}` : `Bez hledání: soubory, které mají výrazně víc dat, než obraz potřebuje — ${total}`}.
+          {total > files.length && ` Zobrazeno prvních ${files.length} — upřesni hledání.`}
           Náhled zakóduje pár krátkých vzorků, změří kvalitu a ukáže odhad velikosti, času a snímky k porovnání. Soubor zatím nemění.
         </p>
         <div className="max-h-80 overflow-y-auto rounded-lg border border-zinc-800">
