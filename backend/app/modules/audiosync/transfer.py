@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 VERIFY_WINDOWS = 6
 VERIFY_TYPICAL = 0.06         # seconds — the typical (median) offset must be within lip-sync tolerance
 VERIFY_MAX = 0.2              # single pieces may be noisier (measured the same way as the analysis)
-NEAR_CUT_S = (3, 15, 30, 45, 60)  # where next to a cut the result is checked (the first trustworthy one counts)
+# where next to a cut the result is checked (the first trustworthy one counts) — after an ad break a minute
+# or more of dialogue may give no trustworthy match (two dubs differ)
+NEAR_CUT_S = (3, 15, 30, 45, 60, 90, 120)
 
 
 class TransferError(Exception):
