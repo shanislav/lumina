@@ -48,7 +48,7 @@ POLL_S = 60
 KINDS = {"dv": "Přebalení Dolby Vision do MP4", "plan": "Náhled zmenšení", "shrink": "Zmenšení souboru"}
 PHASES = {"remux": "přebaluji", "verify": "kontroluji výsledek", "library": "předávám knihovně",
           "samples": "vybírám vzorky", "sample": "zkouším kvalitu na vzorcích", "stills": "připravuji snímky",
-          "encode": "kóduji"}
+          "encode": "kóduji", "upload": "nahrávám výsledek na server"}
 
 _wake = asyncio.Event()
 _task: asyncio.Task | None = None

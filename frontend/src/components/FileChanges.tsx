@@ -5,7 +5,7 @@
  * Android TV players do not play — and the queue. A button in the library's header; the list opens over the page.
  */
 import { useCallback, useEffect, useState } from "react";
-import ShrinkTab, { OPEN_EVENT, ShrinkScope } from "@/components/ShrinkTab";
+import ShrinkTab, { OPEN_EVENT, ShrinkScope, runningText } from "@/components/ShrinkTab";
 import WorkersTab from "@/components/WorkersTab";
 import { ConvertCandidate, ConvertJob, getConvertCandidates, getConvertJobs, startConvertDv } from "@/lib/api";
 
@@ -161,8 +161,8 @@ export default function FileChanges() {
                 <ul className="divide-y divide-zinc-800 rounded-lg border border-zinc-800 text-xs">
                   {jobs.filter((j) => j.kind !== "plan").map((j) => (
                     <li key={j.id} className="flex items-start gap-3 px-3 py-2">
-                      <span className={`w-20 shrink-0 ${STATUS[j.status].cls}`}>
-                        {STATUS[j.status].label}{j.status === "running" && phase ? ` — ${phase}` : ""}
+                      <span className={`w-28 shrink-0 ${STATUS[j.status].cls}`}>
+                        {j.status === "running" ? runningText(j, phase, phases) : STATUS[j.status].label}
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-zinc-300" title={j.path}>{base(j.result_path || j.path)}</div>

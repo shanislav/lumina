@@ -86,7 +86,7 @@ const dur = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round(
 const base = (p: string) => p.split("/").pop() ?? p;
 
 /** A running job's state: the server's own (its phase now) or a worker's last report. */
-function runningText(j: ConvertJob, phase: string, phases: Record<string, string>): string {
+export function runningText(j: ConvertJob, phase: string, phases: Record<string, string>): string {
   if (!j.worker_id) return `probíhá — ${phase || "…"}`;
   const p = j.progress || {};
   if (p.paused) return `na pracovníkovi — pozastaveno (${p.paused})`;

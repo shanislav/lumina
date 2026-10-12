@@ -64,7 +64,7 @@ HELP = {
     "give_back_after_hours": "a job paused this long goes back to Lumina (the server or another worker takes it)",
 }
 REPORT_S = 30
-CHECK_S = 5
+CHECK_S = 2                 # how often the worker looks (its new encoders get full speed within this)
 LOAD_WINDOW_S = 60          # the CPU load of other programs: averaged over this
 RESUME_AFTER_S = 60         # paused for load: goes on after this long below the limit
 
@@ -126,6 +126,25 @@ def _idle_minutes() -> float:
     return (ctypes.windll.kernel32.GetTickCount() - info.dwTime) / 60000
 
 
+def full_speed(pid: int) -> None:
+    """Windows 11 puts a process without a window into its power-saving mode (EcoQoS: efficiency cores, low
+    clocks) — the encoder ran at ~60 % of its speed. It is switched off for each of the worker's encoders (the
+    low priority stays: other programs still go first)."""
+    if os.name != "nt":
+        return
+    from ctypes import wintypes
+
+    class Throttling(ctypes.Structure):
+        _fields_ = [("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG), ("StateMask", wintypes.ULONG)]
+    k32 = ctypes.windll.kernel32
+    handle = k32.OpenProcess(0x0200, False, pid)          # PROCESS_SET_INFORMATION
+    if not handle:
+        return
+    state = Throttling(1, 0x1 | 0x4, 0)                   # execution speed + timer resolution: managed, not throttled
+    k32.SetProcessInformation(handle, 4, ctypes.byref(state), ctypes.sizeof(state))   # ProcessPowerThrottling
+    k32.CloseHandle(handle)
+
+
 class Watch:
     """Whether the worker may work now, and the CPU load of the other programs (its own encoder not counted)."""
 
@@ -155,6 +174,7 @@ class Watch:
             try:
                 if known is None:
                     p.cpu_percent(None)             # the first call only starts its measurement
+                    full_speed(p.pid)
                     alive[p.pid], fresh = p, True
                 else:
                     own += known.cpu_percent(None)
