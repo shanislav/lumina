@@ -32,6 +32,7 @@ CREATE INDEX IF NOT EXISTS idx_convert_jobs_status ON convert_jobs(status);
 """
 
 WORK_DIR = ".lumina-convert"
+POLL_S = 60
 KINDS = {"dv": "Přebalení Dolby Vision do MP4"}
 PHASES = {"remux": "přebaluji", "verify": "kontroluji výsledek", "library": "předávám knihovně"}
 
@@ -121,7 +122,10 @@ async def _loop() -> None:
         job = await _next()
         if not job:
             _wake.clear()
-            await _wake.wait()
+            try:                         # a job queued by another process (a script) is found within a minute
+                await asyncio.wait_for(_wake.wait(), POLL_S)
+            except asyncio.TimeoutError:
+                pass
             continue
         current.clear()
         current.update(id=job["id"], kind=job["kind"], path=job["path"], phase="")
