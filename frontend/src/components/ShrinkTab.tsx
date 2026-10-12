@@ -7,6 +7,7 @@
  * enough).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ConvertJob, ShrinkFile, ShrinkOptions, ShrinkPlan, convertPreviewUrl, dropConvertJob, getShrinkCandidates,
   startShrink, startShrinkPlan,
@@ -254,12 +255,12 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
                     )}
                     <div className="flex items-center gap-2">
                       {encoding ? <span className="text-sky-300">kóduje se / ve frontě</span> : (
-                        <button disabled={busy} onClick={() => run(() => startShrink(j.id))}
+                        <button disabled={busy} onClick={() => run(() => startShrink(j.id, undefined, r.decision === "low_saving"))}
                           className="rounded-lg bg-violet-600 px-3 py-1.5 font-medium text-white hover:bg-violet-500 disabled:opacity-40">
-                          Překódovat
+                          {r.decision === "low_saving" ? "Překódovat i tak" : "Překódovat"}
                         </button>
                       )}
-                      {r.decision === "low_saving" && <span className="text-zinc-500">(úspora pod limitem — kódování by soubor nechalo)</span>}
+                      {r.decision === "low_saving" && <span className="text-zinc-500">úspora je pod tvým limitem — soubor se nahradí i tak</span>}
                     </div>
                   </>
                 )}
@@ -269,7 +270,7 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
         </section>
       )}
 
-      {compare && (
+      {compare && createPortal(
         <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-3 bg-black/95 p-4" onClick={() => setCompare(null)}>
           <div className="flex items-center gap-3 text-sm" onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setCompare({ ...compare, side: "a" })}
@@ -282,7 +283,8 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
           <img src={convertPreviewUrl(compare.job, compare.shots[compare.i][compare.side])} alt=""
             className="max-h-[85vh] max-w-full cursor-pointer object-contain"
             onClick={(e) => { e.stopPropagation(); setCompare({ ...compare, side: compare.side === "a" ? "b" : "a" }); }} />
-        </div>
+        </div>,
+        document.body,   // over the whole page — the panel's blurred backdrop would hold a fixed element inside it
       )}
     </div>
   );

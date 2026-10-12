@@ -135,6 +135,7 @@ async def shrink_plan(body: PlanBody) -> dict:
 
 class ShrinkBody(BaseModel):
     crf: float | None = None          # another than the plan found (the user's choice)
+    force: bool = False               # the saving is under the user's limit — replace anyway
 
 
 @router.post("/shrink/{plan_id}", dependencies=[Depends(require("convert"))])
@@ -143,7 +144,10 @@ async def shrink_from_plan(plan_id: int, body: ShrinkBody) -> dict:
     if not plan or plan["kind"] != "plan" or plan["status"] != "done" or not plan["result"].get("crf"):
         raise HTTPException(400, "Náhled není hotový")
     crf = body.crf if body.crf and shrink.CRF_RANGE[0] <= body.crf <= shrink.CRF_RANGE[1] else plan["result"]["crf"]
-    added = await jobs.enqueue("shrink", [plan["path"]], options={**plan["options"], "crf": crf, "plan_id": plan_id})
+    opts = {**plan["options"], "crf": crf, "plan_id": plan_id}
+    if body.force:
+        opts["min_saving"] = 1          # still smaller than the original, or it stays
+    added = await jobs.enqueue("shrink", [plan["path"]], options=opts)
     return {"added": added}
 
 

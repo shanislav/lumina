@@ -2260,7 +2260,7 @@ export const getShrinkCandidates = (q: string, all: boolean) =>
   convertCall<{ files: ShrinkFile[]; total: number }>(`/shrink/candidates?q=${encodeURIComponent(q)}&all=${all}`);
 export const startShrinkPlan = (paths: string[], options: ShrinkOptions) =>
   convertCall<{ added: number }>("/shrink/plan", jsonBody("POST", { paths, options }));
-export const startShrink = (planId: number, crf?: number) =>
-  convertCall<{ added: number }>(`/shrink/${planId}`, jsonBody("POST", { crf: crf ?? null }));
+export const startShrink = (planId: number, crf?: number, force = false) =>
+  convertCall<{ added: number }>(`/shrink/${planId}`, jsonBody("POST", { crf: crf ?? null, force }));
 export const dropConvertJob = (id: number) => convertCall<{ ok: boolean }>(`/jobs/${id}`, { method: "DELETE" });
 export const convertPreviewUrl = (jobId: number, name: string) => `${API_BASE}/api/convert/preview/${jobId}/${name}`;
