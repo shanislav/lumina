@@ -15,7 +15,8 @@ DB_PATH = Path("data/lumina.db")
 
 
 async def get_db() -> aiosqlite.Connection:
-    db = await aiosqlite.connect(DB_PATH)
+    # a library scan writes in long transactions: a click meanwhile waits for it instead of "database is locked"
+    db = await aiosqlite.connect(DB_PATH, timeout=30)
     db.row_factory = aiosqlite.Row
     await db.execute("PRAGMA journal_mode=WAL")
     return db
