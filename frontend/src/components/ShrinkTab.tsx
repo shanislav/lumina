@@ -29,9 +29,9 @@ const SPEED = [
 
 // short explanations of the words on this tab (hover / tap); the long ones are in "Jak to funguje?"
 const TERMS = {
-  vmaf: "VMAF = skóre 0–100, jak moc se nový obraz podobá originálu očima diváka (měřítko od Netflixu). 95 a víc: rozdíl neuvidíš ani vedle sebe. 93: jen při přímém porovnání. 90: při pozorném sledování. Pod 85: rozdíl je zřejmý.",
-  crf: "CRF = nastavení kodéru (0–51): menší číslo = lepší obraz a větší soubor, větší číslo = menší soubor a horší obraz. Nevybíráš ho ty — Lumina ho najde tak, aby vyšla zvolená kvalita (VMAF).",
-  weight: "× = kolikrát víc dat má soubor, než obraz v tomto rozlišení a kodeku běžně potřebuje. ×1 = akorát, ×2 = dvakrát víc. Hrubý odhad podle datového toku (počítá i zvuk) — kolik se dá doopravdy ušetřit, změří až náhled.",
+  vmaf: "Skóre 0–100, jak moc se nový obraz podobá originálu očima diváka (měřítko od Netflixu). 95 a víc: rozdíl neuvidíš ani vedle sebe. 93: jen při přímém porovnání. 90: při pozorném sledování. Pod 85: rozdíl je zřejmý.",
+  crf: "Nastavení kodéru (0–51): menší číslo = lepší obraz a větší soubor, větší číslo = menší soubor a horší obraz. Nevybíráš ho ty — Lumina ho najde tak, aby vyšla zvolená kvalita (VMAF).",
+  weight: "Kolikrát víc dat má soubor, než obraz v tomto rozlišení a kodeku běžně potřebuje. ×1 = akorát, ×2 = dvakrát víc. Hrubý odhad podle datového toku (počítá i zvuk) — kolik se dá doopravdy ušetřit, změří až náhled.",
   saving: "O kolik bude soubor menší. Odhad z krátkých vzorků — skutečnost bývá o pár procent jiná.",
   samples: "Pokusy na vzorcích: každý řádek je jedno CRF a VMAF, které s ním vyšlo. Hledá se nejvyšší CRF (nejmenší soubor), které ještě dosáhne cíle.",
 };
