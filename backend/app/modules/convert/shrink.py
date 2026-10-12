@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ SAMPLES = (0.15, 0.38, 0.62, 0.85)        # where in the film the samples are (s
 SAMPLE_S = 8
 PREROLL_S = 5                              # decoded before a sample and thrown away (see cut_samples)
 SAMPLE_EVERY = 3                           # samples' VMAF from every 3rd frame
+THREADS_PER_SAMPLE = 6                     # samples encoded at once: one per this many CPU threads
 VMAF_PER_CRF = 0.6                         # VMAF falls about this much per CRF step (x265; first guess only)
 CRF_RANGE = (14, 34)
 CHECK_AT = (0.3, 0.7)                      # the full result's own check: VMAF of these windows …
@@ -230,8 +232,9 @@ def cut_samples(path: str, info: dict, work: str) -> list[str]:
     broken frames until its references fill up (open GOP), and noise like that cannot be encoded well — a sample
     beginning with it measured VMAF 65 at any CRF. Not joined into one file either: a transport stream's
     timestamps break at the joins and frames slip against each other."""
-    return [window(path, info["duration"] * share, SAMPLE_S, os.path.join(work, f"sample{k}.mkv"))
-            for k, share in enumerate(SAMPLES)]
+    parts = [os.path.join(work, f"sample{k}.mkv") for k in range(len(SAMPLES))]
+    _together(lambda k: window(path, info["duration"] * SAMPLES[k], SAMPLE_S, parts[k]), len(SAMPLES))
+    return parts
 
 
 def window(path: str, at: float, length: float, out: str) -> str:
@@ -258,20 +261,40 @@ def vmaf(distorted: str, reference: str, every: int = 1) -> float:
     return float(found[-1])
 
 
+def _together(fn, count: int) -> None:
+    """``fn(0) … fn(count-1)``, as many at once as the CPU has room for (about one per 6 threads; the server's
+    4 threads: one by one). The first error is raised."""
+    at_once = max(1, min(count, (os.cpu_count() or 1) // THREADS_PER_SAMPLE))
+    if at_once == 1:
+        for k in range(count):
+            fn(k)
+        return
+    with ThreadPoolExecutor(max_workers=at_once) as pool:
+        for f in [pool.submit(fn, k) for k in range(count)]:
+            f.result()
+
+
 def encode_sample(refs: list[str], info: dict, opts: dict, crf: float, work: str) -> dict:
     """Every sample at ``crf``, each measured against its own reference → the joint trial (VMAF weighted by the
     samples' lengths, sizes and times summed)."""
-    paths, scores, weights, size, spent = [], [], [], 0, 0.0
-    for k, ref in enumerate(refs):
-        out = os.path.join(work, f"crf{crf:g}_{k}.mkv")
-        t0 = time.time()
-        _run([*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", ref, "-map", "0:v:0",
-              *_video_args(info, opts, crf), out], 6 * 3600)
-        spent += time.time() - t0
-        size += os.path.getsize(out)
-        scores.append(vmaf(out, ref, SAMPLE_EVERY))
-        weights.append(probe(ref)["duration"] or SAMPLE_S)
-        paths.append(out)
+    paths = [os.path.join(work, f"crf{crf:g}_{k}.mkv") for k in range(len(refs))]
+
+    def encode_one(k: int) -> None:
+        _run([*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", refs[k], "-map", "0:v:0",
+              *_video_args(info, opts, crf), paths[k]], 6 * 3600)
+
+    # an 8 s sample never fills a many-core CPU (the encoder's pipeline barely starts): several at once there;
+    # the wall time of all of them is what the whole film will take per frame
+    t0 = time.time()
+    _together(encode_one, len(refs))
+    spent = time.time() - t0
+    scores = [0.0] * len(refs)
+
+    def measure(k: int) -> None:
+        scores[k] = vmaf(paths[k], refs[k], SAMPLE_EVERY)
+    _together(measure, len(refs))
+    weights = [probe(ref)["duration"] or SAMPLE_S for ref in refs]
+    size = sum(os.path.getsize(p) for p in paths)
     score = sum(s * w for s, w in zip(scores, weights)) / sum(weights)
     return {"crf": crf, "vmaf": round(score, 2), "size": size, "seconds": spent, "paths": paths,
             "duration": sum(weights), "worst": round(min(scores), 2)}
