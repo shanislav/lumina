@@ -1,8 +1,11 @@
 FROM python:3.11-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# MediaInfo (file details), ffmpeg (audio analysis, preview clips), mkvtoolnix (muxing audio tracks)
-RUN apt-get update && apt-get install -y --no-install-recommends libmediainfo0v5 ffmpeg mkvtoolnix \
+# ffmpeg (audio analysis, preview clips): a pinned static build — the audio sync's thresholds are tuned on its
+# decoding, and tests run locally on the same version
+COPY --from=mwader/static-ffmpeg:9.0.2 /ffmpeg /ffprobe /usr/local/bin/
+# MediaInfo (file details), mkvtoolnix (muxing audio tracks)
+RUN apt-get update && apt-get install -y --no-install-recommends libmediainfo0v5 mkvtoolnix \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
