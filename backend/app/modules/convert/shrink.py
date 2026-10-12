@@ -171,20 +171,16 @@ def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
     return run
 
 
-def cut_samples(path: str, info: dict, work: str) -> str:
-    """The video of a few places of the film, copied (no re-encoding) into one file — the reference."""
+def cut_samples(path: str, info: dict, work: str) -> list[str]:
+    """The video of a few places of the film, each copied (no re-encoding) into its own file — the references.
+    Not joined into one: a transport stream's timestamps break at the joins and frames slip against each other."""
     parts = []
     for k, share in enumerate(SAMPLES):
         part = os.path.join(work, f"sample{k}.mkv")
         _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{info['duration'] * share:.2f}", "-i", path,
               "-t", str(SAMPLE_S), "-map", "0:v:0", "-c", "copy", part], 600)
         parts.append(part)
-    listing = os.path.join(work, "samples.txt")
-    with open(listing, "w", encoding="utf-8") as f:
-        f.writelines(f"file '{os.path.basename(p)}'\n" for p in parts)
-    ref = os.path.join(work, "reference.mkv")
-    _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", listing, "-c", "copy", ref], 600)
-    return ref
+    return parts
 
 
 def vmaf(distorted: str, reference: str, seek: float = 0, length: float = 0) -> float:
@@ -202,16 +198,26 @@ def vmaf(distorted: str, reference: str, seek: float = 0, length: float = 0) -> 
     return float(found[-1])
 
 
-def encode_sample(ref: str, info: dict, opts: dict, crf: float, work: str) -> dict:
-    out = os.path.join(work, f"crf{crf:g}.mkv")
-    t0 = time.time()
-    _run([*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", ref, "-map", "0:v:0",
-          *_video_args(info, opts, crf), out], 6 * 3600)
-    spent = time.time() - t0
-    return {"crf": crf, "vmaf": round(vmaf(out, ref), 2), "size": os.path.getsize(out), "seconds": spent, "path": out}
+def encode_sample(refs: list[str], info: dict, opts: dict, crf: float, work: str) -> dict:
+    """Every sample at ``crf``, each measured against its own reference → the joint trial (VMAF weighted by the
+    samples' lengths, sizes and times summed)."""
+    paths, scores, weights, size, spent = [], [], [], 0, 0.0
+    for k, ref in enumerate(refs):
+        out = os.path.join(work, f"crf{crf:g}_{k}.mkv")
+        t0 = time.time()
+        _run([*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", ref, "-map", "0:v:0",
+              *_video_args(info, opts, crf), out], 6 * 3600)
+        spent += time.time() - t0
+        size += os.path.getsize(out)
+        scores.append(vmaf(out, ref))
+        weights.append(probe(ref)["duration"] or SAMPLE_S)
+        paths.append(out)
+    score = sum(s * w for s, w in zip(scores, weights)) / sum(weights)
+    return {"crf": crf, "vmaf": round(score, 2), "size": size, "seconds": spent, "paths": paths,
+            "duration": sum(weights), "worst": round(min(scores), 2)}
 
 
-def find_crf(ref: str, info: dict, opts: dict, work: str, progress=None) -> tuple[dict | None, list[dict]]:
+def find_crf(ref: list[str], info: dict, opts: dict, work: str, progress=None) -> tuple[dict | None, list[dict]]:
     """The highest CRF whose samples reach the target → (that trial or None, every trial). Bisection over whole
     numbers: ~4 encodes of the samples."""
     target = opts["vmaf"]
@@ -242,17 +248,17 @@ def find_crf(ref: str, info: dict, opts: dict, work: str, progress=None) -> tupl
     return lo_ok, trials
 
 
-def stills(ref: str, encoded: str, info: dict, out_dir: str) -> list[dict]:
+def stills(refs: list[str], encoded: list[str], info: dict, out_dir: str) -> list[dict]:
     """Frames of the original and the new one at the same moments (the middle of three samples) — tone-mapped
     for a normal screen when the film is HDR."""
     os.makedirs(out_dir, exist_ok=True)
     tone = ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,"
             "zscale=t=bt709:m=bt709:r=tv,format=yuv420p,") if info["hdr10"] else ""
     shots = []
-    for k in range(3):
-        at = SAMPLE_S * k + SAMPLE_S / 2
+    for k in range(min(3, len(refs))):
+        at = SAMPLE_S / 2
         names = {}
-        for label, src in (("a", ref), ("b", encoded)):
+        for label, src in (("a", refs[k]), ("b", encoded[k])):
             name = f"{k}{label}.jpg"
             _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{at:.2f}", "-i", src, "-frames:v", "1",
                   "-vf", f"{tone}scale='min(1920,iw)':-2", "-q:v", "2", os.path.join(out_dir, name)], 300)
@@ -273,14 +279,14 @@ def plan(path: str, opts: dict, work: str, preview_dir: str, progress=None) -> d
     os.makedirs(work, exist_ok=True)
     if progress:
         progress("samples")
-    ref = cut_samples(path, info, work)
-    ref_s = float(probe(ref)["duration"]) or SAMPLE_S * len(SAMPLES)
-    best, trials = find_crf(ref, info, opts, work, progress)
-    view = [{k: t[k] for k in ("crf", "vmaf", "size")} for t in trials]
+    refs = cut_samples(path, info, work)
+    best, trials = find_crf(refs, info, opts, work, progress)
+    view = [{k: t[k] for k in ("crf", "vmaf", "size", "worst")} for t in trials]
     if not best:
         return {**base, "decision": "quality", "trials": view,
                 "note": f"Ani CRF {CRF_RANGE[0]} nedosáhne VMAF {opts['vmaf']:g} — soubor nechávám"}
     audio = _audio_bytes(info, opts)
+    ref_s = best["duration"] or SAMPLE_S * len(SAMPLES)
     video_new = best["size"] / ref_s * info["duration"]
     est = int(video_new + audio + info["size"] * 0.002)          # + container, subtitles
     saving = round(100 * (1 - est / info["size"]), 1) if info["size"] else 0
@@ -289,7 +295,7 @@ def plan(path: str, opts: dict, work: str, preview_dir: str, progress=None) -> d
     est_seconds = int(best["seconds"] / max(1.0, sample_frames) * frames * 1.05)
     if progress:
         progress("stills")
-    shots = stills(ref, best["path"], info, preview_dir)
+    shots = stills(refs, best["paths"], info, preview_dir)
     decision = "ok" if saving >= opts["min_saving"] else "low_saving"
     note = "" if decision == "ok" else f"Ušetří jen {saving:g} % (méně než {opts['min_saving']} %)"
     return {**base, "decision": decision, "note": note, "crf": best["crf"], "vmaf": best["vmaf"], "est_size": est,
