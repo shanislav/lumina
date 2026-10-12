@@ -145,6 +145,15 @@ def full_speed(pid: int) -> None:
     k32.CloseHandle(handle)
 
 
+def stay_awake(on: bool) -> None:
+    """While a job runs the computer does not fall asleep by itself (Windows: a request of this program only, gone
+    with it — the power settings stay; closing the lid still does what it is set to)."""
+    if os.name != "nt":
+        return
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
+
+
 class Watch:
     """Whether the worker may work now, and the CPU load of the other programs (its own encoder not counted)."""
 
@@ -369,6 +378,7 @@ class Job:
         job = self.job
         guard = threading.Thread(target=self._guard, daemon=True)
         guard.start()
+        stay_awake(True)
         tmp = Path(self.cfg["work_dir"] or tempfile.gettempdir()) / "lumina-worker" / f"job{job['id']}"
         try:
             src = to_local(job["path"], self.cfg)
@@ -406,6 +416,7 @@ class Job:
                 except (RuntimeError, OSError):
                     pass
         finally:
+            stay_awake(False)
             self.stop.set()
             guard.join(timeout=10)
             shutil.rmtree(tmp, ignore_errors=True)
