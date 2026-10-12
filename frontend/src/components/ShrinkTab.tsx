@@ -47,12 +47,14 @@ function Help() {
       <div className="mt-2 space-y-2 leading-relaxed">
         <p><b className="text-zinc-200">Co se děje.</b> Video se znovu zakóduje úspornějším kodekem (H.265) tak, aby bylo menší, ale vypadalo
           (skoro) stejně. Zvuk a titulky zůstanou beze změny. Každé překódování trochu ubere — cílem je ubrat tak málo, aby to nebylo vidět.</p>
-        <p><b className="text-zinc-200">1. Náhled</b> (pár minut, soubor se nemění): Lumina vystřihne 4 krátké kousky filmu, zkusí je
+        <p><b className="text-zinc-200">1. Náhled</b> (soubor se nemění): Lumina vystřihne 4 krátké kousky filmu, zkusí je
           zakódovat s různým nastavením a změří, jak moc se podobají originálu. Najde nastavení, které dá nejmenší soubor při tvé
           zvolené kvalitě, a ukáže odhad velikosti, času a 3 snímky — originál a nový (přepínáš mezerníkem).</p>
-        <p><b className="text-zinc-200">2. Překódování</b> (dlouho — na serveru zhruba 2–3× délka filmu): celý soubor se zakóduje,
+        <p><b className="text-zinc-200">2. Překódování</b>: celý soubor se zakóduje,
           zkontroluje (délka, zvukové stopy, kvalita na dvou místech) a teprve pak nahradí originál. Když kontrola neprojde nebo by
           úspora byla moc malá, originál zůstane.</p>
+        <p><b className="text-zinc-200">Jak dlouho?</b> Záleží jen na výkonu počítače, na kterém Lumina běží (a na délce a rozlišení
+          filmu). Náhled si rychlost změří přímo tady a ukáže odhad času překódování pro tenhle soubor.</p>
         <p><b className="text-zinc-200">VMAF</b> — {TERMS.vmaf}</p>
         <p><b className="text-zinc-200">CRF</b> — {TERMS.crf}</p>
         <p><b className="text-zinc-200">×</b> — {TERMS.weight}</p>
