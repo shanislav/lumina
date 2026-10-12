@@ -146,3 +146,9 @@ def test_the_highest_crf_that_reaches_the_target(monkeypatch):
     assert best is None
     best, _ = shrink.find_crf("ref", {"height": 1080}, {"vmaf": 70}, "w")         # even the top CRF passes
     assert best["crf"] == shrink.CRF_RANGE[1]
+
+
+def test_frames_per_second_even_from_a_transport_stream():
+    assert shrink._fps({"avg_frame_rate": "0/0", "r_frame_rate": "24000/1001"}) == 24000 / 1001
+    assert shrink._fps({"avg_frame_rate": "25/1"}) == 25
+    assert shrink._fps({}) == 25.0

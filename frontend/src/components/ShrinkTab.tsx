@@ -195,8 +195,8 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
                 {list.map((f) => (
                   <label key={f.path} className="flex items-center gap-2 px-3 py-1 text-xs hover:bg-zinc-800/30" title={f.path}>
                     <input type="checkbox" checked={picked.has(f.path)} onChange={(e) => toggle([f.path], e.target.checked)} />
-                    <span className="w-24 shrink-0 text-zinc-300">{f.title}</span>
-                    <span className="min-w-0 flex-1 truncate text-zinc-500">{base(f.path)}</span>
+                    <span className="min-w-0 flex-1 truncate text-zinc-300 sm:w-24 sm:flex-none">{f.title}</span>
+                    <span className="hidden min-w-0 flex-1 truncate text-zinc-500 sm:block">{base(f.path)}</span>
                     <span className="shrink-0 text-zinc-400">{f.height}p {f.codec} {f.hdr && f.hdr !== "SDR" ? f.hdr : ""} · {f.mbps} Mb/s · {gb(f.size)}</span>
                     <span className={`w-10 shrink-0 text-right ${f.weight >= 2 ? "text-amber-300" : f.weight >= 1.3 ? "text-amber-200/70" : "text-zinc-500"}`}
                       title="Kolikrát víc dat, než obraz v tomto rozlišení a kodeku potřebuje">×{f.weight}</span>

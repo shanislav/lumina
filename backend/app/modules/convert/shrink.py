@@ -61,7 +61,7 @@ def probe(path: str) -> dict:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries",
          "format=duration,size,bit_rate:stream=index,codec_type,codec_name,profile,width,height,pix_fmt,channels,"
-         "bit_rate,color_primaries,color_transfer,color_space,avg_frame_rate:stream_tags=language,BPS,BPS-eng:"
+         "bit_rate,color_primaries,color_transfer,color_space,avg_frame_rate,r_frame_rate:stream_tags=language,BPS,BPS-eng:"
          "stream_side_data", "-of", "json", path], capture_output=True, text=True, timeout=120)
     if out.returncode != 0:
         raise ShrinkError(f"ffprobe: {out.stderr.strip()[-200:]}")
@@ -81,14 +81,24 @@ def probe(path: str) -> dict:
         rate = int(s.get("bit_rate") or tags.get("BPS") or tags.get("BPS-eng") or 0)
         audio.append({"index": s["index"], "codec": s.get("codec_name") or "", "profile": s.get("profile") or "",
                       "channels": s.get("channels") or 2, "bit_rate": rate})
-    fps = video.get("avg_frame_rate") or "25/1"
-    num, _, den = fps.partition("/")
     return {"duration": float(fmt.get("duration") or 0), "size": int(fmt.get("size") or os.path.getsize(path)),
             "video": video, "width": video.get("width") or 0, "height": video.get("height") or 0,
-            "codec": video.get("codec_name") or "", "fps": (float(num) / float(den or 1)) if num else 25.0,
+            "codec": video.get("codec_name") or "", "fps": _fps(video),
             "dv": any("DOVI" in k for k in side), "hdr10": video.get("color_transfer") == "smpte2084",
             "mastering": side.get("Mastering display metadata"), "light": side.get("Content light level metadata"),
             "audio": audio}
+
+
+def _fps(video: dict) -> float:
+    """Frames per second — a transport stream may say "0/0" in one of the two fields."""
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        n, _, d = str(video.get(key) or "").partition("/")
+        try:
+            if float(n) > 0 and float(d or 1) > 0:
+                return float(n) / float(d or 1)
+        except ValueError:
+            continue
+    return 25.0
 
 
 def _ratio(v, scale: int) -> int:

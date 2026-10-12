@@ -91,8 +91,8 @@ async def _library_files(roots: list[str]) -> list[dict]:
     files = []
     for f in out:
         m = f.pop("media")
-        if not any(os.path.normpath(f["path"]).startswith(r) for r in roots):
-            continue
+        if not any(os.path.normpath(f["path"]).startswith(r) for r in roots) or m.get("hdr") == "DV":
+            continue                    # Dolby Vision would be lost in re-encoding
         files.append({**f, "codec": m.get("video_codec") or "", "height": m.get("height") or 0,
                       "mbps": round((m.get("bitrate") or 0) / 1e6, 1), "hdr": m.get("hdr") or "",
                       "weight": _weight(m)})
