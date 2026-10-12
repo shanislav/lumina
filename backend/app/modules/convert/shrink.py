@@ -19,12 +19,14 @@ import time
 
 logger = logging.getLogger(__name__)
 
-SPEEDS = {"small": ("libx265", "slow"), "balanced": ("libx265", "medium"), "fast": ("libx265", "fast")}
+SPEEDS = {"small": ("libx265", "slow"), "balanced": ("libx265", "medium"), "fast": ("libx265", "fast"),
+          "gpu": ("hevc_nvenc", "p7")}         # NVIDIA's encoder (a worker's graphics card): fast, a bigger file
+WHERE = ("server", "worker", "any")        # who encodes: the server, a worker (the PC), whoever is free first
 QUALITIES = (95, 93, 90)
 # mode "quality": the user's VMAF target, the size follows; mode "rate": the user's video bitrate (Mb/s), the preview
 # tells the quality it gives — the user decides whether it is good enough
 DEFAULTS = {"vmaf": 95, "speed": "balanced", "max_height": 0, "audio": "copy", "min_saving": 25, "go": False,
-            "mode": "quality", "mbps": 4.0}
+            "mode": "quality", "mbps": 4.0, "where": "server"}
 RATE_CRF_MAX = 45                          # rate mode: a low bitrate may need a CRF above the quality search's range
 RATE_CLOSE = 0.07                          # a sample bitrate this close to the target is the one
 CRF_PER_HALF_SIZE = 6                      # x265: about +6 CRF halves the size (first guess of the next CRF)
@@ -39,7 +41,8 @@ CHECK_AT = (0.3, 0.7)                      # the full result's own check: VMAF o
 CHECK_S = 10
 CHECK_SLACK = 2.0                          # … may be this much under the target (samples are an estimate)
 BIG_AUDIO = ("truehd", "dts", "pcm", "flac")
-NICE = ["nice", "-n", "10"] if os.name == "posix" else []
+NICE = ["nice", "-n", "10"] if os.name == "posix" else []   # the encoder gives way to everything else …
+SPAWN = {"creationflags": 0x00004000} if os.name == "nt" else {}   # … on Windows too (a worker: BELOW_NORMAL)
 
 
 class ShrinkError(Exception):
@@ -64,6 +67,14 @@ def options(raw: dict | None) -> dict:
         pass
     o["go"] = bool(raw.get("go"))
     o["mode"] = "rate" if raw.get("mode") == "rate" else "quality"
+    o["where"] = raw.get("where") if raw.get("where") in WHERE else "server"
+    if o["speed"] == "gpu" and o["where"] == "server":
+        o["where"] = "worker"                       # the server has no NVIDIA card
+    if raw.get("threads"):                          # a worker's own limit (its settings), not the user's choice
+        try:
+            o["threads"] = max(1, int(raw["threads"]))
+        except (TypeError, ValueError):
+            pass
     if raw.get("expect_vmaf") is not None:          # rate mode: the quality the preview showed (the result's check)
         try:
             o["expect_vmaf"] = float(raw["expect_vmaf"])
@@ -161,9 +172,20 @@ def _video_args(info: dict, opts: dict, crf: float, rate: bool = False) -> list[
     """x265 10-bit at ``crf`` — or, for the whole file in rate mode, at the user's average bitrate (the samples
     found the CRF giving about it; over a whole film the encoder holds the average exactly)."""
     encoder, preset = SPEEDS[opts["speed"]]
+    if encoder == "hevc_nvenc":
+        # the slowest, best NVENC: two passes in full resolution, lookahead, adaptive quantization in space and
+        # time, B-frames as references; its CQ scale is about x265's CRF. HDR: colour tags and the 10-bit pass
+        # through (ffmpeg writes the static metadata from the frames)
+        mb = opts["mbps"]
+        control = ["-rc", "vbr", "-b:v", f"{mb:g}M", "-maxrate", f"{mb * 2:g}M", "-bufsize", f"{mb * 4:g}M"] if rate \
+            else ["-rc", "vbr", "-cq", f"{crf:g}", "-b:v", "0"]
+        return ["-c:v", "hevc_nvenc", "-preset", preset, "-tune", "hq", *control, "-multipass", "fullres",
+                "-rc-lookahead", "32", "-spatial-aq", "1", "-temporal-aq", "1", "-b_ref_mode", "middle",
+                "-pix_fmt", "p010le", *_scale_filter(info, opts)]
     control = ["-b:v", f"{opts['mbps']:g}M"] if rate else ["-crf", f"{crf:g}"]
+    params = x265_params(info) + (f":pools={opts['threads']}" if opts.get("threads") else "")
     return ["-c:v", encoder, "-preset", preset, *control, "-pix_fmt", "yuv420p10le",
-            "-x265-params", x265_params(info), *_scale_filter(info, opts)]
+            "-x265-params", params, *_scale_filter(info, opts)]
 
 
 def video_mbps(info: dict) -> float:
@@ -196,7 +218,7 @@ def _audio_bytes(info: dict, opts: dict) -> int:
 # ── samples, VMAF ──
 
 def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
-    run = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    run = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **SPAWN)
     if run.returncode != 0:
         raise ShrinkError(f"ffmpeg: {run.stderr.strip()[-300:] or 'chyba'}")
     return run
@@ -229,7 +251,7 @@ def vmaf(distorted: str, reference: str, every: int = 1) -> float:
              "[0:v]setpts=PTS-STARTPTS[d0];[d0][r1]scale=rw:rh:flags=bicubic,format=yuv420p10le[d];"
              f"[d][r2]libvmaf=n_threads={os.cpu_count() or 2}:n_subsample={every}")
     run = subprocess.run([*NICE, "ffmpeg", "-nostdin", "-hide_banner", "-i", distorted, "-i", reference,
-                          "-lavfi", graph, "-f", "null", "-"], capture_output=True, text=True, timeout=6 * 3600)
+                          "-lavfi", graph, "-f", "null", "-"], capture_output=True, text=True, timeout=6 * 3600, **SPAWN)
     found = re.findall(r"VMAF score: ([\d.]+)", run.stderr)
     if run.returncode != 0 or not found:
         raise ShrinkError(f"VMAF: {run.stderr.strip()[-300:] or 'nezměřeno'}")
@@ -388,7 +410,7 @@ def encode(path: str, crf: float, opts: dict, work: str, progress=None) -> tuple
     cmd = [*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?",
            "-map", "0:s?", "-map", "0:t?", "-c", "copy", *_video_args(info, opts, crf, rate=opts["mode"] == "rate"), *_audio_args(info, opts),
            "-progress", "pipe:1", "-nostats", out]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **SPAWN)
     try:
         for line in proc.stdout:
             if line.startswith("out_time_us=") and info["duration"] and progress:

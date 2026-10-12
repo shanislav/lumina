@@ -53,6 +53,8 @@ def test_every_module_endpoint_is_guarded():
         guards = [d for d in deps if hasattr(d, "permission")]
         if route.path in public:
             continue
+        if any(getattr(d, "token_guard", False) for d in deps):
+            continue                    # a convert worker's endpoint: its own token (convert/workers.py)
         assert guards, f"{route.methods} {route.path} is not guarded"
         for g in guards:
             assert g.permission is None or g.permission in declared, (route.path, g.permission)

@@ -36,6 +36,11 @@ CREATE INDEX IF NOT EXISTS idx_convert_jobs_status ON convert_jobs(status);
 # later columns: the job's choices (shrink: quality, speed …) and what came out (a plan's estimate)
 OPTIONS = add_column("convert_jobs", "options", "TEXT NOT NULL DEFAULT '{}'")
 RESULT = add_column("convert_jobs", "result", "TEXT NOT NULL DEFAULT '{}'")
+# a job a worker (a PC, workers.py) took: whose, until when (renewed by its progress reports) and how far it is
+WORKER = add_column("convert_jobs", "worker_id", "INTEGER")
+LEASE = add_column("convert_jobs", "lease_until", "TEXT")
+PROGRESS = add_column("convert_jobs", "progress", "TEXT NOT NULL DEFAULT '{}'")
+WORKER_KINDS = ("plan", "shrink")        # what a worker may do (Dolby Vision remux stays on the server)
 
 WORK_DIR = ".lumina-convert"
 PREVIEW_DIR = Path("data/convert-previews")
@@ -86,7 +91,7 @@ async def recent(limit: int = 50) -> list[dict]:
 
 def _row(r) -> dict:
     d = dict(r)
-    for k in ("options", "result"):
+    for k in ("options", "result", "progress"):
         try:
             d[k] = json.loads(d.get(k) or "{}")
         except ValueError:
@@ -119,9 +124,10 @@ async def start() -> None:
     global _task
     db = await get_db()
     try:
-        for (path,) in await (await db.execute("SELECT path FROM convert_jobs WHERE status = 'running'")).fetchall():
-            shutil.rmtree(os.path.join(os.path.dirname(path), WORK_DIR), ignore_errors=True)
-        await db.execute("UPDATE convert_jobs SET status = 'queued' WHERE status = 'running'")
+        for job_id, path in await (await db.execute("SELECT id, path FROM convert_jobs WHERE status = 'running' "
+                                                    "AND worker_id IS NULL")).fetchall():
+            drop_work(path, job_id)
+        await db.execute("UPDATE convert_jobs SET status = 'queued' WHERE status = 'running' AND worker_id IS NULL")
         await db.commit()
     finally:
         await db.close()
@@ -133,14 +139,55 @@ async def stop() -> None:
         _task.cancel()
 
 
-async def _next() -> dict | None:
+def work_dir(path: str, job_id: int | str) -> str:
+    """The job's own work folder next to its file (the same disk) — jobs of one folder (a season) never meet."""
+    return os.path.join(os.path.dirname(path), WORK_DIR, str(job_id))
+
+
+def drop_work(path: str, job_id: int | str) -> None:
+    shutil.rmtree(work_dir(path, job_id), ignore_errors=True)
+    try:
+        os.rmdir(os.path.join(os.path.dirname(path), WORK_DIR))       # the last one out
+    except OSError:
+        pass
+
+
+def where(job: dict) -> str:
+    """Who may run a job: the server, a worker, or whoever is free first (the user's choice; DV remux: server)."""
+    w = (job.get("options") or {}).get("where")
+    return w if job["kind"] in WORKER_KINDS and w in ("worker", "any") else "server"
+
+
+async def release_expired() -> int:
+    """Jobs whose worker stopped reporting (PC asleep, switched off) go back to the queue."""
     db = await get_db()
     try:
-        row = await (await db.execute("SELECT * FROM convert_jobs WHERE status = 'queued' ORDER BY id LIMIT 1")).fetchone()
-        if row:
-            await db.execute("UPDATE convert_jobs SET status = 'running' WHERE id = ?", (row["id"],))
+        cur = await db.execute("UPDATE convert_jobs SET status = 'queued', worker_id = NULL, lease_until = NULL, "
+                               "progress = '{}' WHERE status = 'running' AND worker_id IS NOT NULL AND lease_until < ?",
+                               (_now(),))
+        await db.commit()
+        if cur.rowcount:
+            logger.info("Convert: %d job(s) of silent workers back in the queue", cur.rowcount)
+        return cur.rowcount
+    finally:
+        await db.close()
+
+
+async def _next() -> dict | None:
+    await release_expired()
+    db = await get_db()
+    try:
+        rows = await (await db.execute("SELECT * FROM convert_jobs WHERE status = 'queued' ORDER BY id")).fetchall()
+        for row in rows:
+            if where(_row(row)) not in ("server", "any"):
+                continue
+            # taken only if still queued — a worker may have taken it a moment ago
+            cur = await db.execute("UPDATE convert_jobs SET status = 'running' WHERE id = ? AND status = 'queued'",
+                                   (row["id"],))
             await db.commit()
-        return _row(row) if row else None
+            if cur.rowcount:
+                return _row(row)
+        return None
     finally:
         await db.close()
 
@@ -148,8 +195,8 @@ async def _next() -> dict | None:
 async def _finish(job: dict, status: str, note: str = "", result: str = "", data: dict | None = None) -> None:
     db = await get_db()
     try:
-        await db.execute("UPDATE convert_jobs SET status = ?, note = ?, result_path = ?, finished_at = ?, result = ? "
-                         "WHERE id = ?", (status, note, result, _now(), json.dumps(data or {}), job["id"]))
+        await db.execute("UPDATE convert_jobs SET status = ?, note = ?, result_path = ?, finished_at = ?, result = ?, "
+                         "lease_until = NULL WHERE id = ?", (status, note, result, _now(), json.dumps(data or {}), job["id"]))
         await db.commit()
     finally:
         await db.close()
@@ -201,17 +248,24 @@ async def _run_plan(job: dict) -> dict:
     if not os.path.isfile(src):
         raise shrink.ShrinkError("Soubor zmizel")
     opts = shrink.options(job.get("options"))
-    work = os.path.join(os.path.dirname(src), WORK_DIR)
+    work = work_dir(src, job["id"])
     preview = PREVIEW_DIR / str(job["id"])
     try:
         data = await asyncio.to_thread(shrink.plan, src, opts, work, str(preview), _progress)
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        drop_work(src, job["id"])
+    return await plan_done(job, data)
+
+
+async def plan_done(job: dict, data: dict) -> dict:
+    """A plan's estimate came (from the server or a worker): its note; with "go" a file worth it is queued."""
+    opts = shrink.options(job.get("options"))
     note = data.get("note") or (f"{data['src_size'] / 1024**3:.2f} GB → ~{data['est_size'] / 1024**3:.2f} GB "
                                 f"(−{data['saving']:g} %), obraz {data.get('src_mbps', 0):g} → {data.get('mbps', 0):g} Mb/s, "
                                 f"VMAF {data['vmaf']:g}")
     if opts["go"] and data.get("decision") == "ok":
-        await enqueue("shrink", [src], bool(job["auto"]), {**opts, "crf": data["crf"], "plan_id": job["id"], "expect_vmaf": data.get("vmaf")})
+        await enqueue("shrink", [job["path"]], bool(job["auto"]),
+                      {**(job.get("options") or {}), "crf": data["crf"], "plan_id": job["id"], "expect_vmaf": data.get("vmaf")})
         note += " · zařazeno ke kódování"
     return {"note": note, "data": data}
 
@@ -228,21 +282,31 @@ async def _run_shrink(job: dict) -> dict:
     folder = os.path.dirname(src)
     if shutil.disk_usage(folder).free < os.path.getsize(src) + 1024**3:
         raise shrink.ShrinkError("Málo místa na disku")
-    work = os.path.join(folder, WORK_DIR)
-    old_size = os.path.getsize(src)
+    work = work_dir(src, job["id"])
     try:
         out, check = await asyncio.to_thread(shrink.encode, src, crf, opts, work, _progress)
-        saving = round(100 * (1 - check["size"] / old_size), 1)
-        if saving < opts["min_saving"]:
-            raise shrink.ShrinkError(f"Ušetřilo by jen {saving:g} % — soubor nechávám")
-        _progress("library")
-        final = os.path.join(folder, os.path.basename(out))
-        if final != src and os.path.exists(final):
-            raise shrink.ShrinkError(f"{os.path.basename(final)} už ve složce je")
-        _same_owner(out, src)
-        os.replace(out, final)
+        return await shrink_done(job, out, check)
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        drop_work(src, job["id"])
+
+
+async def shrink_done(job: dict, out: str, check: dict) -> dict:
+    """An encoded file (from the server or a worker, in the work folder next to the original) takes the
+    original's place — only when it saves enough; the library follows and the name the new codec."""
+    src = job["path"]
+    opts = shrink.options(job.get("options"))
+    crf = float((job.get("options") or {}).get("crf") or 0)
+    folder = os.path.dirname(src)
+    old_size = os.path.getsize(src)
+    saving = round(100 * (1 - check["size"] / old_size), 1)
+    if saving < opts["min_saving"]:
+        raise shrink.ShrinkError(f"Ušetřilo by jen {saving:g} % — soubor nechávám")
+    _progress("library")
+    final = os.path.join(folder, os.path.basename(out))
+    if final != src and os.path.exists(final):
+        raise shrink.ShrinkError(f"{os.path.basename(final)} už ve složce je")
+    _same_owner(out, src)
+    os.replace(out, final)
     if final != src:
         os.remove(src)
     await _library(src, final)
@@ -293,7 +357,7 @@ async def _run_dv(job: dict) -> dict:
     if shutil.disk_usage(folder).free < os.path.getsize(src) * 1.1 + 1024**3:
         raise dv.RemuxError("Málo místa na disku")
     stem = os.path.splitext(os.path.basename(src))[0]
-    work = os.path.join(folder, WORK_DIR)
+    work = work_dir(src, job["id"])
     try:
         out, subs = await asyncio.to_thread(dv.remux, src, work, stem, set(os.listdir(folder)), _progress)
         _progress("library")
@@ -310,7 +374,7 @@ async def _run_dv(job: dict) -> dict:
         os.replace(out, final)
         _same_owner(final, src)
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        drop_work(src, job["id"])
     os.remove(src)                      # its sidecars (subtitles, NFO) share the stem — they stay with the MP4
     await _library(src, final)
     note = f"titulky vedle: {len(moved)}" if moved else ""

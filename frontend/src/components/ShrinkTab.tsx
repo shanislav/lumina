@@ -18,7 +18,7 @@ export interface ShrinkScope { movie?: number; show?: number; season?: number; l
 /** window event: a film's window on the library page opens the tab for that film */
 export const OPEN_EVENT = "lumina:shrink";
 
-const DEFAULTS: ShrinkOptions = { vmaf: 95, speed: "balanced", max_height: 0, audio: "copy", min_saving: 25, go: false, mode: "quality", mbps: 4 };
+const DEFAULTS: ShrinkOptions = { vmaf: 95, speed: "balanced", where: "server", max_height: 0, audio: "copy", min_saving: 25, go: false, mode: "quality", mbps: 4 };
 const STORE = "lumina.shrink.options";
 
 const QUALITY = [
@@ -29,7 +29,8 @@ const QUALITY = [
 const SPEED = [
   { v: "small", label: "Nejmenší", hint: "CPU, x265 slow — nejmenší soubor, nejpomalejší" },
   { v: "balanced", label: "Vyvážený", hint: "CPU, x265 medium" },
-  { v: "fast", label: "Rychlejší", hint: "CPU, x265 fast — větší soubor, rychleji (GPU přijde s pracovníkem na PC)" },
+  { v: "fast", label: "Rychlejší", hint: "CPU, x265 fast — větší soubor, rychleji" },
+  { v: "gpu", label: "Grafická karta (pracovník)", hint: "NVIDIA NVENC na počítači pracovníka — mnohem rychleji, soubor o něco větší" },
 ] as const;
 
 // short explanations of the words on this tab (hover / tap); the long ones are in "Jak to funguje?"
@@ -84,6 +85,15 @@ const gb = (b: number) => `${(b / 1024 ** 3).toFixed(2)} GB`;
 const dur = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : `${Math.max(1, Math.round(s / 60))} min`);
 const base = (p: string) => p.split("/").pop() ?? p;
 
+/** A running job's state: the server's own (its phase now) or a worker's last report. */
+function runningText(j: ConvertJob, phase: string, phases: Record<string, string>): string {
+  if (!j.worker_id) return `probíhá — ${phase || "…"}`;
+  const p = j.progress || {};
+  if (p.paused) return `na pracovníkovi — pozastaveno (${p.paused})`;
+  const v = p.value != null ? (p.phase === "encode" ? ` ${Math.round(p.value)} %` : ` ${p.value}`) : "";
+  return `na pracovníkovi — ${(p.phase && (phases[p.phase] ?? p.phase)) || "začíná"}${v}`;
+}
+
 function loadOptions(): ShrinkOptions {
   try {
     return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORE) || "{}") };
@@ -92,8 +102,8 @@ function loadOptions(): ShrinkOptions {
   }
 }
 
-export default function ShrinkTab({ jobs, phase, onChanged, scope, onClearScope }: {
-  jobs: ConvertJob[]; phase: string; onChanged: () => void; scope: ShrinkScope | null; onClearScope: () => void;
+export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onClearScope }: {
+  jobs: ConvertJob[]; phase: string; phases: Record<string, string>; onChanged: () => void; scope: ShrinkScope | null; onClearScope: () => void;
 }) {
   const [opts, setOpts] = useState<ShrinkOptions>(DEFAULTS);
   const [q, setQ] = useState("");
@@ -218,6 +228,16 @@ export default function ShrinkTab({ jobs, phase, onChanged, scope, onClearScope 
             {SPEED.map((x) => <option key={x.v} value={x.v}>{x.label}</option>)}
           </select>
           <span className="text-xs text-zinc-500">{SPEED.find((x) => x.v === opts.speed)?.hint}</span>
+          <span className="flex items-center gap-2 pt-1 text-xs text-zinc-400">
+            Kde kódovat:
+            <select value={opts.speed === "gpu" && opts.where === "server" ? "worker" : opts.where}
+              onChange={(e) => set({ where: e.target.value as ShrinkOptions["where"] })}
+              className="rounded border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-zinc-200">
+              {opts.speed !== "gpu" && <option value="server">server</option>}
+              <option value="worker">pracovník (PC)</option>
+              <option value="any">kdo bude dřív volný</option>
+            </select>
+          </span>
         </label>
         <label className="space-y-1">
           <span className="text-xs text-zinc-400">Rozlišení</span>
@@ -314,7 +334,7 @@ export default function ShrinkTab({ jobs, phase, onChanged, scope, onClearScope 
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-zinc-200" title={j.path}>{base(j.path)}</div>
                     <div className={j.status === "error" || (r?.decision && r.decision !== "ok") ? "text-amber-300" : "text-zinc-400"}>
-                      {j.status === "queued" ? "čeká ve frontě" : j.status === "running" ? `probíhá — ${phase || "…"}` : j.note}
+                      {j.status === "queued" ? "čeká ve frontě" : j.status === "running" ? runningText(j, phase, phases) : j.note}
                     </div>
                   </div>
                   {j.status !== "running" && j.status !== "queued" && (

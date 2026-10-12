@@ -2230,6 +2230,7 @@ export interface ConvertJob {
   id: number; kind: string; path: string; status: "queued" | "running" | "done" | "error"; note: string;
   result_path: string; auto: number; created_at: string; finished_at: string | null;
   options: Record<string, unknown>; result: Record<string, unknown>;
+  worker_id: number | null; progress: { phase?: string; value?: number | null; paused?: string };
 }
 
 async function convertCall<T>(path: string, init?: RequestInit): Promise<T> {
@@ -2249,7 +2250,7 @@ export const getConvertJobs = () =>
   convertCall<{ jobs: ConvertJob[]; current: { id?: number; phase?: string; value?: number | null }; phases: Record<string, string> }>("/jobs");
 export const startConvertDv = (paths: string[]) => convertCall<{ added: number }>("/dv", jsonBody("POST", { paths }));
 
-export interface ShrinkOptions { vmaf: number; speed: "small" | "balanced" | "fast"; max_height: number; audio: "copy" | "shrink"; min_saving: number; go: boolean; mode: "quality" | "rate"; mbps: number }
+export interface ShrinkOptions { vmaf: number; speed: "small" | "balanced" | "fast" | "gpu"; where: "server" | "worker" | "any"; max_height: number; audio: "copy" | "shrink"; min_saving: number; go: boolean; mode: "quality" | "rate"; mbps: number }
 export interface ShrinkFile { path: string; kind: "movie" | "episode"; group: string; title: string; size: number; codec: string; height: number; mbps: number; hdr: string; weight: number }
 export interface ShrinkPlan {
   src_size: number; duration: number; codec: string; height: number; options: ShrinkOptions; decision: string; note: string; src_mbps?: number; mbps?: number;
@@ -2264,3 +2265,13 @@ export const startShrink = (planId: number, crf?: number, force = false) =>
   convertCall<{ added: number }>(`/shrink/${planId}`, jsonBody("POST", { crf: crf ?? null, force }));
 export const dropConvertJob = (id: number) => convertCall<{ ok: boolean }>(`/jobs/${id}`, { method: "DELETE" });
 export const convertPreviewUrl = (jobId: number, name: string) => `${API_BASE}/api/convert/preview/${jobId}/${name}`;
+
+export interface ConvertWorker {
+  id: number; name: string; online: boolean; last_seen: string | null;
+  info: { version?: string; system?: string; cpu?: string; threads?: number; gpu?: string; encoders?: string[] };
+  state: { waiting?: string };
+  job: { id: number; path: string; progress: { phase?: string; value?: number | null; paused?: string } } | null;
+}
+export const getConvertWorkers = () => convertCall<{ workers: ConvertWorker[] }>("/workers");
+export const addConvertWorker = (name: string) => convertCall<{ id: number; name: string; token: string }>("/workers", jsonBody("POST", { name }));
+export const removeConvertWorker = (id: number) => convertCall<{ ok: boolean }>(`/workers/${id}`, { method: "DELETE" });

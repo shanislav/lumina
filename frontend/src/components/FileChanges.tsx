@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import ShrinkTab, { OPEN_EVENT, ShrinkScope } from "@/components/ShrinkTab";
+import WorkersTab from "@/components/WorkersTab";
 import { ConvertCandidate, ConvertJob, getConvertCandidates, getConvertJobs, startConvertDv } from "@/lib/api";
 
 const STATUS: Record<ConvertJob["status"], { label: string; cls: string }> = {
@@ -25,7 +26,8 @@ export default function FileChanges() {
   const [phase, setPhase] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<"dv" | "shrink">("shrink");
+  const [tab, setTab] = useState<"dv" | "shrink" | "workers">("shrink");
+  const [phases, setPhases] = useState<Record<string, string>>({});
   const [scope, setScope] = useState<ShrinkScope | null>(null);
 
   const load = useCallback(async () => {
@@ -34,6 +36,7 @@ export default function FileChanges() {
       setDv(c.dv);
       setJobs(j.jobs);
       const v = j.current.value;
+      setPhases(j.phases);
       setPhase(j.current.phase ? (j.phases[j.current.phase] ?? j.current.phase)
         + (v != null ? (j.current.phase === "encode" ? ` ${Math.round(v)} %` : ` ${v}`) : "") : "");
     } catch (e) {
@@ -103,7 +106,7 @@ export default function FileChanges() {
             {error && <p className="rounded-lg bg-red-950/60 px-3 py-2 text-red-300">{error}</p>}
 
             <div className="flex gap-1 rounded-lg bg-zinc-800/60 p-1 text-xs">
-              {([["shrink", "Zmenšit soubory"], ["dv", `Dolby Vision v MKV (${dv.length})`]] as const).map(([k, label]) => (
+              {([["shrink", "Zmenšit soubory"], ["dv", `Dolby Vision v MKV (${dv.length})`], ["workers", "Pracovníci"]] as const).map(([k, label]) => (
                 <button key={k} onClick={() => setTab(k)}
                   className={`flex-1 rounded-md px-3 py-1.5 ${tab === k ? "bg-violet-600 text-white" : "text-zinc-400 hover:text-zinc-200"}`}>
                   {label}
@@ -111,7 +114,9 @@ export default function FileChanges() {
               ))}
             </div>
 
-            {tab === "shrink" && <ShrinkTab jobs={jobs} phase={phase} onChanged={load} scope={scope} onClearScope={() => setScope(null)} />}
+            {tab === "shrink" && <ShrinkTab jobs={jobs} phase={phase} phases={phases} onChanged={load} scope={scope} onClearScope={() => setScope(null)} />}
+
+            {tab === "workers" && <WorkersTab phases={phases} />}
 
             {tab === "dv" && <section className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">

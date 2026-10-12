@@ -1,0 +1,424 @@
+"""Lumina worker — encodes Lumina's "Úpravy souborů" jobs on this computer (Windows / Linux).
+
+The computer needs the server's share mounted (e.g. Z: = \\\\server\\Share): the worker reads the file from it,
+encodes here and writes the result next to the file — replacing it and the library are the server's work. It asks
+Lumina for work itself (a long poll: about one small request a minute when idle) and works only when allowed:
+within its hours, while other programs leave the CPU alone, while none of the listed programs runs, not on battery.
+When that changes mid-job, the encoder is paused (not stopped) and goes on later.
+
+Settings: lumina-worker.json next to this file (written on the first start). Run: python lumina_worker.py
+(needs ffmpeg 9 with libx265 / hevc_nvenc and libvmaf, and the psutil package)."""
+
+import ctypes
+import json
+import logging
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+
+import psutil
+
+HERE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+HOME = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HOME.parent / "backend" / "app" / "modules" / "convert"))   # the repository's shrink.py
+import shrink  # noqa: E402  — the same encoding and measuring as the server's
+
+VERSION = "0.1"
+CONFIG = HOME / "lumina-worker.json"
+TEMPLATE = {
+    "server": "https://lumina.example.com",
+    "token": "lw_… (Lumina → Knihovna → Úpravy souborů → Pracovníci → Přidat)",
+    "path_map": [["/data", "Z:\\"]],
+    "ffmpeg_dir": "",
+    "work_dir": "",
+    "hours": "",
+    "weekend_hours": "",
+    "cpu_other_max": 40,
+    "blocked_programs": [],
+    "on_battery": False,
+    "idle_minutes": 0,
+    "threads": 0,
+    "give_back_after_hours": 12,
+}
+HELP = {
+    "path_map": "where this computer sees the server's folders: [server path, path here] (Lumina's /data = Z:\\)",
+    "ffmpeg_dir": "folder with ffmpeg and ffprobe (empty: from PATH)",
+    "work_dir": "local folder for the work in progress (empty: the system's temp)",
+    "hours": "when it may work, e.g. \"22:00-07:00\" or \"9:00-12:00, 20:00-23:30\" (empty: always)",
+    "weekend_hours": "the same for Saturday and Sunday (empty: as \"hours\")",
+    "cpu_other_max": "pause while other programs use more of the CPU than this (%)",
+    "blocked_programs": "pause while one of these runs, e.g. [\"obs64.exe\", \"eldenring.exe\"]",
+    "on_battery": "work on battery too (a notebook)",
+    "idle_minutes": "work only after this many minutes without mouse and keyboard (0: no matter; Windows)",
+    "threads": "how many CPU threads the encoder may use (0: all)",
+    "give_back_after_hours": "a job paused this long goes back to Lumina (the server or another worker takes it)",
+}
+REPORT_S = 30
+CHECK_S = 5
+LOAD_WINDOW_S = 60          # the CPU load of other programs: averaged over this
+RESUME_AFTER_S = 120        # paused for load: goes on after this long below the limit
+
+log = logging.getLogger("lumina-worker")
+
+
+# ── settings ──
+
+def load_config() -> dict:
+    if not CONFIG.exists():
+        CONFIG.write_text(json.dumps({**TEMPLATE, "_help": HELP}, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"Nastavení vytvořeno: {CONFIG}\nVyplň server, token a path_map a spusť znovu.")
+        sys.exit(1)
+    cfg = {**TEMPLATE, **json.loads(CONFIG.read_text(encoding="utf-8"))}
+    if not cfg["token"].startswith("lw_") or "example" in cfg["server"]:
+        print(f"V {CONFIG} chybí server nebo token.")
+        sys.exit(1)
+    return cfg
+
+
+def to_local(path: str, cfg: dict) -> str:
+    """The server's path → this computer's (path_map)."""
+    for server, local in cfg["path_map"]:
+        server = server.rstrip("/")
+        if path == server or path.startswith(server + "/"):
+            rest = path[len(server):].lstrip("/")
+            return str(Path(local) / Path(*rest.split("/"))) if rest else local
+    raise RuntimeError(f"Cestu {path} neumím přeložit — doplň path_map")
+
+
+# ── when it may work ──
+
+def _in_windows(spec: str, now: datetime) -> bool:
+    if not spec.strip():
+        return True
+    minute = now.hour * 60 + now.minute
+    for part in spec.split(","):
+        a, _, b = part.strip().partition("-")
+        try:
+            h1, m1 = (int(x) for x in a.split(":"))
+            h2, m2 = (int(x) for x in b.split(":"))
+        except ValueError:
+            continue
+        start, end = h1 * 60 + m1, h2 * 60 + m2
+        if (start <= minute < end) if start <= end else (minute >= start or minute < end):
+            return True
+    return False
+
+
+def _idle_minutes() -> float:
+    if os.name != "nt":
+        return 1e9
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+    info = LASTINPUTINFO()
+    info.cbSize = ctypes.sizeof(info)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+        return 1e9
+    return (ctypes.windll.kernel32.GetTickCount() - info.dwTime) / 60000
+
+
+class Watch:
+    """Whether the worker may work now, and the CPU load of the other programs (its own encoder not counted)."""
+
+    def __init__(self, cfg: dict):
+        self.cfg = cfg
+        self.samples: list[tuple[float, float]] = []
+        self.calm_since: float | None = None
+        psutil.cpu_percent(None)
+
+    def _own(self) -> list[psutil.Process]:
+        try:
+            return psutil.Process().children(recursive=True)
+        except psutil.Error:
+            return []
+
+    def sample(self) -> None:
+        total = psutil.cpu_percent(None)
+        own = 0.0
+        for p in self._own():
+            try:
+                own += p.cpu_percent(None)
+            except psutil.Error:
+                pass
+        other = max(0.0, total - own / (psutil.cpu_count() or 1))
+        now = time.time()
+        self.samples = [(t, v) for t, v in self.samples if now - t < LOAD_WINDOW_S] + [(now, other)]
+
+    def other_load(self) -> float:
+        return sum(v for _, v in self.samples) / len(self.samples) if self.samples else 0.0
+
+    def blocked(self, working: bool) -> str:
+        """Why it may not work now — "" when it may."""
+        cfg = self.cfg
+        now = datetime.now()
+        hours = cfg["weekend_hours"] if now.weekday() >= 5 and cfg["weekend_hours"].strip() else cfg["hours"]
+        if not _in_windows(hours, now):
+            return f"mimo nastavené hodiny ({hours})"
+        battery = psutil.sensors_battery() if hasattr(psutil, "sensors_battery") else None
+        if battery and not battery.power_plugged and not cfg["on_battery"]:
+            return "notebook běží na baterii"
+        names = {n.lower() for n in cfg["blocked_programs"]}
+        if names:
+            for p in psutil.process_iter(["name"]):
+                if (p.info.get("name") or "").lower() in names:
+                    return f"běží {p.info['name']}"
+        if cfg["idle_minutes"] and _idle_minutes() < cfg["idle_minutes"]:
+            return "počítač se používá"
+        load = self.other_load()
+        if load > cfg["cpu_other_max"]:
+            self.calm_since = None
+            return f"jiné programy vytěžují procesor ({load:.0f} %)"
+        if working is False and self.calm_since is not None and time.time() - self.calm_since < RESUME_AFTER_S:
+            return f"čekám, až se procesor uklidní ({load:.0f} %)"
+        if self.calm_since is None:
+            self.calm_since = time.time()
+        return ""
+
+    def pause(self) -> None:
+        for p in self._own():
+            try:
+                p.suspend()
+            except psutil.Error:
+                pass
+
+    def resume(self) -> None:
+        for p in self._own():
+            try:
+                p.resume()
+            except psutil.Error:
+                pass
+
+    def kill(self) -> None:
+        for p in self._own():
+            try:
+                p.kill()
+            except psutil.Error:
+                pass
+
+
+# ── talking to Lumina ──
+
+class Lumina:
+    def __init__(self, cfg: dict):
+        self.base = cfg["server"].rstrip("/") + "/api/convert"
+        self.token = cfg["token"]
+
+    def call(self, method: str, path: str, body=None, timeout: float = 30, raw: bytes | None = None) -> dict:
+        data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
+        req = urllib.request.Request(self.base + path, data=data, method=method, headers={
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/octet-stream" if raw is not None else "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")[:300]
+            raise RuntimeError(f"Lumina {e.code}: {detail}") from e
+
+
+def machine() -> dict:
+    """What this computer is: system, CPU, graphics card, the encoders its ffmpeg has (NVENC tried for real)."""
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
+    encoders = [e for e in ("libx265", "hevc_nvenc", "hevc_qsv", "hevc_amf") if f" {e} " in out]
+    if "hevc_nvenc" in encoders:
+        test = subprocess.run(["ffmpeg", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=size=320x240:d=0.2",
+                               "-c:v", "hevc_nvenc", "-f", "null", "-"], capture_output=True, text=True)
+        if test.returncode != 0:
+            encoders.remove("hevc_nvenc")
+    gpu = ""
+    try:
+        gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True,
+                             text=True, timeout=10).stdout.strip().splitlines()[0]
+    except (OSError, IndexError, subprocess.SubprocessError):
+        pass
+    cpu = platform.processor()
+    if os.name == "nt":
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+            cpu = winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
+        except OSError:
+            pass
+    return {"version": VERSION, "system": f"{platform.system()} {platform.release()}", "cpu": cpu,
+            "threads": os.cpu_count() or 0, "gpu": gpu, "encoders": encoders}
+
+
+# ── one job ──
+
+class Job:
+    """A job running here: its progress reported to Lumina, paused when the computer is needed."""
+
+    def __init__(self, job: dict, lumina: Lumina, watch: Watch, cfg: dict):
+        self.job, self.lumina, self.watch, self.cfg = job, lumina, watch, cfg
+        self.phase, self.value, self.paused = "", None, ""
+        self.paused_since: float | None = None
+        self.give_back = False
+        self.lost = False
+        self.stop = threading.Event()
+
+    def progress(self, phase: str, value: float | None = None) -> None:
+        self.phase, self.value = phase, value
+
+    def _report(self) -> None:
+        try:
+            self.lumina.call("POST", f"/worker/jobs/{self.job['id']}/progress",
+                             {"phase": self.phase, "value": self.value, "paused": self.paused})
+        except RuntimeError as e:
+            if "409" in str(e):            # not ours any more (removed, expired) — stop
+                log.warning("Úloha už není naše: %s", e)
+                self.lost = True
+                self.watch.kill()
+        except OSError as e:
+            log.info("Lumina neodpovídá: %s", e)
+
+    def _guard(self) -> None:
+        last = 0.0
+        while not self.stop.wait(CHECK_S):
+            self.watch.sample()
+            why = self.watch.blocked(working=not self.paused)
+            if why and not self.paused:
+                log.info("Pozastaveno: %s", why)
+                self.watch.pause()
+                self.paused, self.paused_since = why, time.time()
+                last = 0.0
+            elif not why and self.paused:
+                log.info("Pokračuji")
+                self.watch.resume()
+                self.paused, self.paused_since = "", None
+                last = 0.0
+            elif why and self.paused:
+                self.paused = why
+                if time.time() - (self.paused_since or time.time()) > self.cfg["give_back_after_hours"] * 3600:
+                    log.info("Pozastaveno moc dlouho — vracím úlohu")
+                    self.give_back = True
+                    self.watch.resume()
+                    self.watch.kill()
+            if time.time() - last >= REPORT_S:
+                self._report()
+                last = time.time()
+
+    def run(self) -> None:
+        job = self.job
+        guard = threading.Thread(target=self._guard, daemon=True)
+        guard.start()
+        tmp = Path(self.cfg["work_dir"] or tempfile.gettempdir()) / "lumina-worker" / f"job{job['id']}"
+        try:
+            src = to_local(job["path"], self.cfg)
+            if not os.path.isfile(src):
+                raise RuntimeError(f"Soubor na tomto počítači nevidím: {src}")
+            opts = dict(job.get("options") or {})
+            if self.cfg["threads"]:
+                opts["threads"] = self.cfg["threads"]
+            opts = {**shrink.options(opts), "crf": (job.get("options") or {}).get("crf")}
+            tmp.mkdir(parents=True, exist_ok=True)
+            if job["kind"] == "plan":
+                self._plan(src, opts, tmp)
+            else:
+                self._shrink(src, opts, tmp)
+        except KeyboardInterrupt:
+            # closed by its user: the job goes back to Lumina at once (not after the lease runs out)
+            self.watch.resume()
+            self.watch.kill()
+            try:
+                self.lumina.call("POST", f"/worker/jobs/{job['id']}/fail", {"give_back": True})
+            except (RuntimeError, OSError):
+                pass
+            raise
+        except Exception as e:  # noqa: BLE001 — every failure goes to Lumina
+            if self.lost:
+                pass
+            elif self.give_back:
+                self.lumina.call("POST", f"/worker/jobs/{job['id']}/fail", {"give_back": True})
+            else:
+                log.exception("Úloha %s selhala", job["id"])
+                try:
+                    self.lumina.call("POST", f"/worker/jobs/{job['id']}/fail", {"error": str(e)[:500]})
+                except (RuntimeError, OSError):
+                    pass
+        finally:
+            self.stop.set()
+            guard.join(timeout=10)
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def _plan(self, src: str, opts: dict, tmp: Path) -> None:
+        preview = tmp / "preview"
+        data = shrink.plan(src, opts, str(tmp / "work"), str(preview), self.progress)
+        for shot in data.get("stills") or []:
+            for name in shot.values():
+                self.lumina.call("POST", f"/worker/jobs/{self.job['id']}/still/{name}", raw=(preview / name).read_bytes())
+        r = self.lumina.call("POST", f"/worker/jobs/{self.job['id']}/done", {"data": data}, timeout=120)
+        log.info("Náhled hotový: %s", data.get("note") or f"VMAF {data.get('vmaf')}, −{data.get('saving')} %")
+        if not r.get("ok"):
+            log.warning("Lumina náhled nepřijala: %s", r.get("error"))
+
+    def _shrink(self, src: str, opts: dict, tmp: Path) -> None:
+        crf = float(opts.get("crf") or 0)
+        out, check = shrink.encode(src, crf, opts, str(tmp), self.progress)
+        self.progress("upload")
+        share_work = Path(to_local(self.job["work"], self.cfg))
+        share_work.mkdir(parents=True, exist_ok=True)
+        target = share_work / Path(out).name
+        shutil.copyfile(out, target)
+        r = self.lumina.call("POST", f"/worker/jobs/{self.job['id']}/done",
+                             {"data": check, "out_name": target.name}, timeout=1800)
+        log.info("Překódováno: %s", "hotovo" if r.get("ok") else r.get("error"))
+
+
+# ── the loop ──
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", handlers=[
+        logging.StreamHandler(), logging.FileHandler(HOME / "lumina-worker.log", encoding="utf-8")])
+    cfg = load_config()
+    if cfg["ffmpeg_dir"]:
+        os.environ["PATH"] = cfg["ffmpeg_dir"] + os.pathsep + os.environ["PATH"]
+    lumina = Lumina(cfg)
+    info = machine()
+    log.info("Lumina worker %s — %s, %s, %s vláken, %s; kodéry %s", VERSION, info["system"], info["cpu"],
+             info["threads"], info["gpu"] or "bez NVIDIA", ", ".join(info["encoders"]) or "žádné")
+    hello = lumina.call("POST", "/worker/hello", {**info, "state": {"waiting": ""}})
+    log.info("Připojeno k Lumině jako „%s“", hello.get("name"))
+    for root in hello.get("roots") or []:
+        try:
+            local = to_local(root, cfg)
+            log.info("Knihovna %s = %s %s", root, local, "✓" if os.path.isdir(local) else "✗ NEVIDÍM — zkontroluj path_map")
+        except RuntimeError as e:
+            log.warning("%s", e)
+    watch = Watch(cfg)
+    last_hello, last_reason = 0.0, None
+    while True:
+        try:
+            watch.sample()
+            why = watch.blocked(working=False)
+            if why or time.time() - last_hello > 300 or why != last_reason:
+                if why != last_reason:
+                    log.info("Čekám: %s", why) if why else log.info("Můžu pracovat")
+                lumina.call("POST", "/worker/hello", {**info, "state": {"waiting": why}})
+                last_hello, last_reason = time.time(), why
+            if why:
+                time.sleep(60)
+                continue
+            got = lumina.call("GET", f"/worker/next?wait={hello.get('poll_s', 55)}", timeout=90)
+            job = got.get("job")
+            if job:
+                log.info("Úloha %s: %s %s", job["id"], job["kind"], job["path"])
+                Job(job, lumina, watch, cfg).run()
+        except KeyboardInterrupt:
+            log.info("Končím")
+            return
+        except (RuntimeError, OSError) as e:
+            log.warning("Lumina: %s — zkusím za minutu", e)
+            time.sleep(60)
+
+
+if __name__ == "__main__":
+    main()
