@@ -167,7 +167,9 @@ async def run(job: dict) -> dict:
             if not os.path.exists(target):
                 os.replace(p, target)
                 moved.append(os.path.basename(p))
+                _same_owner(target, src)
         os.replace(out, final)
+        _same_owner(final, src)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     os.remove(src)                      # its sidecars (subtitles, NFO) share the stem — they stay with the MP4
@@ -175,6 +177,16 @@ async def run(job: dict) -> dict:
     note = f"titulky vedle: {len(moved)}" if moved else ""
     logger.info("Converted %s → %s%s", src, final, f" ({note})" if note else "")
     return {"path": final, "note": note}
+
+
+def _same_owner(path: str, like: str) -> None:
+    """The new file belongs to whom the original did (the backend runs as root; the share's users edit it)."""
+    try:
+        st = os.stat(like)
+        os.chown(path, st.st_uid, st.st_gid)
+        os.chmod(path, st.st_mode & 0o777)
+    except (OSError, AttributeError):        # not on Windows, not on a share that refuses it
+        pass
 
 
 async def _library(old: str, new: str) -> None:
