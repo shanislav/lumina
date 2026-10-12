@@ -178,28 +178,26 @@ def cut_samples(path: str, info: dict, work: str) -> list[str]:
     broken frames until its references fill up (open GOP), and noise like that cannot be encoded well — a sample
     beginning with it measured VMAF 65 at any CRF. Not joined into one file either: a transport stream's
     timestamps break at the joins and frames slip against each other."""
-    parts = []
-    for k, share in enumerate(SAMPLES):
-        at = info["duration"] * share
-        start = max(0.0, at - PREROLL_S)
-        part = os.path.join(work, f"sample{k}.mkv")
-        _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.2f}", "-i", path, "-ss", f"{at - start:.2f}",
-              "-t", str(SAMPLE_S), "-map", "0:v:0", "-c:v", "ffv1", "-level", "3", "-g", "1", part], 1800)
-        parts.append(part)
-    return parts
+    return [window(path, info["duration"] * share, SAMPLE_S, os.path.join(work, f"sample{k}.mkv"))
+            for k, share in enumerate(SAMPLES)]
 
 
-def vmaf(distorted: str, reference: str, seek: float = 0, length: float = 0) -> float:
-    """VMAF of ``distorted`` against ``reference`` (both read from ``seek`` for ``length`` s when given), at most
-    1080p — the model is made for it; a smaller result is scaled up to the reference."""
-    # from a seek both are decoded a few seconds earlier and those frames dropped (broken frames after a seek)
-    pre = min(PREROLL_S, seek) if seek else 0.0
-    win = (["-ss", f"{seek - pre:.2f}"] if seek else []) + (["-t", f"{length + pre:g}"] if length else [])
-    cut = f"setpts=PTS-STARTPTS,trim=start={pre:g}," if pre else ""
-    graph = (f"[1:v]{cut}setpts=PTS-STARTPTS,scale='min(1920,iw)':-2:flags=bicubic,format=yuv420p10le,split[r1][r2];"
-             f"[0:v]{cut}setpts=PTS-STARTPTS[d0];[d0][r1]scale=rw:rh:flags=bicubic,format=yuv420p10le[d];"
+def window(path: str, at: float, length: float, out: str) -> str:
+    """``length`` s of the video from ``at``, decoded from a few seconds earlier and cut by the decoded timestamps
+    (frame-exact; a transport stream's own seek lands on another frame), kept losslessly (FFV1)."""
+    start = max(0.0, at - PREROLL_S)
+    _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.2f}", "-i", path, "-ss", f"{at - start:.2f}",
+          "-t", f"{length:g}", "-map", "0:v:0", "-c:v", "ffv1", "-level", "3", "-g", "1", out], 1800)
+    return out
+
+
+def vmaf(distorted: str, reference: str) -> float:
+    """VMAF of ``distorted`` against ``reference`` — two files of the same frames (a sample and its encode, or two
+    windows cut the same way), at most 1080p — the model is made for it; a smaller result is scaled up."""
+    graph = ("[1:v]setpts=PTS-STARTPTS,scale='min(1920,iw)':-2:flags=bicubic,format=yuv420p10le,split[r1][r2];"
+             "[0:v]setpts=PTS-STARTPTS[d0];[d0][r1]scale=rw:rh:flags=bicubic,format=yuv420p10le[d];"
              f"[d][r2]libvmaf=n_threads={os.cpu_count() or 2}")
-    run = subprocess.run([*NICE, "ffmpeg", "-nostdin", "-hide_banner", *win, "-i", distorted, *win, "-i", reference,
+    run = subprocess.run([*NICE, "ffmpeg", "-nostdin", "-hide_banner", "-i", distorted, "-i", reference,
                           "-lavfi", graph, "-f", "null", "-"], capture_output=True, text=True, timeout=6 * 3600)
     found = re.findall(r"VMAF score: ([\d.]+)", run.stderr)
     if run.returncode != 0 or not found:
@@ -339,7 +337,7 @@ def encode(path: str, crf: float, opts: dict, work: str, progress=None) -> tuple
             raise ShrinkError(f"ffmpeg: {err.strip()[-300:] or 'chyba'}")
         if progress:
             progress("verify")
-        check = verify(path, out, info, opts)
+        check = verify(path, out, info, opts, work)
     except BaseException:
         if proc.poll() is None:
             proc.kill()
@@ -349,13 +347,20 @@ def encode(path: str, crf: float, opts: dict, work: str, progress=None) -> tuple
     return out, check
 
 
-def verify(src: str, out: str, info: dict, opts: dict) -> dict:
+def verify(src: str, out: str, info: dict, opts: dict, work: str) -> dict:
     b = probe(out)
     if abs(info["duration"] - b["duration"]) > 2:
         raise ShrinkError(f"Délka nesedí ({info['duration']:.0f} s vs {b['duration']:.0f} s)")
     if len(b["audio"]) != len(info["audio"]):
         raise ShrinkError(f"Zvukové stopy nesedí ({len(info['audio'])} vs {len(b['audio'])})")
-    scores = [round(vmaf(out, src, info["duration"] * share, CHECK_S), 2) for share in CHECK_AT]
+    scores = []
+    for k, share in enumerate(CHECK_AT):
+        at = info["duration"] * share
+        a = window(src, at, CHECK_S, os.path.join(work, f"check{k}a.mkv"))
+        z = window(out, at, CHECK_S, os.path.join(work, f"check{k}b.mkv"))
+        scores.append(round(vmaf(z, a), 2))
+        for p in (a, z):
+            os.remove(p)
     if min(scores) < opts["vmaf"] - CHECK_SLACK:
         raise ShrinkError(f"Kvalita výsledku pod cílem (VMAF {', '.join(f'{s:g}' for s in scores)})")
     return {"vmaf_check": scores, "size": os.path.getsize(out)}
