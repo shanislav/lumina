@@ -11,6 +11,7 @@ metadata). Dolby Vision would be lost — such files are left alone."""
 
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -24,6 +25,8 @@ DEFAULTS = {"vmaf": 95, "speed": "balanced", "max_height": 0, "audio": "copy", "
 SAMPLES = (0.15, 0.38, 0.62, 0.85)        # where in the film the samples are (share of its length)
 SAMPLE_S = 8
 PREROLL_S = 5                              # decoded before a sample and thrown away (see cut_samples)
+SAMPLE_EVERY = 3                           # samples' VMAF from every 3rd frame
+VMAF_PER_CRF = 0.6                         # VMAF falls about this much per CRF step (x265; first guess only)
 CRF_RANGE = (14, 34)
 CHECK_AT = (0.3, 0.7)                      # the full result's own check: VMAF of these windows …
 CHECK_S = 10
@@ -191,12 +194,13 @@ def window(path: str, at: float, length: float, out: str) -> str:
     return out
 
 
-def vmaf(distorted: str, reference: str) -> float:
+def vmaf(distorted: str, reference: str, every: int = 1) -> float:
     """VMAF of ``distorted`` against ``reference`` — two files of the same frames (a sample and its encode, or two
-    windows cut the same way), at most 1080p — the model is made for it; a smaller result is scaled up."""
+    windows cut the same way), at most 1080p — the model is made for it; a smaller result is scaled up.
+    ``every``: only each n-th frame measured (neighbouring frames are alike — 3× faster, the score barely moves)."""
     graph = ("[1:v]setpts=PTS-STARTPTS,scale='min(1920,iw)':-2:flags=bicubic,format=yuv420p10le,split[r1][r2];"
              "[0:v]setpts=PTS-STARTPTS[d0];[d0][r1]scale=rw:rh:flags=bicubic,format=yuv420p10le[d];"
-             f"[d][r2]libvmaf=n_threads={os.cpu_count() or 2}")
+             f"[d][r2]libvmaf=n_threads={os.cpu_count() or 2}:n_subsample={every}")
     run = subprocess.run([*NICE, "ffmpeg", "-nostdin", "-hide_banner", "-i", distorted, "-i", reference,
                           "-lavfi", graph, "-f", "null", "-"], capture_output=True, text=True, timeout=6 * 3600)
     found = re.findall(r"VMAF score: ([\d.]+)", run.stderr)
@@ -216,7 +220,7 @@ def encode_sample(refs: list[str], info: dict, opts: dict, crf: float, work: str
               *_video_args(info, opts, crf), out], 6 * 3600)
         spent += time.time() - t0
         size += os.path.getsize(out)
-        scores.append(vmaf(out, ref))
+        scores.append(vmaf(out, ref, SAMPLE_EVERY))
         weights.append(probe(ref)["duration"] or SAMPLE_S)
         paths.append(out)
     score = sum(s * w for s, w in zip(scores, weights)) / sum(weights)
@@ -225,34 +229,35 @@ def encode_sample(refs: list[str], info: dict, opts: dict, crf: float, work: str
 
 
 def find_crf(ref: list[str], info: dict, opts: dict, work: str, progress=None) -> tuple[dict | None, list[dict]]:
-    """The highest CRF whose samples reach the target → (that trial or None, every trial). Bisection over whole
-    numbers: ~4 encodes of the samples."""
+    """The highest CRF whose samples reach the target → (that trial or None, every trial). VMAF falls about evenly
+    with CRF, so the next CRF is where the measured ones point (two nearest the target, else the usual slope) —
+    and the one above a passing CRF is tried to be sure: mostly 2–3 encodes of the samples."""
     target = opts["vmaf"]
-    lo_ok, hi_bad = None, None                  # best passing trial, lowest failing CRF
     trials: list[dict] = []
+    best = None
+    lo, hi = CRF_RANGE[0] - 1, CRF_RANGE[1] + 1   # the highest CRF known to pass, the lowest known to fail
     crf = 24 if info["height"] > 1200 else 22
-    lo, hi = CRF_RANGE
     for _ in range(7):
         if progress:
             progress("sample", len(trials) + 1)
         t = encode_sample(ref, info, opts, crf, work)
         trials.append(t)
-        if t["vmaf"] >= target:
-            lo_ok = t if (lo_ok is None or t["crf"] > lo_ok["crf"]) else lo_ok
-            lo = crf
-        else:
-            hi_bad = crf if hi_bad is None else min(hi_bad, crf)
-            hi = crf
-        if lo_ok is None:
-            nxt = crf - 4 if crf - 4 >= CRF_RANGE[0] else (CRF_RANGE[0] if crf > CRF_RANGE[0] else None)
-        elif hi_bad is None:
-            nxt = crf + 4 if crf + 4 <= CRF_RANGE[1] else (CRF_RANGE[1] if crf < CRF_RANGE[1] else None)
-        else:
-            nxt = (lo + hi) // 2 if hi - lo > 1 else None
-        if nxt is None or any(x["crf"] == nxt for x in trials):
+        if t["vmaf"] >= target and crf > lo:
+            lo, best = crf, t
+        elif t["vmaf"] < target:
+            hi = min(hi, crf)
+        if hi - lo <= 1:
             break
-        crf = nxt
-    return lo_ok, trials
+        near = sorted(trials, key=lambda x: abs(x["vmaf"] - target))[:2]
+        slope = -VMAF_PER_CRF
+        if len(near) == 2 and near[0]["crf"] != near[1]["crf"]:
+            measured = (near[1]["vmaf"] - near[0]["vmaf"]) / (near[1]["crf"] - near[0]["crf"])
+            slope = measured if measured < 0 else slope
+        guess = math.floor(near[0]["crf"] + (target - near[0]["vmaf"]) / slope)
+        crf = min(max(guess, lo + 1), hi - 1)
+        if any(x["crf"] == crf for x in trials):
+            crf = lo + 1 if lo >= CRF_RANGE[0] else hi - 1
+    return best, trials
 
 
 def stills(refs: list[str], encoded: list[str], info: dict, out_dir: str) -> list[dict]:

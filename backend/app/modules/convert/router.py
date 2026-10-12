@@ -105,7 +105,7 @@ async def _roots() -> list[str]:
 
 
 @router.get("/shrink/candidates", dependencies=[Depends(require("convert"))])
-async def shrink_candidates(q: str = "", all: bool = False) -> dict:
+async def shrink_candidates(q: str = "", all: bool = False, by_weight: bool = False) -> dict:
     """Library files to shrink: by default the ones well above a plenty bitrate, the heaviest first; ``q`` filters
     by title / show, ``all`` shows every one."""
     files = await _library_files(await _roots())
@@ -114,7 +114,7 @@ async def shrink_candidates(q: str = "", all: bool = False) -> dict:
         files = [f for f in files if needle in f"{f['group']} {f['title']} {os.path.basename(f['path'])}".lower()]
     if not all:
         files = [f for f in files if f["weight"] >= 1.3]
-    files.sort(key=lambda f: (f["group"] != "Filmy", f["group"], f["title"]))
+    files.sort(key=(lambda f: -f["weight"]) if by_weight else (lambda f: (f["group"] != "Filmy", f["group"], f["title"])))
     return {"files": files[:600], "total": len(files)}
 
 

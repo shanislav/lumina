@@ -43,6 +43,7 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
   const [opts, setOpts] = useState<ShrinkOptions>(DEFAULTS);
   const [q, setQ] = useState("");
   const [all, setAll] = useState(false);
+  const [byWeight, setByWeight] = useState(false);
   const [files, setFiles] = useState<ShrinkFile[]>([]);
   const [total, setTotal] = useState(0);
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -59,23 +60,24 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
 
   const load = useCallback(async () => {
     try {
-      const r = await getShrinkCandidates(q, all);
+      const r = await getShrinkCandidates(q, all, byWeight);
       setFiles(r.files);
       setTotal(r.total);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [q, all]);
+  }, [q, all, byWeight]);
   useEffect(() => {
     const t = setTimeout(load, 300);
     return () => clearTimeout(t);
   }, [load]);
 
   const groups = useMemo(() => {
+    if (byWeight) return [["Nejvíc nadbytečných dat nahoře", [...files].sort((a, b) => b.weight - a.weight)]] as [string, ShrinkFile[]][];
     const m = new Map<string, ShrinkFile[]>();
     for (const f of files) m.set(f.group, [...(m.get(f.group) ?? []), f]);
     return [...m.entries()];
-  }, [files]);
+  }, [files, byWeight]);
 
   const toggle = (paths: string[], on: boolean) => {
     const next = new Set(picked);
@@ -174,6 +176,11 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
           <label className="flex items-center gap-1 text-xs text-zinc-400">
             <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> i soubory s rozumnou velikostí
           </label>
+          <button onClick={() => setByWeight(!byWeight)}
+            title="×: kolikrát víc dat, než obraz v tomto rozlišení a kodeku běžně potřebuje (hrubý odhad — přesně to změří náhled)"
+            className={`rounded-lg border px-2.5 py-1.5 text-xs ${byWeight ? "border-violet-500 text-violet-300" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>
+            {byWeight ? "řazeno podle ×" : "seřadit podle ×"}
+          </button>
           <button disabled={busy || picked.size === 0} onClick={() => run(async () => { await startShrinkPlan([...picked], opts); setPicked(new Set()); })}
             className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500 disabled:opacity-40">
             Udělat náhled ({picked.size})
@@ -196,7 +203,9 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
                 {list.map((f) => (
                   <label key={f.path} className="flex items-center gap-2 px-3 py-1 text-xs hover:bg-zinc-800/30" title={f.path}>
                     <input type="checkbox" checked={picked.has(f.path)} onChange={(e) => toggle([f.path], e.target.checked)} />
-                    <span className="min-w-0 flex-1 truncate text-zinc-300 sm:w-24 sm:flex-none">{f.title}</span>
+                    <span className={`min-w-0 flex-1 truncate text-zinc-300 ${byWeight ? "" : "sm:w-24 sm:flex-none"}`}>
+                      {byWeight && f.kind === "episode" ? `${f.group} ${f.title}` : f.title}
+                    </span>
                     <span className="hidden min-w-0 flex-1 truncate text-zinc-500 sm:block">{base(f.path)}</span>
                     <span className="shrink-0 text-zinc-400">{f.height}p {f.codec} {f.hdr && f.hdr !== "SDR" ? f.hdr : ""} · {f.mbps} Mb/s · {gb(f.size)}</span>
                     <span className={`w-10 shrink-0 text-right ${f.weight >= 2 ? "text-amber-300" : f.weight >= 1.3 ? "text-amber-200/70" : "text-zinc-500"}`}

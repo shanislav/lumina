@@ -152,3 +152,12 @@ def test_frames_per_second_even_from_a_transport_stream():
     assert shrink._fps({"avg_frame_rate": "0/0", "r_frame_rate": "24000/1001"}) == 24000 / 1001
     assert shrink._fps({"avg_frame_rate": "25/1"}) == 25
     assert shrink._fps({}) == 25.0
+
+
+def test_two_encodes_when_the_first_guess_is_close(monkeypatch):
+    # Bones S01E05 as measured: 22 → 95.35, 23 → 94.85
+    seen = {22: 95.35, 23: 94.85, 24: 94.28, 26: 92.88}
+    monkeypatch.setattr(shrink, "encode_sample", lambda ref, info, opts, crf, work:
+                        {"crf": crf, "vmaf": seen[crf], "size": 1, "seconds": 1})
+    best, trials = shrink.find_crf("ref", {"height": 1080}, {"vmaf": 95}, "w")
+    assert best["crf"] == 22 and [t["crf"] for t in trials] == [22, 23]
