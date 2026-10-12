@@ -66,7 +66,7 @@ HELP = {
 REPORT_S = 30
 CHECK_S = 5
 LOAD_WINDOW_S = 60          # the CPU load of other programs: averaged over this
-RESUME_AFTER_S = 120        # paused for load: goes on after this long below the limit
+RESUME_AFTER_S = 60         # paused for load: goes on after this long below the limit
 
 log = logging.getLogger("lumina-worker")
 
@@ -133,6 +133,8 @@ class Watch:
         self.cfg = cfg
         self.samples: list[tuple[float, float]] = []
         self.calm_since: float | None = None
+        self.busy = False
+        self.procs: dict[int, psutil.Process] = {}     # the encoder's processes, kept for their CPU readings
         psutil.cpu_percent(None)
 
     def _own(self) -> list[psutil.Process]:
@@ -142,13 +144,29 @@ class Watch:
             return []
 
     def sample(self) -> None:
+        """One reading of the other programs' load: the whole CPU minus the worker's own encoder. psutil measures
+        a process's CPU between two calls on the SAME object — a new one says 0 % (the encoder would count as
+        "another program" and pause itself): the objects are kept, a reading with a new process is skipped."""
         total = psutil.cpu_percent(None)
-        own = 0.0
+        own, fresh = 0.0, False
+        alive = {}
         for p in self._own():
+            known = self.procs.get(p.pid)
             try:
-                own += p.cpu_percent(None)
+                if known is None:
+                    p.cpu_percent(None)             # the first call only starts its measurement
+                    alive[p.pid], fresh = p, True
+                else:
+                    own += known.cpu_percent(None)
+                    alive[p.pid] = known
             except psutil.Error:
                 pass
+        # one that ended since the last reading took CPU we can no longer read — that reading is skipped too
+        # (a preview runs many short encodes and measurements)
+        fresh = fresh or any(pid not in alive for pid in self.procs)
+        self.procs = alive
+        if fresh:
+            return
         other = max(0.0, total - own / (psutil.cpu_count() or 1))
         now = time.time()
         self.samples = [(t, v) for t, v in self.samples if now - t < LOAD_WINDOW_S] + [(now, other)]
@@ -175,12 +193,14 @@ class Watch:
             return "počítač se používá"
         load = self.other_load()
         if load > cfg["cpu_other_max"]:
-            self.calm_since = None
+            self.busy, self.calm_since = True, None
             return f"jiné programy vytěžují procesor ({load:.0f} %)"
-        if working is False and self.calm_since is not None and time.time() - self.calm_since < RESUME_AFTER_S:
-            return f"čekám, až se procesor uklidní ({load:.0f} %)"
-        if self.calm_since is None:
-            self.calm_since = time.time()
+        if self.busy:
+            # after a busy spell the CPU must stay calm a while (a game's loading screen is not the end of the game)
+            self.calm_since = self.calm_since or time.time()
+            if time.time() - self.calm_since < RESUME_AFTER_S:
+                return f"čekám, až se procesor uklidní ({load:.0f} %)"
+            self.busy = False
         return ""
 
     def pause(self) -> None:
@@ -209,8 +229,23 @@ class Watch:
 
 class Lumina:
     def __init__(self, cfg: dict):
-        self.base = cfg["server"].rstrip("/") + "/api/convert"
+        server = cfg["server"].rstrip("/")
+        # the address one types in the browser: its /api is the backend behind nginx (which may cut one /api off)
+        self.bases = [server + "/api/api/convert", server + "/api/convert", server + "/convert"]
+        self.base = self.bases[0]
         self.token = cfg["token"]
+
+    def find(self) -> None:
+        """Which of the possible addresses is Lumina's backend: the first that does not answer 404."""
+        for base in self.bases:
+            self.base = base
+            try:
+                self.call("POST", "/worker/hello", {"state": {"waiting": "připojuji se"}})
+                return
+            except RuntimeError as e:
+                if "404" not in str(e):
+                    raise
+        raise RuntimeError("Lumina na této adrese neodpovídá — zkontroluj „server“ (adresa, kterou píšeš do prohlížeče)")
 
     def call(self, method: str, path: str, body=None, timeout: float = 30, raw: bytes | None = None) -> dict:
         data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
@@ -229,11 +264,14 @@ def machine() -> dict:
     """What this computer is: system, CPU, graphics card, the encoders its ffmpeg has (NVENC tried for real)."""
     out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
     encoders = [e for e in ("libx265", "hevc_nvenc", "hevc_qsv", "hevc_amf") if f" {e} " in out]
-    if "hevc_nvenc" in encoders:
+    for hw in [e for e in encoders if e != "libx265"]:
+        # built into ffmpeg is not working here: the card, its driver (NVENC of ffmpeg 9 needs driver 610+)
         test = subprocess.run(["ffmpeg", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=size=320x240:d=0.2",
-                               "-c:v", "hevc_nvenc", "-f", "null", "-"], capture_output=True, text=True)
+                               "-c:v", hw, "-f", "null", "-"], capture_output=True, text=True)
         if test.returncode != 0:
-            encoders.remove("hevc_nvenc")
+            encoders.remove(hw)
+            why = next((line for line in test.stderr.splitlines() if "driver" in line.lower()), "")
+            log.info("Kodér %s tu nefunguje%s", hw, f" — {why.split('] ')[-1]}" if why else "")
     gpu = ""
     try:
         gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True,
@@ -385,6 +423,7 @@ def main() -> None:
     info = machine()
     log.info("Lumina worker %s — %s, %s, %s vláken, %s; kodéry %s", VERSION, info["system"], info["cpu"],
              info["threads"], info["gpu"] or "bez NVIDIA", ", ".join(info["encoders"]) or "žádné")
+    lumina.find()
     hello = lumina.call("POST", "/worker/hello", {**info, "state": {"waiting": ""}})
     log.info("Připojeno k Lumině jako „%s“", hello.get("name"))
     for root in hello.get("roots") or []:
