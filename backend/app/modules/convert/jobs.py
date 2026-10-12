@@ -54,7 +54,8 @@ async def enqueue(kind: str, paths: list[str], auto: bool = False) -> int:
             if await (await db.execute("SELECT 1 FROM convert_jobs WHERE path = ? AND kind = ? AND status IN "
                                        "('queued', 'running')", (path, kind))).fetchone():
                 continue
-            await db.execute("INSERT INTO convert_jobs (kind, path, auto) VALUES (?, ?, ?)", (kind, path, int(auto)))
+            await db.execute("INSERT INTO convert_jobs (kind, path, auto, created_at) VALUES (?, ?, ?, ?)",
+                             (kind, path, int(auto), _now()))     # local time, like finished_at
             added += 1
         await db.commit()
     finally:
