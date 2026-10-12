@@ -34,3 +34,31 @@ async def test_each_episode_its_target_and_the_version_with_the_dub(tmp_path):
     assert got[2]["status"] == "skip"                      # no old version
     assert got[3]["status"] == "done"                      # the new one has the dub already
     assert got[4]["status"] == "done"                      # its only file is the old one with the dub
+
+
+def test_the_new_release_own_language_by_its_name():
+    assert dubs.own_language("Bones - S01E04 - Muž v medvědovi [1080p x265] [CS].mkv", "sk") == "cs"
+    assert dubs.own_language("Bones - S01E04 [1080p x265] [CS+SK].mkv", "sk") == "cs"     # moved again
+    assert dubs.own_language("Bones.S01E04.1080p.WEB-DL.HEVC.mkv", "sk") is None
+    assert dubs.own_language("Show S01E01 [CS+EN].mkv", "sk") is None                     # which one is it?
+
+
+async def test_the_own_track_without_a_language_named_and_only_that(monkeypatch):
+    from app.core import mediainfo
+    from app.modules.library import audio_lang
+    written = []
+
+    async def fake_set(path, lang, track=None, media=None):
+        written.append((lang, track))
+        return {"written": True, "media": media, "tracks": 1}
+    monkeypatch.setattr(audio_lang, "set_language", fake_set)
+    tracks = {"a.mkv": [{"lang": ""}, {"lang": "sk"}], "b.mkv": [{"lang": "cs"}, {"lang": "sk"}],
+              "c.mkv": [{"lang": "und"}, {"lang": "sk"}]}
+
+    async def fake_probe(path):
+        return {"audio": tracks[path]}
+    monkeypatch.setattr(mediainfo, "probe_async", fake_probe)
+    await dubs._name_own_track("a.mkv", "Bones S01E04 [CS].mkv", 0, "sk")
+    await dubs._name_own_track("b.mkv", "Bones S01E05 [CS].mkv", 0, "sk")     # has its language already
+    await dubs._name_own_track("c.mkv", "Bones.S01E06.HEVC.mkv", 0, "sk")     # the name tells none
+    assert written == [("cs", 0)]

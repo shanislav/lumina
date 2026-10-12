@@ -112,9 +112,37 @@ async def move_dub(item: dict, lang: str, delete_source: bool, progress=None, re
     shutil.rmtree(work, ignore_errors=True)
     if final != target:
         os.remove(target)                       # an MP4 became an MKV
+    # the kept tracks come first: the reference stays where it was, or first when only it was kept
+    await _name_own_track(final, os.path.basename(target), 0 if redo else item["target_track"], lang)
     await _library(target, final, source if delete_source else None)
     return {"status": "ok", "path": final, "verdict": data["verdict"], "speed": data["speed"],
             "offset": data["offset"], "confidence": data.get("confidence"), "picture": data.get("picture") or []}
+
+
+def own_language(filename: str, dub: str) -> str | None:
+    """The new release's own sound by its name ("… [CS].mkv", "[CS+SK]" once the dub is in): the one audio
+    language besides the moved dub, None when the name tells none or more."""
+    from app.core.release_langs import parse_languages
+    langs = [x for x in parse_languages(filename)["audio"] if x != dub.lower()]
+    return langs[0] if len(langs) == 1 else None
+
+
+async def _name_own_track(path: str, filename: str, track: int, dub: str) -> None:
+    """The reference track without a language (Bones in HEVC: its Czech one) gets the one its file's name
+    tells — else the episode would show the moved dub alone."""
+    from app.core.mediainfo import probe_async
+    from app.modules.library import audio_lang
+    media = await probe_async(path) or {}
+    audio = media.get("audio") or []
+    if track >= len(audio) or (audio[track].get("lang") or "") not in ("", "und", "unk"):
+        return
+    own = own_language(filename, dub)
+    if own not in audio_lang.LANGS:
+        return
+    try:
+        await audio_lang.set_language(path, own, track, media)
+    except (RuntimeError, ValueError, OSError) as e:
+        logger.info("Dub moved: the own track of %s left without a language (%s)", path, e)
 
 
 async def _library(old: str, new: str, delete: str | None) -> None:
