@@ -130,7 +130,7 @@ export default function TvRename({ onChanged }: { onChanged?: () => void }) {
         Opravit názvy seriálů
       </button>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => !busy && setOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => !busy && setOpen(false)}>
           <div className="mx-2 flex max-h-[92vh] w-full max-w-5xl flex-col space-y-3 rounded-xl border border-zinc-700 bg-zinc-900 p-4 sm:mx-4 sm:p-6"
             onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">

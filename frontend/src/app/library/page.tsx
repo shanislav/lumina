@@ -935,7 +935,7 @@ export default function LibraryPage() {
 
       {/* Fix Match Modal */}
       {fixingMovie && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setFixingMovie(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setFixingMovie(null)}>
           <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-2xl w-full mx-4 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-zinc-100">
               {fixingMovie.status === "review" ? "Na kontrolu" : fixingMovie.status === "unmatched" ? "Nespárováno" : "Film v knihovně"}
@@ -1252,7 +1252,7 @@ export default function LibraryPage() {
 
       {/* Versions of one movie */}
       {versionsOf && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setVersionsOf(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setVersionsOf(null)}>
           <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-2xl w-full mx-4 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex gap-4">
               {versionsOf.main.poster_url && (
@@ -1296,7 +1296,7 @@ export default function LibraryPage() {
 
       {/* Bulk fix names on disk */}
       {bulkOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setBulkOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setBulkOpen(false)}>
           <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-4xl w-full mx-4 space-y-4 max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-zinc-100">Opravit názvy na disku</h3>

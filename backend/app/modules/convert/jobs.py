@@ -553,6 +553,12 @@ async def _run_together(job: dict) -> dict:
             if not cut:                                   # cannot be cut frame-exact: the whole file here
                 return await _run_shrink(job)
             os.makedirs(work, exist_ok=True)
+            for folder in (os.path.dirname(work), work):     # the workers write their parts there (the share's user,
+                _same_owner(folder, os.path.dirname(src))    # whoever it is — the folder is gone after the job)
+                try:
+                    os.chmod(folder, 0o777)
+                except OSError:
+                    pass
             db = await get_db()
             try:
                 for p in cut:
@@ -579,10 +585,10 @@ async def _run_together(job: dict) -> dict:
         done = {p["options"]["idx"]: p for p in parts if p["status"] == "done"}
         order = sorted(done)
         files = [done[i]["result_path"] for i in order]
+        counts = [done[i]["options"]["frames"] for i in order]
         seams = [done[order[k]]["options"]["start"] for k in sorted({len(order) // 3, 2 * len(order) // 3}) if k > 0]
-        total = sum(p["options"]["frames"] for p in done.values())
         current.pop("detail", None)
-        out, check = await asyncio.to_thread(shrink.assemble, src, files, info, opts, work, total, seams, _progress)
+        out, check = await asyncio.to_thread(shrink.assemble, src, files, counts, info, opts, work, seams, _progress)
         by = await _runner_names({p["worker_id"] for p in done.values()})
         result = await shrink_done(job, out, {**check, "parts": len(order)})
         result["note"] += f" · {len(order)} částí ({', '.join(by)})"

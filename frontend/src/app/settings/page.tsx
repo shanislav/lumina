@@ -621,7 +621,7 @@ function AddSourceModal({ onClose, onSave }: { onClose: () => void, onSave: (dat
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
       <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
         <h2 className="text-xl font-bold text-zinc-100">Přidat zdroj</h2>
         <div className="mt-6 space-y-4">
@@ -720,7 +720,7 @@ function EditIntegrationModal({ type, integration, onClose, onSave }: { type: st
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
         <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
           <h2 className="text-xl font-bold text-zinc-100">{typeDef?.label} Settings</h2>
           {(typeDef as any)?.description && <p className="mt-2 text-sm text-zinc-400">{(typeDef as any).description}</p>}
@@ -811,7 +811,7 @@ function EditSourceModal({ source, onClose, onSave }: { source: Source, onClose:
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
       <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
         <h2 className="text-xl font-bold text-zinc-100">Upravit {source.name}</h2>
         <div className="mt-6 space-y-4">

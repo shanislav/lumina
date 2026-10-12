@@ -134,7 +134,7 @@ export default function ProfilesEditor() {
       )}
 
       {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm" onClick={() => setEditing(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4" onClick={() => setEditing(null)}>
           <div className="w-full max-w-lg rounded-xl border border-zinc-800 bg-zinc-900 p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-zinc-100">
               {editing.id ? "Upravit profil" : "Nový profil"} <span className="text-sm font-normal text-zinc-500">· {KIND_LABEL[editing.kind || "movie"]}</span>

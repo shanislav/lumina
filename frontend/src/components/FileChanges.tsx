@@ -98,7 +98,7 @@ export default function FileChanges() {
         )}
       </button>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4" onClick={() => setOpen(false)}>
           <div className="my-8 w-full max-w-4xl space-y-4 rounded-xl border border-zinc-700 bg-zinc-900 p-5 text-sm" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-lg font-semibold text-zinc-100">Úpravy souborů</h3>

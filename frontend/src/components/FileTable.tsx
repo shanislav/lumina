@@ -313,7 +313,7 @@ export default function FileTable({
   return (
     <div className="w-full">
       {choosing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setChoosing(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setChoosing(null)}>
           <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-xl w-full mx-4 space-y-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-zinc-100">Tento film už máš</h3>
             <div className="rounded-lg bg-zinc-950 border border-zinc-800 p-3 text-sm">

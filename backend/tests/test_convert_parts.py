@@ -102,8 +102,8 @@ async def test_the_leader_cuts_encodes_joins_and_cleans_up(tmp_path, monkeypatch
     monkeypatch.setattr(shrink, "encode_part", fake_part)
     joined = {}
 
-    def fake_assemble(path, files, info, opts, work, frames, seams, progress=None):
-        joined.update(files=[os.path.basename(f) for f in files], frames=frames, seams=seams)
+    def fake_assemble(path, files, counts, info, opts, work, seams, progress=None):
+        joined.update(files=[os.path.basename(f) for f in files], frames=sum(counts), seams=seams)
         out = os.path.join(work, "Film.mkv")
         with open(out, "wb") as f:
             f.write(b"new")

@@ -72,7 +72,7 @@ export default function EpisodeWindow({ id, onClose, onChanged }: { id: number; 
 
   const code = data ? `S${String(data.season).padStart(2, "0")}E${String(data.episode).padStart(2, "0")}` : "";
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onClose}>
       <div className="mx-2 max-h-[92vh] w-full max-w-3xl space-y-4 overflow-y-auto rounded-xl border border-zinc-700 bg-zinc-900 p-4 sm:mx-4 sm:p-6"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">

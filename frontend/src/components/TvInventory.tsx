@@ -38,7 +38,7 @@ export default function TvInventory() {
         Kontrola knihovny{bad.length > 0 && <span className="ml-1.5 rounded-full bg-amber-900/70 px-1.5 text-xs text-amber-200">{bad.length}</span>}
       </button>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4" onClick={() => setOpen(false)}>
         <div className="my-8 w-full max-w-5xl space-y-2 rounded-xl border border-zinc-700 bg-zinc-900 p-5 text-xs" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-zinc-100">Kontrola knihovny seriálů</h3>

@@ -501,9 +501,9 @@ SCENE_CUT = 0.15                           # ffmpeg's scene score of a frame tha
 CUT_FREE = (".ts", ".m2ts", ".mts")        # a transport stream's timestamps cannot be cut frame-exact
 
 
-def frame_times(path: str) -> tuple[list[float], list[float]]:
+def frame_times(path: str, absolute: bool = False) -> tuple[list[float], list[float]]:
     """Every frame's presentation time and the keyframes', in s from the file's start (what ffmpeg's -ss counts
-    from) — read from the packets, nothing decoded."""
+    from; ``absolute``: as the file has them) — read from the packets, nothing decoded."""
     run = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
                           "packet=pts_time,flags:format=start_time", "-of", "compact=p=0:nk=0", path],
                          capture_output=True, text=True, timeout=3 * 3600, **SPAWN)
@@ -525,7 +525,7 @@ def frame_times(path: str) -> tuple[list[float], list[float]]:
     if not times:
         raise ShrinkError("Soubor nemá snímky s časem")
     times.sort()
-    zero = start if start is not None else times[0]
+    zero = 0.0 if absolute else start if start is not None else times[0]
     return [t - zero for t in times], sorted(k - zero for k in keys)
 
 
@@ -645,23 +645,36 @@ def encode_part(path: str, start: float, frames: int, info: dict, opts: dict, cr
     return time.time() - t0
 
 
-def assemble(path: str, files: list[str], info: dict, opts: dict, work: str, frames: int, seams: list[float],
+def assemble(path: str, files: list[str], counts: list[int], info: dict, opts: dict, work: str, seams: list[float],
              progress=None) -> tuple[str, dict]:
     """The encoded parts joined (no encoding again) with the original's audio, subtitles, attachments and
-    chapters → (path, its check: the frame count and VMAF across a few joins too)."""
-    listing = os.path.join(work, "parts.txt")
-    with open(listing, "w", encoding="utf-8") as f:
-        f.writelines("file '" + p.replace("'", "'\''") + "'\n" for p in files)
-    out = _out_path(path, work)
+    chapters → (path, its check: every frame at the original's time, VMAF across a few joins too).
+
+    Each part's length is given (its frames / fps): taken from the part's file, the join counts the encoder's
+    delay of the first frame in — a frame's gap at every join, the picture a frame later after each one (a film of
+    60 parts 2.5 s behind its sound). The whole picture starts where the original's did."""
     if progress:
         progress("join")
+    src_times, _ = frame_times(path, absolute=True)
+    listing = os.path.join(work, "parts.txt")
+    with open(listing, "w", encoding="utf-8") as f:
+        for p, n in zip(files, counts):
+            f.write("file '" + p.replace("'", "'\\''") + "'\n" + f"duration {n / info['fps']:.9f}\n")
+    out = _out_path(path, work)
     try:
-        _run([*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", listing, "-i", path,
+        _run([*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-itsoffset", f"{src_times[0]:.6f}", "-f", "concat",
+              "-safe", "0", "-i", listing, "-i", path,
               "-map", "0:v:0", "-map", "1:a?", "-map", "1:s?", "-map", "1:t?", "-map_metadata", "1", "-map_chapters", "1",
               "-c", "copy", *_audio_args(info, opts), out], 6 * 3600)
         if progress:
             progress("verify")
-        check = verify(path, out, info, opts, work, frames, seams)
+        out_times, _ = frame_times(out, absolute=True)
+        if len(out_times) != len(src_times):
+            raise ShrinkError(f"Počet snímků nesedí ({len(src_times)} vs {len(out_times)})")
+        drift = max(abs(a - b) for a, b in zip(out_times, src_times))
+        if drift > 0.5 / info["fps"]:
+            raise ShrinkError(f"Snímky se posunuly proti originálu (až o {drift * 1000:.0f} ms) — zvuk by neseděl")
+        check = verify(path, out, info, opts, work, 0, seams)
     except BaseException:
         if os.path.exists(out):
             os.remove(out)
