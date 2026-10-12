@@ -13,6 +13,11 @@ import {
   startShrink, startShrinkPlan,
 } from "@/lib/api";
 
+/** One title's files, when the tab is opened from a film's window or a show's season. */
+export interface ShrinkScope { movie?: number; show?: number; season?: number; label: string }
+/** window event: a film's window on the library page opens the tab for that film */
+export const OPEN_EVENT = "lumina:shrink";
+
 const DEFAULTS: ShrinkOptions = { vmaf: 95, speed: "balanced", max_height: 0, audio: "copy", min_saving: 25, go: false };
 const STORE = "lumina.shrink.options";
 
@@ -80,7 +85,9 @@ function loadOptions(): ShrinkOptions {
   }
 }
 
-export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob[]; phase: string; onChanged: () => void }) {
+export default function ShrinkTab({ jobs, phase, onChanged, scope, onClearScope }: {
+  jobs: ConvertJob[]; phase: string; onChanged: () => void; scope: ShrinkScope | null; onClearScope: () => void;
+}) {
   const [opts, setOpts] = useState<ShrinkOptions>(DEFAULTS);
   const [q, setQ] = useState("");
   const [byWeight, setByWeight] = useState(false);
@@ -100,13 +107,15 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
 
   const load = useCallback(async () => {
     try {
-      const r = await getShrinkCandidates(q, byWeight);
+      const r = await getShrinkCandidates(q, byWeight, scope);
       setFiles(r.files);
       setTotal(r.total);
+      // opened for one title: its files are picked at once
+      if (scope) setPicked(new Set(r.files.map((f) => f.path)));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [q, byWeight]);
+  }, [q, byWeight, scope]);
   useEffect(() => {
     const t = setTimeout(load, 300);
     return () => clearTimeout(t);
@@ -212,8 +221,15 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
 
       <section className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Hledat v celé knihovně — film, seriál (např. kosti)…"
-            className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-zinc-200" />
+          {scope ? (
+            <span className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-violet-700 bg-violet-950/40 px-3 py-1.5 text-violet-200">
+              <span className="truncate">Jen: {scope.label}</span>
+              <button onClick={onClearScope} className="ml-auto text-violet-300 hover:text-white" title="Zobrazit celou knihovnu">✕</button>
+            </span>
+          ) : (
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Hledat v celé knihovně — film, seriál (např. kosti)…"
+              className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-zinc-200" />
+          )}
           <button onClick={() => setByWeight(!byWeight)}
             title="×: kolikrát víc dat, než obraz v tomto rozlišení a kodeku běžně potřebuje (hrubý odhad — přesně to změří náhled)"
             className={`rounded-lg border px-2.5 py-1.5 text-xs ${byWeight ? "border-violet-500 text-violet-300" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>
@@ -225,7 +241,7 @@ export default function ShrinkTab({ jobs, phase, onChanged }: { jobs: ConvertJob
           </button>
         </div>
         <p className="text-xs text-zinc-500">
-          {q.trim() ? `Nalezeno v knihovně: ${total}` : `Bez hledání: soubory, které mají výrazně víc dat, než obraz potřebuje — ${total}`}.
+          {scope ? `Soubory: ${total} (vybrané — zruš, co nechceš)` : q.trim() ? `Nalezeno v knihovně: ${total}` : `Bez hledání: soubory, které mají výrazně víc dat, než obraz potřebuje — ${total}`}.
           {total > files.length && ` Zobrazeno prvních ${files.length} — upřesni hledání.`}
           Náhled zakóduje pár krátkých vzorků, změří kvalitu a ukáže odhad velikosti, času a snímky k porovnání. Soubor zatím nemění.
         </p>

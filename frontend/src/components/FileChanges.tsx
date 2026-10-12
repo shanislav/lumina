@@ -5,7 +5,7 @@
  * Android TV players do not play — and the queue. A button in the library's header; the list opens over the page.
  */
 import { useCallback, useEffect, useState } from "react";
-import ShrinkTab from "@/components/ShrinkTab";
+import ShrinkTab, { OPEN_EVENT, ShrinkScope } from "@/components/ShrinkTab";
 import { ConvertCandidate, ConvertJob, getConvertCandidates, getConvertJobs, startConvertDv } from "@/lib/api";
 
 const STATUS: Record<ConvertJob["status"], { label: string; cls: string }> = {
@@ -26,6 +26,7 @@ export default function FileChanges() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"dv" | "shrink">("shrink");
+  const [scope, setScope] = useState<ShrinkScope | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -42,8 +43,22 @@ export default function FileChanges() {
 
   useEffect(() => {
     load();
-    // opened from a notification / the task list (?convert=1)
-    if (new URLSearchParams(window.location.search).get("convert")) setOpen(true);
+    // opened from a notification / the task list (?convert=1), or from a show's season (+ cshow, cseason, ctitle)
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("convert")) setOpen(true);
+    if (p.get("cshow") || p.get("cmovie")) {
+      setScope({ show: Number(p.get("cshow")) || undefined, season: p.get("cseason") ? Number(p.get("cseason")) : undefined,
+        movie: Number(p.get("cmovie")) || undefined, label: p.get("ctitle") || "" });
+      setTab("shrink");
+    }
+    // … or from a film's window on this page
+    const fromFilm = (e: Event) => {
+      setScope((e as CustomEvent<ShrinkScope>).detail);
+      setTab("shrink");
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_EVENT, fromFilm);
+    return () => window.removeEventListener(OPEN_EVENT, fromFilm);
   }, [load]);
 
   const active = jobs.some((j) => j.status === "running" || j.status === "queued");
@@ -96,7 +111,7 @@ export default function FileChanges() {
               ))}
             </div>
 
-            {tab === "shrink" && <ShrinkTab jobs={jobs} phase={phase} onChanged={load} />}
+            {tab === "shrink" && <ShrinkTab jobs={jobs} phase={phase} onChanged={load} scope={scope} onClearScope={() => setScope(null)} />}
 
             {tab === "dv" && <section className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">

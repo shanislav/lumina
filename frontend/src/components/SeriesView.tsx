@@ -163,7 +163,7 @@ export default function SeriesView({ tmdbId }: { tmdbId: number }) {
 
       <div className="space-y-2">
         {data.seasons.map((s) => (
-          <Season key={s.season_number} tmdbId={tmdbId} downloads={downloads}
+          <Season key={s.season_number} tmdbId={tmdbId} showTitle={show.title} downloads={downloads}
             onStarted={() => { watchDownloads(); setTimeout(() => load(), 1500); }}
             season={s} open={!!open[s.season_number]}
             toggle={() => setOpen((o) => ({ ...o, [s.season_number]: !o[s.season_number] }))}
@@ -260,8 +260,8 @@ function TriState({ value, fallback, yes, no, disabled, onChange }: {
   );
 }
 
-function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch, canEdit, onChanged, searching, onSearch, onOpen, children }: {
-  tmdbId: number; onStarted: () => void; downloads: Record<string, EpisodeDownload>;
+function Season({ tmdbId, showTitle, onStarted, downloads, season, open, toggle, canSearch, canEdit, onChanged, searching, onSearch, onOpen, children }: {
+  tmdbId: number; showTitle: string; onStarted: () => void; downloads: Record<string, EpisodeDownload>;
   season: SeriesSeason; open: boolean; toggle: () => void; canSearch: boolean; canEdit: boolean; onChanged: () => void;
   searching: { season: number; episode: number } | null; onSearch: (episode: number) => void;
   onOpen: (episodeId: number) => void; children?: React.ReactNode;
@@ -344,6 +344,14 @@ function Season({ tmdbId, onStarted, downloads, season, open, toggle, canSearch,
             </div>
           )}
           {dub && <SeasonDub tmdbId={tmdbId} season={season.season_number} onDone={onChanged} />}
+          {canEdit && can("convert") && c.owned + c.temp + c.unknown > 0 && (
+            <div className="flex items-center gap-3 px-4 py-1.5 text-xs">
+              <Link href={`/library?tab=serialy&convert=1&cshow=${tmdbId}&cseason=${season.season_number}&ctitle=${encodeURIComponent(`${showTitle} — ${season.name || `Série ${season.season_number}`}`)}`}
+                className="text-violet-300 hover:text-violet-200" title="Zmenšit soubory dílů při zvolené kvalitě — náhled, porovnání, překódování">
+                🗜 Zmenšit soubory této série…
+              </Link>
+            </div>
+          )}
           {canEdit && c.unknown > 0 && (
             <div className="flex flex-wrap items-center gap-2 px-4 py-1.5 text-xs text-sky-300">
               <span title="Zvukové stopy nemají v souboru jazyk. Lumina ho zapíše do souboru (MKV, MP4), u AVI si ho pamatuje sama.">

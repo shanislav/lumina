@@ -2256,8 +2256,8 @@ export interface ShrinkPlan {
   crf?: number; vmaf?: number; est_size?: number; saving?: number; est_seconds?: number;
   trials?: { crf: number; vmaf: number; size: number }[]; stills?: { a: string; b: string }[];
 }
-export const getShrinkCandidates = (q: string, byWeight = false) =>
-  convertCall<{ files: ShrinkFile[]; total: number }>(`/shrink/candidates?q=${encodeURIComponent(q)}&by_weight=${byWeight}`);
+export const getShrinkCandidates = (q: string, byWeight = false, scope?: { movie?: number; show?: number; season?: number } | null) =>
+  convertCall<{ files: ShrinkFile[]; total: number }>(`/shrink/candidates?q=${scope ? "" : encodeURIComponent(q)}&by_weight=${byWeight}${scope?.movie ? `&movie=${scope.movie}` : ""}${scope?.show ? `&show=${scope.show}` : ""}${scope?.season != null ? `&season=${scope.season}` : ""}`);
 export const startShrinkPlan = (paths: string[], options: ShrinkOptions) =>
   convertCall<{ added: number }>("/shrink/plan", jsonBody("POST", { paths, options }));
 export const startShrink = (planId: number, crf?: number, force = false) =>

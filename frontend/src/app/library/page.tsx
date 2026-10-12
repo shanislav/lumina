@@ -6,6 +6,7 @@ import BulkFilmSettings from "@/components/BulkFilmSettings";
 import SubtitlesPanel from "@/components/SubtitlesPanel";
 import { useRouter } from "next/navigation";
 import FileChanges from "@/components/FileChanges";
+import { OPEN_EVENT, ShrinkScope } from "@/components/ShrinkTab";
 import TvInventory from "@/components/TvInventory";
 import TvRename from "@/components/TvRename";
 import Image from "next/image";
@@ -1069,6 +1070,16 @@ export default function LibraryPage() {
                       className="inline-block rounded border border-violet-700 px-3 py-1 text-xs text-violet-200 hover:bg-violet-900/40">
                       🎚 Editor zvuku
                     </Link>
+                  )}
+                  {can("convert") && fixingMovie.tmdb_id && (
+                    <button onClick={() => {
+                      const detail: ShrinkScope = { movie: fixingMovie.tmdb_id!, label: `${fixingMovie.title} (${fixingMovie.year})` };
+                      setFixingMovie(null);
+                      window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail }));
+                    }} title="Zmenšit soubor při zvolené kvalitě — náhled, porovnání, překódování"
+                      className="inline-block rounded border border-violet-700 px-3 py-1 text-xs text-violet-200 hover:bg-violet-900/40">
+                      🗜 Zmenšit soubor
+                    </button>
                   )}
                 </div>
               )}

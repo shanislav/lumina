@@ -74,17 +74,18 @@ async def _library_files(roots: list[str]) -> list[dict]:
     db = await get_db()
     try:
         out = []
-        for r in await (await db.execute("SELECT file_path, title, year, file_size, media FROM library_movies "
+        for r in await (await db.execute("SELECT file_path, title, year, file_size, media, tmdb_id FROM library_movies "
                                          "WHERE status IN ('matched', 'manual')")).fetchall():
             media = json.loads(r["media"] or "{}")
-            out.append({"path": r["file_path"], "kind": "movie", "group": "Filmy",
+            out.append({"path": r["file_path"], "kind": "movie", "group": "Filmy", "tmdb": r["tmdb_id"], "season": None,
                         "title": f"{r['title']} ({r['year']})" if r["year"] else r["title"], "size": r["file_size"] or 0,
                         "media": media})
         for r in await (await db.execute(
-                "SELECT m.file_path, m.size, m.media, s.title AS show, e.season, e.episode FROM tv_media m "
+                "SELECT m.file_path, m.size, m.media, s.title AS show, e.show_tmdb_id, e.season, e.episode FROM tv_media m "
                 "JOIN library_episodes e ON e.file_path = m.file_path "
                 "LEFT JOIN library_shows s ON s.tmdb_id = e.show_tmdb_id")).fetchall():
             out.append({"path": r["file_path"], "kind": "episode", "group": f"{r['show']} — {r['season']}. série",
+                        "tmdb": r["show_tmdb_id"], "season": r["season"],
                         "title": f"S{r['season']:02d}E{r['episode']:02d}", "size": r["size"] or 0,
                         "media": json.loads(r["media"] or "{}")})
     finally:
@@ -111,15 +112,20 @@ def _fold(text: str) -> str:
 
 
 @router.get("/shrink/candidates", dependencies=[Depends(require("convert"))])
-async def shrink_candidates(q: str = "", by_weight: bool = False) -> dict:
+async def shrink_candidates(q: str = "", by_weight: bool = False, movie: int | None = None, show: int | None = None,
+                            season: int | None = None) -> dict:
     """Library files to shrink: without a search the ones well above a plenty bitrate; a search (title / show /
-    file name, accents not needed) looks through the whole library."""
+    file name, accents not needed) looks through the whole library; ``movie`` / ``show`` (+ ``season``) = one title's
+    files, opened from its page."""
     files = await _library_files(await _roots())
     words = _fold(q).split()
+    if movie or show:
+        files = [f for f in files if f["tmdb"] == (movie or show) and f["kind"] == ("movie" if movie else "episode")
+                 and (season is None or f["season"] == season)]
     if words:
         files = [f for f in files
                  if all(w in _fold(f"{f['group']} {f['title']} {os.path.basename(f['path'])}") for w in words)]
-    else:
+    elif not (movie or show):
         files = [f for f in files if f["weight"] >= 1.3]
     files.sort(key=(lambda f: -f["weight"]) if by_weight else (lambda f: (f["group"] != "Filmy", f["group"], f["title"])))
     return {"files": files[:600], "total": len(files)}
