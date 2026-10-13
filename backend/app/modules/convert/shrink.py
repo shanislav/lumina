@@ -74,8 +74,8 @@ def options(raw: dict | None) -> dict:
     o["go"] = bool(raw.get("go"))
     o["mode"] = "rate" if raw.get("mode") == "rate" else "quality"
     o["where"] = raw.get("where") if raw.get("where") in WHERE else "server"
-    if o["speed"] == "gpu" and o["where"] in ("server", "together"):
-        o["where"] = "worker"                       # the server has no NVIDIA card; parts: x265 only
+    if o["speed"] == "gpu" and o["where"] == "together":
+        o["where"] = "any"                          # parts of one file: x265 only (another card, another picture)
     if raw.get("threads"):                          # a worker's own limit (its settings), not the user's choice
         try:
             o["threads"] = max(1, int(raw["threads"]))
@@ -582,6 +582,39 @@ def scene_scores(path: str, start: float, end: float) -> dict[float, float]:
             except ValueError:
                 pass
     return scores
+
+
+@functools.cache
+def encoders() -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """The HEVC encoders that work on this machine (the server's, a worker's) → (encoders, (encoder, why not) …).
+    A hardware one built into ffmpeg is tried for real: the card and its driver must be there (NVENC of ffmpeg 9
+    needs an NVIDIA driver 610+)."""
+    try:
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=60,
+                             **SPAWN).stdout
+    except (OSError, subprocess.SubprocessError):
+        return (), ()
+    found = [e for e in ("libx265", "hevc_nvenc", "hevc_qsv", "hevc_amf") if f" {e} " in out]
+    failed = []
+    for hw in [e for e in found if e != "libx265"]:
+        try:
+            test = subprocess.run(["ffmpeg", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=size=320x240:d=0.2",
+                                   "-c:v", hw, "-f", "null", "-"], capture_output=True, text=True, timeout=60, **SPAWN)
+            ok = test.returncode == 0
+            why = next((line.split("] ")[-1] for line in test.stderr.splitlines() if "driver" in line.lower()), "")
+        except (OSError, subprocess.SubprocessError) as e:
+            ok, why = False, str(e)
+        if not ok:
+            found.remove(hw)
+            failed.append((hw, why))
+    return tuple(found), tuple(failed)
+
+
+def can_encode(opts: dict) -> bool:
+    """Whether this machine has the encoder of the chosen speed — the graphics card's (NVENC) only where it works;
+    x265 always (Lumina's image has it)."""
+    encoder = SPEEDS[opts["speed"]][0]
+    return encoder == "libx265" or encoder in encoders()[0]
 
 
 @functools.cache

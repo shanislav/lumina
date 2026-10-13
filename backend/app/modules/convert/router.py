@@ -49,7 +49,8 @@ async def list_candidates() -> dict:
 
 @router.get("/jobs", dependencies=[Depends(require("convert"))])
 async def list_jobs() -> dict:
-    return {"jobs": await jobs.recent(), "current": dict(jobs.current), "phases": jobs.PHASES, "kinds": jobs.KINDS}
+    return {"jobs": await jobs.recent(), "current": dict(jobs.current), "phases": jobs.PHASES, "kinds": jobs.KINDS,
+            "server_encoders": list(shrink.encoders()[0])}
 
 
 class Paths(BaseModel):
@@ -143,7 +144,10 @@ async def shrink_plan(body: PlanBody) -> dict:
     paths = [p for p in body.paths if os.path.isfile(p) and any(os.path.normpath(p).startswith(r) for r in roots)]
     if not paths:
         raise HTTPException(400, "Žádný soubor z knihovny")
-    return {"added": await jobs.enqueue("plan", paths, options=shrink.options(body.options))}
+    opts = shrink.options(body.options)
+    if opts["where"] == "server" and not shrink.can_encode(opts):
+        raise HTTPException(400, "Server nemá grafickou kartu NVIDIA (NVENC) — zvol workera")
+    return {"added": await jobs.enqueue("plan", paths, options=opts)}
 
 
 class ShrinkBody(BaseModel):

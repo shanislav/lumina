@@ -2247,7 +2247,8 @@ async function convertCall<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const getConvertCandidates = () => convertCall<{ dv: ConvertCandidate[] }>("/candidates");
 export const getConvertJobs = () =>
-  convertCall<{ jobs: ConvertJob[]; current: { id?: number; phase?: string; value?: number | null; detail?: string }; phases: Record<string, string> }>("/jobs");
+  convertCall<{ jobs: ConvertJob[]; current: { id?: number; phase?: string; value?: number | null; detail?: string }; phases: Record<string, string>;
+    server_encoders?: string[] }>("/jobs");
 export const startConvertDv = (paths: string[]) => convertCall<{ added: number }>("/dv", jsonBody("POST", { paths }));
 
 export interface ShrinkOptions { vmaf: number; speed: "small" | "balanced" | "fast" | "gpu"; where: "server" | "worker" | "any" | "together"; max_height: number; audio: "copy" | "shrink"; min_saving: number; go: boolean; mode: "quality" | "rate"; mbps: number }

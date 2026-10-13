@@ -344,16 +344,11 @@ class Lumina:
 
 def machine() -> dict:
     """What this computer is: system, CPU, graphics card, the encoders its ffmpeg has (NVENC tried for real)."""
-    out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, **shrink.SPAWN).stdout
-    encoders = [e for e in ("libx265", "hevc_nvenc", "hevc_qsv", "hevc_amf") if f" {e} " in out]
-    for hw in [e for e in encoders if e != "libx265"]:
-        # built into ffmpeg is not working here: the card, its driver (NVENC of ffmpeg 9 needs driver 610+)
-        test = subprocess.run(["ffmpeg", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=size=320x240:d=0.2",
-                               "-c:v", hw, "-f", "null", "-"], capture_output=True, text=True, **shrink.SPAWN)
-        if test.returncode != 0:
-            encoders.remove(hw)
-            why = next((line for line in test.stderr.splitlines() if "driver" in line.lower()), "")
-            log.info("Kodér %s tu nefunguje%s", hw, f" — {why.split('] ')[-1]}" if why else "")
+    shrink.encoders.cache_clear()                     # a new driver since the last start of the engine
+    found, failed = shrink.encoders()
+    encoders = list(found)
+    for hw, why in failed:
+        log.info("Kodér %s tu nefunguje%s", hw, f" — {why}" if why else "")
     gpu = ""
     try:
         gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True,

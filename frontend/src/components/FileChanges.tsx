@@ -29,6 +29,7 @@ export default function FileChanges() {
   const [tab, setTab] = useState<"dv" | "shrink" | "workers">("shrink");
   const [phases, setPhases] = useState<Record<string, string>>({});
   const [scope, setScope] = useState<ShrinkScope | null>(null);
+  const [serverEncoders, setServerEncoders] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -37,6 +38,7 @@ export default function FileChanges() {
       setJobs(j.jobs);
       const v = j.current.value;
       setPhases(j.phases);
+      setServerEncoders(j.server_encoders ?? []);
       const pct = j.current.phase === "encode" || j.current.phase === "parts";
       setPhase(j.current.phase ? (j.phases[j.current.phase] ?? j.current.phase)
         + (v != null ? (pct ? ` ${Math.round(v)} %` : ` ${v}`) : "") + (j.current.detail ? ` (${j.current.detail})` : "") : "");
@@ -128,7 +130,8 @@ export default function FileChanges() {
               ))}
             </div>
 
-            {tab === "shrink" && <ShrinkTab jobs={jobs} phase={phase} phases={phases} onChanged={load} scope={scope} onClearScope={() => setScope(null)} />}
+            {tab === "shrink" && <ShrinkTab jobs={jobs} phase={phase} phases={phases} onChanged={load} scope={scope} onClearScope={() => setScope(null)}
+              serverGpu={serverEncoders.includes("hevc_nvenc")} />}
 
             {tab === "workers" && <WorkersTab phases={phases} />}
 

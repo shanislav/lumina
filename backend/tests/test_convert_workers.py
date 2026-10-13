@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from app.core import registry
 from app.db import DB_PATH, init_db
-from app.modules.convert import jobs, workers
+from app.modules.convert import jobs, shrink, workers
 
 
 async def _worker(encoders=("libx265",)) -> dict:
@@ -85,3 +85,15 @@ async def test_a_free_worker_gets_a_head_start_on_whoever_is_free_first(monkeypa
     with sqlite3.connect(DB_PATH) as conn:                        # … it did not take it in time
         conn.execute("UPDATE convert_jobs SET created_at = '2000-01-01 00:00:00'")
     assert (await jobs._next())["path"] == "/m/a.mkv"
+
+
+async def test_the_graphics_cards_job_goes_to_the_server_only_with_a_card(monkeypatch):
+    monkeypatch.setattr(jobs._wake, "set", lambda: None)
+    await init_db(registry.discover())
+    await jobs.enqueue("plan", ["/m/gpu.mkv"], options={"where": "any", "speed": "gpu"})
+    monkeypatch.setattr(shrink, "encoders", lambda: (("libx265",), (("hevc_nvenc", "driver"),)))
+    assert await jobs._next() is None                              # no NVIDIA card: a worker's
+    monkeypatch.setattr(shrink, "encoders", lambda: (("libx265", "hevc_nvenc"), ()))
+    assert (await jobs._next())["path"] == "/m/gpu.mkv"           # a server with a card takes it
+    assert shrink.options({"speed": "gpu", "where": "server"})["where"] == "server"
+    assert shrink.options({"speed": "gpu", "where": "together"})["where"] == "any"

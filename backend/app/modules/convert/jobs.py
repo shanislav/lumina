@@ -141,6 +141,7 @@ async def start() -> None:
         await db.commit()
     finally:
         await db.close()
+    await asyncio.to_thread(shrink.encoders)                  # tried once, before a job asks
     _task = asyncio.create_task(_loop())
 
 
@@ -210,6 +211,8 @@ async def _next() -> dict | None:
             job = _row(row)
             if where(job) not in ("server", "any"):
                 continue
+            if job["kind"] in ("plan", "shrink") and not shrink.can_encode(shrink.options(job.get("options"))):
+                continue                                  # the graphics card's job and no NVIDIA card here: a worker's
             if where(job) == "any":
                 # "whoever is free first": a free worker (a PC — faster than the server) gets a head start
                 if idle is None:

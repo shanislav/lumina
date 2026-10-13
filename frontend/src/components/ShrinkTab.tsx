@@ -109,10 +109,15 @@ function loadOptions(): ShrinkOptions {
   }
 }
 
-export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onClearScope }: {
+export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onClearScope, serverGpu = false }: {
   jobs: ConvertJob[]; phase: string; phases: Record<string, string>; onChanged: () => void; scope: ShrinkScope | null; onClearScope: () => void;
+  serverGpu?: boolean;   // the server's own NVIDIA card works (NVENC) — the graphics card's speed may run there too
 }) {
   const [opts, setOpts] = useState<ShrinkOptions>(DEFAULTS);
+  // the graphics card: on the server only when it has one; parts of one file only on the CPU (x265)
+  const gpu = opts.speed === "gpu";
+  const where: ShrinkOptions["where"] = gpu && opts.where === "together" ? "any"
+    : gpu && opts.where === "server" && !serverGpu ? "worker" : opts.where;
   const [q, setQ] = useState("");
   const [byWeight, setByWeight] = useState(false);
   const [files, setFiles] = useState<ShrinkFile[]>([]);
@@ -238,15 +243,17 @@ export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onCle
           <span className="text-xs text-zinc-500">{SPEED.find((x) => x.v === opts.speed)?.hint}</span>
           <span className="flex items-center gap-2 pt-1 text-xs text-zinc-400">
             Kde kódovat:
-            <select value={opts.speed === "gpu" && (opts.where === "server" || opts.where === "together") ? "worker" : opts.where}
-              onChange={(e) => set({ where: e.target.value as ShrinkOptions["where"] })}
+            <select value={where} onChange={(e) => set({ where: e.target.value as ShrinkOptions["where"] })}
               className="rounded border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-zinc-200">
-              {opts.speed !== "gpu" && <option value="server">server</option>}
+              <option value="server" disabled={gpu && !serverGpu}>server{gpu && !serverGpu ? " (nemá grafickou kartu NVIDIA)" : ""}</option>
               <option value="worker">worker (PC)</option>
               <option value="any">kdo bude dřív volný</option>
-              {opts.speed !== "gpu" && <option value="together">všichni společně (po částech)</option>}
+              {!gpu && <option value="together">všichni společně (po částech)</option>}
             </select>
           </span>
+          {gpu && !serverGpu && (
+            <span className="text-xs text-zinc-500">Grafickou kartu NVIDIA má jen worker — server kóduje procesorem.</span>
+          )}
           {opts.where === "together" && opts.speed !== "gpu" && (
             <span className="text-xs text-zinc-500">Server soubor rozdělí na části po ~2 minutách a kóduje je spolu s workery —
               každý si bere další část, rychlejší udělá víc. Nakonec je server spojí a zkontroluje. Bez připojeného workera kóduje server sám.</span>
@@ -296,7 +303,7 @@ export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onCle
             className={`rounded-lg border px-2.5 py-1.5 text-xs ${byWeight ? "border-violet-500 text-violet-300" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>
             {byWeight ? "řazeno podle ×" : "seřadit podle ×"}
           </button>
-          <button disabled={busy || picked.size === 0} onClick={() => run(async () => { await startShrinkPlan([...picked], opts); setPicked(new Set()); })}
+          <button disabled={busy || picked.size === 0} onClick={() => run(async () => { await startShrinkPlan([...picked], { ...opts, where }); setPicked(new Set()); })}
             className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500 disabled:opacity-40">
             Udělat náhled ({picked.size})
           </button>
