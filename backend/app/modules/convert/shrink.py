@@ -435,9 +435,11 @@ def encode(path: str, crf: float, opts: dict, work: str, progress=None) -> tuple
         raise ShrinkError("Dolby Vision by zaniklo — soubor nechávám")
     out = _out_path(path, work)
     os.makedirs(work, exist_ok=True)
-    cmd = [*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?",
-           "-map", "0:s?", "-map", "0:t?", "-c", "copy", *_video_args(info, opts, crf), *_audio_args(info, opts),
-           "-progress", "pipe:1", "-nostats", out]
+    # every frame keeps the original's time: the encoder would put them on its own grid of 1/fps — a picture
+    # starting at 0.021 s (after a dub's transfer) moved to 0.042 s, a frame's half against the sound
+    cmd = [*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-copyts", "-i", path, "-map", "0:v:0", "-map", "0:a?",
+           "-map", "0:s?", "-map", "0:t?", "-c", "copy", *_video_args(info, opts, crf), "-enc_time_base:v", "demux",
+           *_audio_args(info, opts), "-progress", "pipe:1", "-nostats", out]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **SPAWN)
     try:
         for line in proc.stdout:
@@ -452,6 +454,7 @@ def encode(path: str, crf: float, opts: dict, work: str, progress=None) -> tuple
             raise ShrinkError(f"ffmpeg: {err.strip()[-300:] or 'chyba'}")
         if progress:
             progress("verify")
+        same_times(frame_times(path, absolute=True)[0], out, info)
         check = verify(path, out, info, opts, work)
     except BaseException:
         if proc.poll() is None:
@@ -686,6 +689,17 @@ def encode_part(path: str, start: float, frames: int, info: dict, opts: dict, cr
     return time.time() - t0
 
 
+def same_times(src_times: list[float], out: str, info: dict) -> None:
+    """Every frame of the result at the original's time (a quarter of a frame's room: the container's rounding) —
+    or the picture would be off against the sound."""
+    out_times, _ = frame_times(out, absolute=True)
+    if len(out_times) != len(src_times):
+        raise ShrinkError(f"Počet snímků nesedí ({len(src_times)} vs {len(out_times)})")
+    drift = max((abs(a - b) for a, b in zip(out_times, src_times)), default=0.0)
+    if drift > 0.25 / info["fps"]:
+        raise ShrinkError(f"Snímky se posunuly proti originálu (až o {drift * 1000:.0f} ms) — zvuk by neseděl")
+
+
 def assemble(path: str, files: list[str], counts: list[int], info: dict, opts: dict, work: str, seams: list[float],
              progress=None) -> tuple[str, dict]:
     """The encoded parts joined (no encoding again) with the original's audio, subtitles, attachments and
@@ -709,12 +723,7 @@ def assemble(path: str, files: list[str], counts: list[int], info: dict, opts: d
               "-c", "copy", *_audio_args(info, opts), out], 6 * 3600)
         if progress:
             progress("verify")
-        out_times, _ = frame_times(out, absolute=True)
-        if len(out_times) != len(src_times):
-            raise ShrinkError(f"Počet snímků nesedí ({len(src_times)} vs {len(out_times)})")
-        drift = max(abs(a - b) for a, b in zip(out_times, src_times))
-        if drift > 0.5 / info["fps"]:
-            raise ShrinkError(f"Snímky se posunuly proti originálu (až o {drift * 1000:.0f} ms) — zvuk by neseděl")
+        same_times(src_times, out, info)
         check = verify(path, out, info, opts, work, 0, seams)
     except BaseException:
         if os.path.exists(out):
