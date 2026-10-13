@@ -73,3 +73,15 @@ async def test_a_plan_made_by_a_worker_is_finished_by_the_server(monkeypatch):
     r = await workers.done(got["id"], workers.Done(data=data), worker=w)
     job = await jobs.get(got["id"])
     assert r["ok"] and job["status"] == "done" and job["result"]["crf"] == 22 and "VMAF 95.2" in job["note"]
+
+
+async def test_a_free_worker_gets_a_head_start_on_whoever_is_free_first(monkeypatch):
+    monkeypatch.setattr(jobs._wake, "set", lambda: None)
+    w = await _worker()
+    await jobs.enqueue("plan", ["/m/a.mkv"], options={"where": "any"})
+    with sqlite3.connect(DB_PATH) as conn:                        # the worker asked for work a moment ago
+        conn.execute("UPDATE convert_workers SET last_seen = datetime('now', 'localtime') WHERE id = ?", (w["id"],))
+    assert await jobs._next() is None                              # the PC is faster: its turn first
+    with sqlite3.connect(DB_PATH) as conn:                        # … it did not take it in time
+        conn.execute("UPDATE convert_jobs SET created_at = '2000-01-01 00:00:00'")
+    assert (await jobs._next())["path"] == "/m/a.mkv"

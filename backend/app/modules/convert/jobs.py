@@ -56,6 +56,8 @@ PHASES = {"remux": "přebaluji", "verify": "kontroluji výsledek", "library": "p
           "encode": "kóduji", "upload": "nahrávám výsledek na server", "split": "dělím na části",
           "parts": "kódujeme po částech", "join": "spojuji části"}
 PART_FAILS = 3                           # a part failing this often fails its job
+WORKER_FIRST_S = 30                      # "whoever is free first": a free worker's head start before the server
+WORKER_ONLINE_S = 150
 
 _wake = asyncio.Event()
 _task: asyncio.Task | None = None
@@ -203,9 +205,18 @@ async def _next() -> dict | None:
     try:
         rows = await (await db.execute("SELECT * FROM convert_jobs WHERE status = 'queued' AND kind != 'part' "
                                        "ORDER BY id")).fetchall()     # parts: their leader takes them (_run_together)
+        idle = None
         for row in rows:
-            if where(_row(row)) not in ("server", "any"):
+            job = _row(row)
+            if where(job) not in ("server", "any"):
                 continue
+            if where(job) == "any":
+                # "whoever is free first": a free worker (a PC — faster than the server) gets a head start
+                if idle is None:
+                    idle = await _idle_workers(db)
+                age = (datetime.now() - datetime.strptime(job["created_at"], "%Y-%m-%d %H:%M:%S")).total_seconds()
+                if idle and age < WORKER_FIRST_S:
+                    continue
             # taken only if still queued — a worker may have taken it a moment ago
             cur = await db.execute("UPDATE convert_jobs SET status = 'running' WHERE id = ? AND status = 'queued'",
                                    (row["id"],))
@@ -215,6 +226,15 @@ async def _next() -> dict | None:
         return None
     finally:
         await db.close()
+
+
+async def _idle_workers(db) -> int:
+    """Workers heard from lately, free (no job of theirs running) and not waiting (outside their hours …)."""
+    since = (datetime.now() - timedelta(seconds=WORKER_ONLINE_S)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = await (await db.execute(
+        "SELECT state FROM convert_workers w WHERE last_seen >= ? AND NOT EXISTS (SELECT 1 FROM convert_jobs j "
+        "WHERE j.status = 'running' AND j.worker_id = w.id)", (since,))).fetchall()
+    return sum(1 for r in rows if not (json.loads(r[0] or "{}").get("waiting")))
 
 
 async def _finish(job: dict, status: str, note: str = "", result: str = "", data: dict | None = None) -> None:
