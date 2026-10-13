@@ -54,7 +54,7 @@ def parse_pairing(code: str) -> tuple[str, str]:
     if code.startswith("lw_"):
         return "", code
     if not code.startswith("LW1."):
-        raise ValueError("To není párovací kód Luminy (začíná „LW1.“) ani token pracovníka (začíná „lw_“)")
+        raise ValueError("To není párovací kód Luminy (začíná „LW1.“) ani token workera (začíná „lw_“)")
     raw = code[4:] + "=" * (-len(code[4:]) % 4)
     data = json.loads(base64.urlsafe_b64decode(raw))
     return data["s"], data["t"]
@@ -278,7 +278,7 @@ class App:
             try:
                 engine.run()
             except Exception as e:  # noqa: BLE001 — shown in the tray, not a crash
-                log.exception("Pracovník spadl")
+                log.exception("Worker spadl")
                 if self.engine is engine:
                     self.problem = f"Chyba: {e}"
         threading.Thread(target=run, daemon=True, name="engine").start()

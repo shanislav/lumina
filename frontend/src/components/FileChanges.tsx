@@ -120,7 +120,7 @@ export default function FileChanges() {
             {error && <p className="rounded-lg bg-red-950/60 px-3 py-2 text-red-300">{error}</p>}
 
             <div className="flex gap-1 rounded-lg bg-zinc-800/60 p-1 text-xs">
-              {([["shrink", "Zmenšit soubory"], ["dv", `Dolby Vision v MKV (${dv.length})`], ["workers", "Pracovníci"]] as const).map(([k, label]) => (
+              {([["shrink", "Zmenšit soubory"], ["dv", `Dolby Vision v MKV (${dv.length})`], ["workers", "Workeři"]] as const).map(([k, label]) => (
                 <button key={k} onClick={() => setTab(k)}
                   className={`flex-1 rounded-md px-3 py-1.5 ${tab === k ? "bg-violet-600 text-white" : "text-zinc-400 hover:text-zinc-200"}`}>
                   {label}

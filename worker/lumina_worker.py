@@ -41,7 +41,7 @@ CONFIG = DATA / "lumina-worker.json"
 LOG_FILE = DATA / "lumina-worker.log"
 TEMPLATE = {
     "server": "https://lumina.example.com",
-    "token": "lw_… (Lumina → Knihovna → Úpravy souborů → Pracovníci → Přidat)",
+    "token": "lw_… (Lumina → Knihovna → Úpravy souborů → Workeři → Přidat)",
     "path_map": [["/data", "Z:\\"]],
     "ffmpeg_dir": "",
     "work_dir": "",

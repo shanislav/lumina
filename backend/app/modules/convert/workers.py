@@ -67,12 +67,12 @@ def worker_guard():
         auth = request.headers.get("authorization", "")
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
         if not token:
-            raise HTTPException(401, "Chybí token pracovníka")
+            raise HTTPException(401, "Chybí token workera")
         db = await get_db()
         try:
             row = await (await db.execute("SELECT * FROM convert_workers WHERE token_hash = ?", (_hash(token),))).fetchone()
             if not row:
-                raise HTTPException(401, "Neznámý pracovník (token byl smazán?)")
+                raise HTTPException(401, "Neznámý worker (token byl smazán?)")
             await db.execute("UPDATE convert_workers SET last_seen = ? WHERE id = ?", (_fmt(_now()), row["id"]))
             await db.commit()
             return dict(row)
@@ -126,7 +126,7 @@ def parts_ok(info: dict) -> str:
         return "nemá x265"
     theirs = info.get("x265") or ""
     if not theirs:
-        return "neznámá verze x265 (starý pracovník)"
+        return "neznámá verze x265 (starý worker)"
     mine = shrink.x265_version()
     if mine.split(".")[0] != theirs.split(".")[0]:
         return f"jiná verze x265 ({theirs}, server {mine})"
@@ -234,12 +234,12 @@ async def done(job_id: int, body: Done, worker: dict = Depends(worker_guard())) 
         else:
             out = os.path.join(work, os.path.basename(body.out_name))
             if not body.out_name or not os.path.isfile(out):
-                raise shrink.ShrinkError("Výsledek pracovníka ve složce chybí")
+                raise shrink.ShrinkError("Výsledek workera ve složce chybí")
             # the server's own quick check: the length and the tracks (the worker measured the quality)
             got = await asyncio.to_thread(shrink.probe, out)
             src = await asyncio.to_thread(shrink.probe, job["path"])
             if abs(got["duration"] - src["duration"]) > 2 or len(got["audio"]) != len(src["audio"]):
-                raise shrink.ShrinkError("Výsledek pracovníka nesedí (délka nebo zvukové stopy)")
+                raise shrink.ShrinkError("Výsledek workera nesedí (délka nebo zvukové stopy)")
             result = await jobs.shrink_done(job, out, {**body.data, "size": os.path.getsize(out)})
         await jobs._finish(job, "done", result.get("note", ""), result.get("path", ""), result.get("data"))
         return {"ok": True}
@@ -255,7 +255,7 @@ async def _part_done(part: dict, body: Done) -> dict:
     same part was done elsewhere first)."""
     path = os.path.join(jobs.part_dir(part), jobs.part_name(part))
     if os.path.basename(body.out_name) != jobs.part_name(part) or not os.path.isfile(path):
-        await jobs.part_back(part, "Část od pracovníka ve složce chybí")
+        await jobs.part_back(part, "Část od workera ve složce chybí")
         return {"ok": False, "error": "Část ve složce chybí"}
     got = await asyncio.to_thread(shrink.count_frames, path)
     if got != part["options"]["frames"]:
@@ -275,7 +275,7 @@ class Failed(BaseModel):
 async def fail(job_id: int, body: Failed, worker: dict = Depends(worker_guard())) -> dict:
     job = await _mine(job_id, worker)
     if job["kind"] == "part":
-        await jobs.part_back(job, "" if body.give_back else f"Pracovník {worker['name']}: {body.error or 'chyba'}")
+        await jobs.part_back(job, "" if body.give_back else f"Worker {worker['name']}: {body.error or 'chyba'}")
         return {"ok": True}
     jobs.drop_work(job["path"], f"w{job_id}")
     if body.give_back:
@@ -288,7 +288,7 @@ async def fail(job_id: int, body: Failed, worker: dict = Depends(worker_guard())
             await db.close()
         jobs._wake.set()
         return {"ok": True}
-    await jobs._finish(job, "error", f"Pracovník {worker['name']}: {body.error or 'chyba'}")
+    await jobs._finish(job, "error", f"Worker {worker['name']}: {body.error or 'chyba'}")
     return {"ok": True}
 
 
@@ -332,7 +332,7 @@ class NewWorker(BaseModel):
 @router.post("/workers", dependencies=[Depends(require("convert"))])
 async def add_worker(body: NewWorker) -> dict:
     """A new worker → its token, shown this once (only its hash is kept)."""
-    name = body.name.strip()[:60] or "Pracovník"
+    name = body.name.strip()[:60] or "Worker"
     token = "lw_" + secrets.token_urlsafe(32)
     db = await get_db()
     try:

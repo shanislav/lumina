@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Pracovníci (backend modules/convert/workers): computers that encode for Lumina — the little app on the user's PC
+ * Workeři (backend modules/convert/workers): computers that encode for Lumina — the little app on the user's PC
  * with the server's share mounted. Adding one gives its token once; the list shows who is online, what it does or
  * why it waits (outside its hours, another program runs …).
  */
@@ -49,7 +49,7 @@ export default function WorkersTab({ phases }: { phases: Record<string, string> 
   }
 
   async function remove(w: ConvertWorker) {
-    if (!confirm(`Odebrat pracovníka „${w.name}“? Jeho token přestane fungovat, rozdělaná úloha se vrátí do fronty.`)) return;
+    if (!confirm(`Odebrat workera „${w.name}“? Jeho token přestane fungovat, rozdělaná úloha se vrátí do fronty.`)) return;
     await removeConvertWorker(w.id);
     load();
   }
@@ -58,14 +58,14 @@ export default function WorkersTab({ phases }: { phases: Record<string, string> 
     <div className="space-y-4 text-sm">
       {error && <p className="rounded-lg bg-red-950/60 px-3 py-2 text-red-300">{error}</p>}
       <p className="text-xs text-zinc-400">
-        Pracovník je malá aplikace na tvém počítači (Windows / Linux), která kóduje místo serveru — výkonnější PC to zvládne
+        Worker je malá aplikace na tvém počítači (Windows / Linux), která kóduje místo serveru — výkonnější PC to zvládne
         mnohonásobně rychleji. Počítač musí mít připojený sdílený disk serveru. Kdy smí pracovat (hodiny, vytížení procesoru,
         běžící programy, baterie), si nastavíš v něm. U zmenšení pak zvolíš „Kde kódovat“.
       </p>
 
       {token && (
         <div className="space-y-2 rounded-lg border border-emerald-700 bg-emerald-950/40 p-3 text-xs">
-          <p className="text-emerald-200">Pracovník „{token.name}“ přidán. Jeho párovací kód (ukáže se jen teď) vlož do aplikace
+          <p className="text-emerald-200">Worker „{token.name}“ přidán. Jeho párovací kód (ukáže se jen teď) vlož do aplikace
             Lumina Worker → Nastavení → Párovací kód:</p>
           <code className="block select-all break-all rounded bg-zinc-950 px-2 py-1.5 text-emerald-300">{pairingCode(token.token)}</code>
           <details className="text-zinc-400">
@@ -80,11 +80,11 @@ export default function WorkersTab({ phases }: { phases: Record<string, string> 
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Název počítače (např. Notebook)"
           className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-zinc-200" />
         <button onClick={add} className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500">
-          Přidat pracovníka
+          Přidat workera
         </button>
       </div>
 
-      {workers.length === 0 ? <p className="text-xs text-zinc-500">Zatím žádný pracovník.</p> : (
+      {workers.length === 0 ? <p className="text-xs text-zinc-500">Zatím žádný worker.</p> : (
         <ul className="divide-y divide-zinc-800 rounded-lg border border-zinc-800">
           {workers.map((w) => {
             const p = w.job?.progress;

@@ -30,7 +30,7 @@ const SPEED = [
   { v: "small", label: "Nejmenší", hint: "CPU, x265 slow — nejmenší soubor, nejpomalejší" },
   { v: "balanced", label: "Vyvážený", hint: "CPU, x265 medium" },
   { v: "fast", label: "Rychlejší", hint: "CPU, x265 fast — větší soubor, rychleji" },
-  { v: "gpu", label: "Grafická karta (pracovník)", hint: "NVIDIA NVENC na počítači pracovníka — mnohem rychleji, soubor o něco větší" },
+  { v: "gpu", label: "Grafická karta (worker)", hint: "NVIDIA NVENC na počítači workera — mnohem rychleji, soubor o něco větší" },
 ] as const;
 
 // short explanations of the words on this tab (hover / tap); the long ones are in "Jak to funguje?"
@@ -65,8 +65,8 @@ function Help() {
         <p><b className="text-zinc-200">Jak dlouho?</b> Záleží jen na výkonu počítače, na kterém Lumina běží (a na délce a rozlišení
           filmu). Náhled si rychlost změří přímo tady a ukáže odhad času překódování pro tenhle soubor.</p>
         <p><b className="text-zinc-200">Všichni společně</b> (Kde kódovat): server rozdělí soubor na části po ~2 minutách — vždy tam,
-          kde začíná nový záběr, takže to nic nestojí — a kóduje je spolu s pracovníky. Každý si bere další volnou část, rychlejší
-          počítač tedy udělá víc. Když se pracovník zastaví (hraješ hru, zavřeš notebook), jeho část dodělá jiný. Nakonec server části
+          kde začíná nový záběr, takže to nic nestojí — a kóduje je spolu s workery. Každý si bere další volnou část, rychlejší
+          počítač tedy udělá víc. Když se worker zastaví (hraješ hru, zavřeš notebook), jeho část dodělá jiný. Nakonec server části
           spojí a zkontroluje (počet snímků, kvalita i přímo na spojích). Jde jen na procesoru (x265) — grafická karta kóduje jinak a
           části by se lišily.</p>
         <p><b className="text-zinc-200">Kvalitou, nebo datovým tokem?</b> „Řídit kvalitou“: zvolíš, jak blízko originálu má obraz
@@ -96,9 +96,9 @@ const base = (p: string) => p.split("/").pop() ?? p;
 export function runningText(j: ConvertJob, phase: string, phases: Record<string, string>): string {
   if (!j.worker_id) return `probíhá — ${phase || "…"}`;
   const p = j.progress || {};
-  if (p.paused) return `na pracovníkovi — pozastaveno (${p.paused})`;
+  if (p.paused) return `na workerovi — pozastaveno (${p.paused})`;
   const v = p.value != null ? (p.phase === "encode" ? ` ${Math.round(p.value)} %` : ` ${p.value}`) : "";
-  return `na pracovníkovi — ${(p.phase && (phases[p.phase] ?? p.phase)) || "začíná"}${v}`;
+  return `na workerovi — ${(p.phase && (phases[p.phase] ?? p.phase)) || "začíná"}${v}`;
 }
 
 function loadOptions(): ShrinkOptions {
@@ -242,14 +242,14 @@ export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onCle
               onChange={(e) => set({ where: e.target.value as ShrinkOptions["where"] })}
               className="rounded border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-zinc-200">
               {opts.speed !== "gpu" && <option value="server">server</option>}
-              <option value="worker">pracovník (PC)</option>
+              <option value="worker">worker (PC)</option>
               <option value="any">kdo bude dřív volný</option>
               {opts.speed !== "gpu" && <option value="together">všichni společně (po částech)</option>}
             </select>
           </span>
           {opts.where === "together" && opts.speed !== "gpu" && (
-            <span className="text-xs text-zinc-500">Server soubor rozdělí na části po ~2 minutách a kóduje je spolu s pracovníky —
-              každý si bere další část, rychlejší udělá víc. Nakonec je server spojí a zkontroluje. Bez připojeného pracovníka kóduje server sám.</span>
+            <span className="text-xs text-zinc-500">Server soubor rozdělí na části po ~2 minutách a kóduje je spolu s workery —
+              každý si bere další část, rychlejší udělá víc. Nakonec je server spojí a zkontroluje. Bez připojeného workera kóduje server sám.</span>
           )}
         </label>
         <label className="space-y-1">
