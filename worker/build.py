@@ -1,9 +1,9 @@
 """Builds the worker's Windows app: dist/Lumina Worker/ (the .exe with ffmpeg inside) and a zip of it.
 
-    py -m venv build/venv && build/venv/Scripts/python -m pip install pyinstaller pystray pillow psutil
+    py -m venv build/venv && build/venv/Scripts/python -m pip install pyinstaller pystray pillow psutil pywebview
     build/venv/Scripts/python build.py
 
-(a plain venv of a python.org Python — its Tcl/Tk goes into the app; uv's environments add the global packages)
+(a plain venv — uv's environments let the global packages into the app)
 
 ffmpeg and ffprobe are taken from PATH (or FFMPEG_DIR): version 9 with libx265 and libvmaf — the same as the
 server's, so that a worker's encodes and measurements are the server's."""
@@ -27,10 +27,6 @@ def tool(name: str) -> Path:
 
 
 def main() -> None:
-    # a virtual environment (uv) does not find Tcl/Tk of its Python — PyInstaller would leave the settings window out
-    tcl = Path(sys.base_prefix) / "tcl"
-    os.environ.setdefault("TCL_LIBRARY", str(tcl / "tcl8.6"))
-    os.environ.setdefault("TK_LIBRARY", str(tcl / "tk8.6"))
     import lumina_tray
     import lumina_worker
     build = HERE / "build"
@@ -44,7 +40,8 @@ def main() -> None:
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--windowed", "--name", "Lumina Worker",
                     "--icon", str(icon), "--distpath", str(HERE / "dist"), "--workpath", str(build / "pyi"),
                     "--specpath", str(build), "--paths", str(HERE.parent / "backend" / "app" / "modules" / "convert"),
-                    "--hidden-import", "shrink", "--hidden-import", "pystray._win32",
+                    "--hidden-import", "shrink", "--hidden-import", "pystray._win32", "--exclude-module", "tkinter",
+                    "--add-data", f"{HERE / 'ui.html'}{sep}.",
                     "--add-binary", f"{ffmpeg}{sep}.", "--add-binary", f"{ffprobe}{sep}.",
                     str(HERE / "lumina_tray.py")], check=True)
     app = HERE / "dist" / "Lumina Worker"

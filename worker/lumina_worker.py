@@ -3,7 +3,7 @@
 The computer needs the server's share mounted (e.g. Z: = \\\\server\\Share): the worker reads the file from it,
 encodes here and writes the result next to the file — replacing it and the library are the server's work. It asks
 Lumina for work itself (a long poll: about one small request a minute when idle) and works only when allowed:
-within its hours, while other programs leave the CPU alone, while none of the listed programs runs, not on battery.
+within its schedule, while other programs leave the CPU alone, while none of the listed programs runs, not on battery.
 When that changes mid-job, the encoder is paused (not stopped) and goes on later.
 
 Settings: lumina-worker.json next to this file (written on the first start). Run: python lumina_worker.py
@@ -45,8 +45,7 @@ TEMPLATE = {
     "path_map": [["/data", "Z:\\"]],
     "ffmpeg_dir": "",
     "work_dir": "",
-    "hours": "",
-    "weekend_hours": "",
+    "schedule": {"always": True, "days": [0, 1, 2, 3, 4, 5, 6], "ranges": []},
     "cpu_other_max": 40,
     "blocked_programs": [],
     "on_battery": False,
@@ -58,8 +57,8 @@ HELP = {
     "path_map": "where this computer sees the server's folders: [server path, path here] (Lumina's /data = Z:\\)",
     "ffmpeg_dir": "folder with ffmpeg and ffprobe (empty: from PATH)",
     "work_dir": "local folder for the work in progress (empty: the system's temp)",
-    "hours": "when it may work, e.g. \"22:00-07:00\" or \"9:00-12:00, 20:00-23:30\" (empty: always)",
-    "weekend_hours": "the same for Saturday and Sunday (empty: as \"hours\")",
+    "schedule": "when it may work: always, or on these days (0 = Monday) within these times (none: all day); "
+                "a time over midnight belongs to the day it starts on",
     "cpu_other_max": "pause while other programs use more of the CPU than this (%)",
     "blocked_programs": "pause while one of these runs, e.g. [\"obs64.exe\", \"eldenring.exe\"]",
     "on_battery": "work on battery too (a notebook)",
@@ -86,6 +85,8 @@ def read_config() -> tuple[dict, str]:
     except ValueError as e:
         return dict(TEMPLATE), f"Nastavení {CONFIG} je poškozené: {e}"
     cfg.pop("_help", None)
+    if "hours" in cfg or "weekend_hours" in cfg:          # the settings of version 0.2 and older
+        cfg["schedule"] = _old_hours(cfg.pop("hours", ""), cfg.pop("weekend_hours", ""))
     if not str(cfg["token"]).startswith("lw_") or "example" in cfg["server"]:
         return cfg, f"V nastavení chybí server nebo token ({CONFIG})"
     return cfg, ""
@@ -107,21 +108,61 @@ def to_local(path: str, cfg: dict) -> str:
 
 # ── when it may work ──
 
-def _in_windows(spec: str, now: datetime) -> bool:
-    if not spec.strip():
+DAYS = ("Po", "Út", "St", "Čt", "Pá", "So", "Ne")
+
+
+def _minute(text: str) -> int | None:
+    try:
+        h, m = (int(x) for x in str(text).strip().split(":"))
+        return h * 60 + m if 0 <= h <= 24 and 0 <= m < 60 else None
+    except ValueError:
+        return None
+
+
+def _old_hours(hours: str, weekend: str) -> dict:
+    """Version 0.2's "22:00-07:00" (and a weekend's own) → a schedule."""
+    def ranges(spec: str) -> list[list[str]]:
+        return [[a.strip(), b.strip()] for a, _, b in (p.partition("-") for p in spec.split(",")) if a.strip() and b.strip()]
+    if not hours.strip() and not weekend.strip():
+        return {"always": True, "days": list(range(7)), "ranges": []}
+    # the weekend's own hours cannot stay apart in one schedule: the weekdays' are kept for every day
+    return {"always": False, "days": list(range(7)), "ranges": ranges(hours or weekend)}
+
+
+def schedule_ok(schedule: dict, now: datetime) -> bool:
+    """Whether the schedule lets it work now. A time over midnight (22:00–07:00) belongs to the day it starts on:
+    Friday's goes on into Saturday morning."""
+    if not schedule or schedule.get("always", True):
         return True
-    minute = now.hour * 60 + now.minute
-    for part in spec.split(","):
-        a, _, b = part.strip().partition("-")
-        try:
-            h1, m1 = (int(x) for x in a.split(":"))
-            h2, m2 = (int(x) for x in b.split(":"))
-        except ValueError:
-            continue
-        start, end = h1 * 60 + m1, h2 * 60 + m2
-        if (start <= minute < end) if start <= end else (minute >= start or minute < end):
+    days = set(schedule.get("days") or [])
+    ranges = [(_minute(a), _minute(b)) for a, b in schedule.get("ranges") or []]
+    ranges = [(a, b) for a, b in ranges if a is not None and b is not None and a != b]
+    today, minute = now.weekday(), now.hour * 60 + now.minute
+    if not ranges:
+        return today in days
+    for a, b in ranges:
+        if a < b and today in days and a <= minute < b:
+            return True
+        if a > b and ((today in days and minute >= a) or ((today - 1) % 7 in days and minute < b)):
             return True
     return False
+
+
+def schedule_text(schedule: dict) -> str:
+    """"Po–Pá 22:00–07:00" — for the reason it waits."""
+    if not schedule or schedule.get("always", True):
+        return "kdykoli"
+    days = sorted(set(schedule.get("days") or []))
+    if days == list(range(7)):
+        when = "denně"
+    elif days == list(range(5)):
+        when = "Po–Pá"
+    elif days == [5, 6]:
+        when = "So–Ne"
+    else:
+        when = ", ".join(DAYS[d] for d in days) or "žádný den"
+    times = ", ".join(f"{a}–{b}" for a, b in schedule.get("ranges") or [])
+    return f"{when} {times}".strip()
 
 
 def _idle_minutes() -> float:
@@ -220,9 +261,8 @@ class Watch:
         if self.manual:
             return self.manual
         now = datetime.now()
-        hours = cfg["weekend_hours"] if now.weekday() >= 5 and cfg["weekend_hours"].strip() else cfg["hours"]
-        if not _in_windows(hours, now):
-            return f"mimo nastavené hodiny ({hours})"
+        if not schedule_ok(cfg.get("schedule") or {}, now):
+            return f"mimo nastavený čas ({schedule_text(cfg.get('schedule') or {})})"
         battery = psutil.sensors_battery() if hasattr(psutil, "sensors_battery") else None
         if battery and not battery.power_plugged and not cfg["on_battery"]:
             return "notebook běží na baterii"

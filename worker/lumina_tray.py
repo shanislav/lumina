@@ -1,8 +1,10 @@
-"""Lumina worker as a tray app (Windows; Linux with a tray): the icon shows what it does, its menu pauses it, opens
-the settings and quits — the work itself is lumina_worker.Engine, in a thread.
+"""Lumina worker as a tray app: the icon shows what it does, its menu pauses it, opens its window and quits — the
+work itself is lumina_worker.Engine, in a thread.
 
-Settings window: the pairing code from Lumina (its address and the worker's token in one), where this computer sees
-the server's library (found by itself, chosen when there are more), when it may work. Build: python build.py."""
+The window is ui.html in the system's own web view (pywebview: Edge on Windows, WebKit on macOS, GTK on Linux — one
+page for all): what it does now, the pairing code from Lumina (its address and the worker's token in one), where
+this computer sees the server's library (found by itself, chosen when there are more), when it may work and how
+considerate it is. Build: python build.py."""
 
 import base64
 import json
@@ -18,6 +20,7 @@ import webbrowser
 from pathlib import Path
 
 import pystray
+import webview
 from PIL import Image, ImageDraw, ImageFont
 
 import lumina_worker as w
@@ -46,13 +49,26 @@ def icon_image(state: str, size: int = 64) -> Image.Image:
 # ── pairing, the library's folder ──
 
 def parse_pairing(code: str) -> tuple[str, str]:
-    """Lumina's pairing code "LW1.<base64>" → (server, token)."""
+    """Lumina's pairing code "LW1.<base64>" → (server, token); a bare token "lw_…" → ("", token)."""
     code = code.strip()
+    if code.startswith("lw_"):
+        return "", code
     if not code.startswith("LW1."):
-        raise ValueError("To není párovací kód Luminy (začíná „LW1.“)")
+        raise ValueError("To není párovací kód Luminy (začíná „LW1.“) ani token pracovníka (začíná „lw_“)")
     raw = code[4:] + "=" * (-len(code[4:]) % 4)
     data = json.loads(base64.urlsafe_b64decode(raw))
     return data["s"], data["t"]
+
+
+def normal_server(text: str) -> str:
+    """The address as typed: "lumina.example.com", "https://lumina.example.com/library" → "https://lumina.example.com"."""
+    text = text.strip()
+    if not text:
+        return ""
+    if "://" not in text:
+        text = "https://" + text
+    scheme, _, rest = text.partition("://")
+    return f"{scheme}://{rest.split('/')[0]}"
 
 
 def _bases() -> list[Path]:
@@ -129,214 +145,83 @@ def set_autostart(on: bool) -> None:
                 pass
 
 
-# ── the settings window ──
+# ── the window (ui.html in the system's own web view: Edge on Windows, WebKit on macOS, GTK on Linux) ──
 
-class Settings:
-    """The settings window (tkinter, in its own thread): connection, the library's folder, when to work."""
+class Api:
+    """What ui.html may ask for (window.pywebview.api.*)."""
 
     def __init__(self, app: "App"):
-        self.app = app
+        self._app = app
 
-    def show(self) -> None:
-        import tkinter as tk
-        from tkinter import filedialog, messagebox, ttk
+    def state(self) -> dict:
+        state, text = self._app.status()
+        job = self._app.engine.job if self._app.engine else None
+        value = job.value if job and job.phase == "encode" and isinstance(job.value, (int, float)) else None
+        return {"state": state, "label": STATES.get(state, state), "text": text, "value": value,
+                "paused": self._app.paused, "version": w.VERSION, "name": self._app.engine.name if self._app.engine else ""}
 
+    def load(self) -> dict:
         cfg, _ = w.read_config()
-        root = tk.Tk()
-        root.title(f"{APP} — nastavení")
-        root.resizable(False, False)
         try:
-            root.iconphoto(True, tk.PhotoImage(data=_png(icon_image("idle", 32))))
-        except tk.TclError:
-            pass
-        frm = ttk.Frame(root, padding=14)
-        frm.grid()
-        row = 0
+            import psutil
+            procs = sorted({(p.info.get("name") or "") for p in psutil.process_iter(["name"])} - {""}, key=str.lower)
+        except Exception:  # noqa: BLE001 — only hints for the field
+            procs = []
+        return {"config": cfg, "cpus": os.cpu_count() or 8, "processes": procs,
+                "server": "" if "example" in cfg["server"] else cfg["server"],
+                "token": cfg["token"] if str(cfg["token"]).startswith("lw_") else ""}
 
-        def section(text: str) -> None:
-            nonlocal row
-            ttk.Label(frm, text=text, font=("Segoe UI", 10, "bold")).grid(row=row, column=0, columnspan=3, sticky="w",
-                                                                         pady=(10 if row else 0, 4))
-            row += 1
+    def pair(self, code: str) -> dict:
+        try:
+            server, token = parse_pairing(code)
+        except (ValueError, KeyError) as e:
+            return {"error": str(e)}
+        return {"server": server, "token": token}
 
-        def field(label: str, var, width: int = 42, show: str = "", hint: str = "") -> ttk.Entry:
-            nonlocal row
-            ttk.Label(frm, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8))
-            e = ttk.Entry(frm, textvariable=var, width=width, show=show)
-            e.grid(row=row, column=1, sticky="w")
-            if hint:
-                ttk.Label(frm, text=hint, foreground="#71717a").grid(row=row, column=2, sticky="w", padx=(8, 0))
-            row += 1
-            return e
+    def check(self, server: str, token: str) -> dict:
+        server = normal_server(server)
+        if not server or not token.strip().startswith("lw_"):
+            return {"server": server, "error": "chybí adresa Luminy nebo token"}
+        cfg, _ = w.read_config()
+        try:
+            lumina = w.Lumina({**cfg, "server": server, "token": token.strip()})
+            lumina.find()
+            hello = lumina.call("POST", "/worker/hello", {"state": {"waiting": "nastavuje se"}})
+        except (RuntimeError, OSError) as e:
+            return {"server": server, "error": str(e)[:200]}
+        roots = hello.get("roots") or []
+        return {"server": server, "name": hello.get("name"), "roots": roots, "mappings": find_mappings(roots)}
 
-        def spin(label: str, var, lo: int, hi: int, hint: str = "") -> None:
-            nonlocal row
-            ttk.Label(frm, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8))
-            ttk.Spinbox(frm, from_=lo, to=hi, textvariable=var, width=6).grid(row=row, column=1, sticky="w")
-            if hint:
-                ttk.Label(frm, text=hint, foreground="#71717a").grid(row=row, column=2, sticky="w", padx=(8, 0))
-            row += 1
-
-        # connection
-        section("Připojení k Lumině")
-        code = tk.StringVar()
-        server = tk.StringVar(value="" if "example" in cfg["server"] else cfg["server"])
-        token = tk.StringVar(value=cfg["token"] if str(cfg["token"]).startswith("lw_") else "")
-        ttk.Label(frm, text="Párovací kód").grid(row=row, column=0, sticky="w", padx=(0, 8))
-        ttk.Entry(frm, textvariable=code, width=42).grid(row=row, column=1, sticky="w")
-
-        def use_code() -> None:
+    def roots(self, server_dir: str, local_dir: str, roots: list) -> list:
+        out = []
+        for r in roots:
             try:
-                s, t = parse_pairing(code.get())
-            except (ValueError, KeyError) as e:
-                messagebox.showerror(APP, str(e), parent=root)
-                return
-            server.set(s)
-            token.set(t)
-            code.set("")
-            check()
-        ttk.Button(frm, text="Použít", command=use_code).grid(row=row, column=2, sticky="w", padx=(8, 0))
-        row += 1
-        ttk.Label(frm, text="Lumina → Knihovna → Úpravy souborů → Pracovníci → Přidat pracovníka", foreground="#71717a") \
-            .grid(row=row, column=1, columnspan=2, sticky="w")
-        row += 1
-        field("Adresa Luminy", server)
-        field("Token", token, show="•")
-        result = tk.StringVar(value="")
-        ttk.Button(frm, text="Ověřit připojení", command=lambda: check()).grid(row=row, column=1, sticky="w", pady=4)
-        row += 1
-        ttk.Label(frm, textvariable=result, wraplength=520, justify="left").grid(row=row, column=0, columnspan=3,
-                                                                                  sticky="w")
-        row += 1
+                local = w.to_local(r, {"path_map": [[server_dir.strip() or "/", local_dir.strip()]]})
+                ok = bool(local_dir.strip()) and os.path.isdir(local)
+            except RuntimeError:
+                local, ok = "?", False
+            out.append({"root": r, "local": local, "ok": ok})
+        return out
 
-        # the library's folder
-        section("Kde tento počítač vidí knihovnu serveru")
-        mapping = (cfg.get("path_map") or [["/data", ""]])[0]
-        srv_dir = tk.StringVar(value=mapping[0])
-        loc_dir = tk.StringVar(value=mapping[1])
-        ttk.Label(frm, text="Složka serveru").grid(row=row, column=0, sticky="w", padx=(0, 8))
-        ttk.Entry(frm, textvariable=srv_dir, width=20).grid(row=row, column=1, sticky="w")
-        row += 1
-        ttk.Label(frm, text="Je tady").grid(row=row, column=0, sticky="w", padx=(0, 8))
-        choice = ttk.Combobox(frm, textvariable=loc_dir, width=40)
-        choice.grid(row=row, column=1, sticky="w")
-        ttk.Button(frm, text="Vybrat…", command=lambda: loc_dir.set(
-            filedialog.askdirectory(parent=root, initialdir=loc_dir.get() or None) or loc_dir.get())) \
-            .grid(row=row, column=2, sticky="w", padx=(8, 0))
-        row += 1
-        roots_info = tk.StringVar(value="")
-        ttk.Label(frm, textvariable=roots_info, wraplength=520, justify="left", foreground="#71717a") \
-            .grid(row=row, column=0, columnspan=3, sticky="w")
-        row += 1
-        found: dict[str, str] = {}
-        roots: list[str] = []
+    def folder(self, start: str) -> str:
+        picked = self._app.window.create_file_dialog(webview.FileDialog.FOLDER, directory=start or "")
+        return picked[0] if picked else ""
 
-        def show_roots(*_):
-            if not roots:
-                return
-            lines = []
-            for r in roots:
-                try:
-                    local = w.to_local(r, {"path_map": [[srv_dir.get() or "/", loc_dir.get()]]})
-                    ok = bool(loc_dir.get()) and os.path.isdir(local)
-                except RuntimeError:
-                    local, ok = "?", False
-                lines.append(f"{'✓' if ok else '✗'} {r} = {local}")
-            roots_info.set("\n".join(lines))
-        loc_dir.trace_add("write", show_roots)
-        srv_dir.trace_add("write", show_roots)
+    def save(self, cfg: dict, force: bool = False) -> dict:
+        cfg = {**cfg, "server": normal_server(cfg.get("server", ""))}
+        if not str(cfg.get("token", "")).startswith("lw_") or not cfg["server"]:
+            return {"error": "chybí adresa Luminy nebo token — vlož párovací kód"}
+        if self._app.busy() and not force:
+            return {"confirm": True}
+        w.save_config(cfg)
+        self._app.restart()
+        return {"ok": True}
 
-        def pick(_=None):
-            if loc_dir.get() in found:
-                srv_dir.set(found[loc_dir.get()])
-        choice.bind("<<ComboboxSelected>>", pick)
+    def pause(self) -> None:
+        self._app.toggle_pause()
 
-        def check() -> None:
-            nonlocal roots
-            test = {**cfg, "server": server.get().strip(), "token": token.get().strip()}
-            result.set("Ověřuji…")
-            root.update_idletasks()
-            try:
-                lumina = w.Lumina(test)
-                lumina.find()
-                hello = lumina.call("POST", "/worker/hello", {"state": {"waiting": "nastavuji se"}})
-            except (RuntimeError, OSError) as e:
-                result.set(f"✗ {e}")
-                return
-            roots = hello.get("roots") or []
-            result.set(f"✓ Připojeno jako „{hello.get('name')}“")
-            maps = find_mappings(roots)
-            found.clear()
-            found.update({local: srv for srv, local in maps})
-            choice["values"] = list(found)
-            if maps and loc_dir.get() not in found:
-                srv_dir.set(maps[0][0])
-                loc_dir.set(maps[0][1])
-            if len(maps) > 1:
-                result.set(result.get() + f" — knihovnu vidím na {len(maps)} místech, vyber to správné")
-            elif not maps:
-                result.set(result.get() + " — knihovnu serveru tu nevidím: připoj síťovou složku serveru (např. Z:)")
-            show_roots()
-
-        # when to work
-        section("Kdy smí pracovat")
-        hours = tk.StringVar(value=cfg["hours"])
-        weekend = tk.StringVar(value=cfg["weekend_hours"])
-        field("Hodiny", hours, 24, hint="např. 22:00-07:00 (prázdné: kdykoli)")
-        field("O víkendu", weekend, 24, hint="prázdné: jako ve všední den")
-        cpu = tk.IntVar(value=int(cfg["cpu_other_max"]))
-        spin("Jiné programy smí brát CPU", cpu, 5, 100, "% — nad tím se kódování pozastaví")
-        programs = tk.StringVar(value=", ".join(cfg["blocked_programs"]))
-        field("Nepracovat, když běží", programs, hint="např. obs64.exe, eldenring.exe")
-        battery = tk.BooleanVar(value=bool(cfg["on_battery"]))
-        ttk.Checkbutton(frm, text="Pracovat i na baterii", variable=battery).grid(row=row, column=1, sticky="w")
-        row += 1
-        idle = tk.IntVar(value=int(cfg["idle_minutes"]))
-        spin("Jen když se nepoužívá", idle, 0, 240, "min bez myši a klávesnice (0: nezáleží)")
-        threads = tk.IntVar(value=int(cfg["threads"]))
-        spin("Vlákna pro kódování", threads, 0, os.cpu_count() or 64, f"0 = všechna ({os.cpu_count()}); méně = počítač tolik nezpomalí")
-        give_back = tk.IntVar(value=int(cfg["give_back_after_hours"]))
-        spin("Vrátit úlohu po pauze", give_back, 1, 72, "h — pak ji vezme server nebo jiný pracovník")
-
-        def save() -> None:
-            try:
-                new = {**cfg, "server": server.get().strip().rstrip("/"), "token": token.get().strip(),
-                       "path_map": [[srv_dir.get().strip() or "/", loc_dir.get().strip()]],
-                       "hours": hours.get().strip(), "weekend_hours": weekend.get().strip(),
-                       "cpu_other_max": int(cpu.get()), "on_battery": bool(battery.get()),
-                       "blocked_programs": [p.strip() for p in programs.get().split(",") if p.strip()],
-                       "idle_minutes": int(idle.get()), "threads": int(threads.get()),
-                       "give_back_after_hours": int(give_back.get())}
-            except (tk.TclError, ValueError):
-                messagebox.showerror(APP, "Čísla nejsou v pořádku", parent=root)
-                return
-            if not new["token"].startswith("lw_") or not new["server"].startswith("http"):
-                messagebox.showerror(APP, "Chybí adresa Luminy nebo token — vlož párovací kód", parent=root)
-                return
-            if self.app.busy() and not messagebox.askyesno(
-                    APP, "Právě se kóduje — po uložení se úloha vrátí Lumině a začne znovu. Uložit?", parent=root):
-                return
-            w.save_config(new)
-            root.destroy()
-            self.app.restart()
-
-        buttons = ttk.Frame(frm)
-        buttons.grid(row=row, column=0, columnspan=3, sticky="e", pady=(14, 0))
-        ttk.Button(buttons, text="Zrušit", command=root.destroy).pack(side="right")
-        ttk.Button(buttons, text="Uložit", command=save).pack(side="right", padx=(0, 8))
-        if token.get() and server.get():
-            root.after(200, check)
-        root.lift()
-        root.attributes("-topmost", True)
-        root.after(500, lambda: root.attributes("-topmost", False))
-        root.mainloop()
-
-
-def _png(img: Image.Image) -> str:
-    import io
-    buf = io.BytesIO()
-    img.save(buf, "PNG")
-    return base64.b64encode(buf.getvalue()).decode()
+    def close(self) -> None:
+        self._app.window.hide()
 
 
 # ── the app ──
@@ -346,8 +231,12 @@ class App:
         self.engine: w.Engine | None = None
         self.problem = ""
         self.paused = False
-        self.settings_open = threading.Lock()
+        self.quitting = False
         self.icon = pystray.Icon("lumina-worker", icon_image("starting"), APP, self._menu())
+        self.window = webview.create_window(APP, url=str(w.HERE / "ui.html"), js_api=Api(self), width=760, height=860,
+                                            min_size=(620, 520), hidden=True, background_color="#09090b")
+        self.window.events.closing += self._closing
+        self.window.events.shown += lambda: _dark_title(self.window)
 
     def busy(self) -> bool:
         return bool(self.engine and self.engine.job)
@@ -364,8 +253,8 @@ class App:
         return pystray.Menu(
             item(lambda _: self.status()[1][:120], None, enabled=False),
             pystray.Menu.SEPARATOR,
+            item("Otevřít", lambda: self.open_window(), default=True),
             item("Pozastavit", self.toggle_pause, checked=lambda _: self.paused),
-            item("Nastavení…", lambda: self.open_settings(), default=True),
             item("Otevřít Luminu", self.open_lumina),
             item("Otevřít záznam", lambda: _open(w.LOG_FILE)),
             item("Spouštět s Windows", self.toggle_autostart, checked=lambda _: bool(autostart()),
@@ -379,7 +268,7 @@ class App:
         self.problem = problem
         if problem:
             self.engine = None
-            self.open_settings()
+            self.open_window()
             return
         self.engine = w.Engine(cfg)
         self.engine.pause(self.paused)
@@ -407,20 +296,20 @@ class App:
     def toggle_autostart(self, *_):
         set_autostart(not autostart())
 
-    def open_settings(self) -> None:
-        def run():
-            if not self.settings_open.acquire(blocking=False):
-                return                                        # one window at a time
-            try:
-                Settings(self).show()
-            finally:
-                self.settings_open.release()
-        threading.Thread(target=run, daemon=True, name="settings").start()
+    def open_window(self) -> None:
+        self.window.show()
+        self.window.restore()
 
     def open_lumina(self, *_):
         cfg, _ = w.read_config()
         if "example" not in cfg["server"]:
             webbrowser.open(cfg["server"])
+
+    def _closing(self):
+        if self.quitting:
+            return True
+        self.window.hide()                                    # closing the window only hides it (the tray stays)
+        return False
 
     def quit(self, *_):
         if self.engine:
@@ -429,11 +318,13 @@ class App:
                 if not self.engine.job:
                     break
                 time.sleep(0.5)
+        self.quitting = True
         self.icon.stop()
+        self.window.destroy()
 
     def _refresh(self) -> None:
         last = None
-        while True:
+        while not self.quitting:
             state, text = self.status()
             if (state, text) != last:
                 self.icon.icon = icon_image(state)
@@ -443,16 +334,31 @@ class App:
             time.sleep(2)
 
     def run(self) -> None:
-        def setup(icon):
+        def tray(icon):
             icon.visible = True
-            self.start()
             threading.Thread(target=self._refresh, daemon=True, name="refresh").start()
-        self.icon.run(setup=setup)
+        threading.Thread(target=self.icon.run, kwargs={"setup": tray}, daemon=True, name="tray").start()
+        webview.start(self.start)                             # the window's loop owns the main thread
+
+
+def _dark_title(window) -> None:
+    """A dark title bar like the window's content (Windows 10/11)."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        hwnd = window.native.Handle.ToInt32()
+        on = ctypes.c_int(1)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(on), ctypes.sizeof(on))
+    except Exception:  # noqa: BLE001 — only looks
+        pass
 
 
 def _open(path: Path) -> None:
     if os.name == "nt":
         os.startfile(path)  # noqa: S606
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
     else:
         subprocess.Popen(["xdg-open", str(path)])
 
