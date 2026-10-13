@@ -10,6 +10,13 @@ import { ConvertWorker, addConvertWorker, getConvertWorkers, removeConvertWorker
 
 const base = (p: string) => p.split("/").pop() ?? p;
 
+/** The app's pairing code: this Lumina's address (as typed in the browser) and the worker's token in one. */
+function pairingCode(token: string): string {
+  const json = JSON.stringify({ s: window.location.origin, t: token });
+  const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(json)));
+  return "LW1." + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 export default function WorkersTab({ phases }: { phases: Record<string, string> }) {
   const [workers, setWorkers] = useState<ConvertWorker[]>([]);
   const [name, setName] = useState("");
@@ -58,8 +65,13 @@ export default function WorkersTab({ phases }: { phases: Record<string, string> 
 
       {token && (
         <div className="space-y-2 rounded-lg border border-emerald-700 bg-emerald-950/40 p-3 text-xs">
-          <p className="text-emerald-200">Pracovník „{token.name}“ přidán. Jeho token (ukáže se jen teď — zkopíruj ho do nastavení aplikace):</p>
-          <code className="block select-all break-all rounded bg-zinc-950 px-2 py-1.5 text-emerald-300">{token.token}</code>
+          <p className="text-emerald-200">Pracovník „{token.name}“ přidán. Jeho párovací kód (ukáže se jen teď) vlož do aplikace
+            Lumina Worker → Nastavení → Párovací kód:</p>
+          <code className="block select-all break-all rounded bg-zinc-950 px-2 py-1.5 text-emerald-300">{pairingCode(token.token)}</code>
+          <details className="text-zinc-400">
+            <summary className="cursor-pointer">Jen token (pro ruční nastavení)</summary>
+            <code className="mt-1 block select-all break-all rounded bg-zinc-950 px-2 py-1.5 text-zinc-300">{token.token}</code>
+          </details>
           <button onClick={() => setToken(null)} className="text-zinc-400 hover:text-zinc-200">Mám, zavřít</button>
         </div>
       )}

@@ -1,2 +1,5 @@
 lumina-worker.json
 lumina-worker.log
+build/
+dist/
+*.out

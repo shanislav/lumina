@@ -99,8 +99,10 @@ async def hello(body: Hello, worker: dict = Depends(worker_guard())) -> dict:
     """The worker says what it is (at start, then now and then with its state); Lumina says where its library is."""
     db = await get_db()
     try:
-        await db.execute("UPDATE convert_workers SET info = ?, state = ? WHERE id = ?",
-                         (json.dumps(body.model_dump(exclude={"state"})), json.dumps(body.state), worker["id"]))
+        if body.system or body.encoders:              # the app's settings window only checks the connection
+            await db.execute("UPDATE convert_workers SET info = ? WHERE id = ?",
+                             (json.dumps(body.model_dump(exclude={"state"})), worker["id"]))
+        await db.execute("UPDATE convert_workers SET state = ? WHERE id = ?", (json.dumps(body.state), worker["id"]))
         await db.commit()
     finally:
         await db.close()

@@ -47,7 +47,8 @@ CHECK_S = 10
 CHECK_SLACK = 2.0                          # … may be this much under the target (samples are an estimate)
 BIG_AUDIO = ("truehd", "dts", "pcm", "flac")
 NICE = ["nice", "-n", "10"] if os.name == "posix" else []   # the encoder gives way to everything else …
-SPAWN = {"creationflags": 0x00004000} if os.name == "nt" else {}   # … on Windows too (a worker: BELOW_NORMAL)
+# … on Windows too (a worker: BELOW_NORMAL), and no console window popping up (the worker's tray app has none)
+SPAWN = {"creationflags": 0x00004000 | 0x08000000} if os.name == "nt" else {}
 
 
 class ShrinkError(Exception):
@@ -100,7 +101,7 @@ def probe(path: str) -> dict:
         ["ffprobe", "-v", "error", "-show_entries",
          "format=duration,size,bit_rate:stream=index,codec_type,codec_name,profile,width,height,pix_fmt,channels,"
          "bit_rate,color_primaries,color_transfer,color_space,avg_frame_rate,r_frame_rate:stream_tags=language,BPS,BPS-eng:"
-         "stream_side_data", "-of", "json", path], capture_output=True, text=True, timeout=120)
+         "stream_side_data", "-of", "json", path], capture_output=True, text=True, timeout=120, **SPAWN)
     if out.returncode != 0:
         raise ShrinkError(f"ffprobe: {out.stderr.strip()[-200:]}")
     data = json.loads(out.stdout or "{}")
