@@ -47,14 +47,24 @@ export default function FileChanges() {
 
   useEffect(() => {
     load();
-    // opened from a notification / the task list (?convert=1), or from a show's season (+ cshow, cseason, ctitle)
-    const p = new URLSearchParams(window.location.search);
-    if (p.get("convert")) setOpen(true);
-    if (p.get("cshow") || p.get("cmovie")) {
-      setScope({ show: Number(p.get("cshow")) || undefined, season: p.get("cseason") ? Number(p.get("cseason")) : undefined,
-        movie: Number(p.get("cmovie")) || undefined, label: p.get("ctitle") || "" });
-      setTab("shrink");
-    }
+    // opened from a notification / the task list (?convert=1|shrink|dv), or from a show's season (+ cshow, cseason,
+    // ctitle) — also when the library is open already (the link then only says so by "lumina:url")
+    const fromUrl = () => {
+      const p = new URLSearchParams(window.location.search);
+      const which = p.get("convert");
+      if (which) {
+        setOpen(true);
+        if (which === "dv" || which === "shrink" || which === "workers") setTab(which);
+        load();
+      }
+      if (p.get("cshow") || p.get("cmovie")) {
+        setScope({ show: Number(p.get("cshow")) || undefined, season: p.get("cseason") ? Number(p.get("cseason")) : undefined,
+          movie: Number(p.get("cmovie")) || undefined, label: p.get("ctitle") || "" });
+        setTab("shrink");
+      }
+    };
+    fromUrl();
+    window.addEventListener("lumina:url", fromUrl);
     // … or from a film's window on this page
     const fromFilm = (e: Event) => {
       setScope((e as CustomEvent<ShrinkScope>).detail);
@@ -62,7 +72,10 @@ export default function FileChanges() {
       setOpen(true);
     };
     window.addEventListener(OPEN_EVENT, fromFilm);
-    return () => window.removeEventListener(OPEN_EVENT, fromFilm);
+    return () => {
+      window.removeEventListener(OPEN_EVENT, fromFilm);
+      window.removeEventListener("lumina:url", fromUrl);
+    };
   }, [load]);
 
   const active = jobs.some((j) => j.status === "running" || j.status === "queued");

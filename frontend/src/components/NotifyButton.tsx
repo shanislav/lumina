@@ -112,17 +112,21 @@ export default function NotifyButton() {
           {!items.length && <p className="text-zinc-500">Zatím nic.</p>}
           {items.map((n) => {
             const title = <span className={LEVEL[n.level] ?? LEVEL.info}>{ICON[n.level] ?? ""}{n.title}</span>;
-            return (
-              <div key={n.id} className={`space-y-0.5 ${n.new ? "border-l-2 border-amber-500 pl-2" : "pl-2.5"}`}>
+            const box = `block space-y-0.5 rounded ${n.new ? "border-l-2 border-amber-500 pl-2" : "pl-2.5"}`;
+            const inner = (
+              <>
                 <div className="flex items-start gap-2">
-                  <div className="min-w-0 flex-1 break-words">
-                    {n.link ? <Link href={n.link} onClick={() => { setOpen(false); urlChanged(); }} className="hover:underline">{title}</Link> : title}
-                  </div>
+                  <div className="min-w-0 flex-1 break-words">{title}</div>
                   <span className="shrink-0 text-zinc-600">{ago(n.created_at)}</span>
                 </div>
                 {n.body && <p className="text-zinc-400 break-words">{n.body}</p>}
-              </div>
+              </>
             );
+            // the whole notice opens what it is about (the film's card, the queue of file changes …)
+            return n.link ? (
+              <Link key={n.id} href={n.link} onClick={() => { setOpen(false); urlChanged(); }}
+                className={`${box} hover:bg-zinc-800/60`}>{inner}</Link>
+            ) : <div key={n.id} className={box}>{inner}</div>;
           })}
         </div>
       )}

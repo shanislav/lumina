@@ -74,3 +74,15 @@ async def test_a_wanted_film_found_right_after_adding_rings_no_bell(db):
     assert [i["title"] for i in (await store.listing(ADMIN))["items"]] == ["Chci — nalezeno: Film (2000)"]
     kid = User(9, "ema", "user", frozenset({"search", "wanted"}))
     assert (await store.listing(kid))["items"] == []
+
+
+async def test_a_file_change_says_what_it_was_and_opens_its_tab(db):
+    await handlers.on_convert_finished({"kind": "plan", "path": "/tv/Kosti S01E04.mkv", "ok": True,
+                                        "note": "1.20 GB → ~0.80 GB (−34 %), obraz 4.1 → 2.6 Mb/s, VMAF 95.1 · zařazeno"})
+    await handlers.on_convert_finished({"kind": "dv", "path": "/m/F1.mkv", "result_path": "/m/F1.mp4", "ok": True})
+    await handlers.on_convert_finished({"kind": "shrink", "path": "/m/Shrek.mkv", "ok": False, "note": "VMAF pod cílem"})
+    items = (await store.listing(ADMIN))["items"]
+    assert [i["title"] for i in items] == ["Zmenšení souboru selhalo: Shrek.mkv", "Přebaleno do MP4 (Dolby Vision)",
+                                           "Náhled zmenšení hotový"]
+    assert items[2]["body"].startswith("Kosti S01E04.mkv — 1.20 GB → ~0.80 GB (−34 %)") and "zařazeno" not in items[2]["body"]
+    assert [i["link"] for i in items] == ["/library?convert=shrink", "/library?convert=dv", "/library?convert=shrink"]

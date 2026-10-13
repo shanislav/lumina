@@ -122,9 +122,15 @@ async def on_series_found(p: dict) -> None:
 async def on_convert_finished(p: dict) -> None:
     """A file change ended (Úpravy souborů): an error always, success merged into one notice per hour."""
     name = os.path.basename(p.get("result_path") or p.get("path") or "")
+    kind = p.get("kind") or "dv"
+    tab = "dv" if kind == "dv" else "shrink"
+    what = {"dv": "Přebalení do MP4", "plan": "Náhled zmenšení", "shrink": "Zmenšení souboru"}.get(kind, "Úprava souboru")
     if not p.get("ok"):
-        await store.add("convert", f"Úprava souboru selhala: {name}", f"{p.get('note') or ''} · originál zůstal",
-                        level="warn", link="/library?convert=1", permission="convert")
-    else:
-        await store.add("convert", "Přebaleno do MP4 (Dolby Vision)", "", link="/library?convert=1",
-                        permission="convert", group="convert-done", item=name)
+        await store.add("convert", f"{what} selhalo: {name}", f"{p.get('note') or ''} · originál zůstal",
+                        level="warn", link=f"/library?convert={tab}", permission="convert")
+        return
+    title = {"dv": "Přebaleno do MP4 (Dolby Vision)", "plan": "Náhled zmenšení hotový",
+             "shrink": "Soubor zmenšen"}.get(kind, "Úprava souboru hotová")
+    note = (p.get("note") or "").split(" · ")[0]           # the plan's / the result's sizes, VMAF
+    await store.add("convert", title, "", link=f"/library?convert={tab}", permission="convert",
+                    group=f"convert-{kind}", item=f"{name} — {note}" if note and kind != "dv" else name)
