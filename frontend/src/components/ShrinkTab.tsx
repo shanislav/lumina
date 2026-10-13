@@ -42,7 +42,8 @@ const TERMS = {
   rate: "Kolik dat za sekundu má obraz (megabity za sekundu) — čím víc, tím větší soubor a obvykle lepší obraz. Pro 1080p H.265 je 2–5 Mb/s běžné, pro 4K 10–20 Mb/s. Kolik obraz doopravdy potřebuje, záleží na něm (zrno, tma, pohyb chtějí víc).",
   mode_quality: "Zvolíš kvalitu, Lumina najde nejmenší soubor, který ji drží. Velikost vyjde pro každý soubor jinak.",
   mode_rate: "Zvolíš datový tok (velikost), Lumina ukáže, jakou kvalitu to dá. Každý soubor bude mít zhruba stejný tok, kvalita vyjde různě.",
-  samples: "Pokusy na vzorcích: každý řádek je jedno CRF a VMAF, které s ním vyšlo. Hledá se nejvyšší CRF (nejmenší soubor), které ještě dosáhne cíle.",
+  samples: "Pokusy na vzorcích: každý řádek je jedno CRF (u grafické karty CQ) a VMAF, které s ním vyšlo. Hledá se nejvyšší číslo (nejmenší soubor), které ještě dosáhne cíle.",
+  cq: "Nastavení kodéru grafické karty (NVENC), obdoba CRF u procesoru: menší číslo = lepší obraz a větší soubor. Je to jiná stupnice — CQ 31 na kartě není totéž co CRF 31 na procesoru. Lumina ho najde podle VMAF stejně jako CRF.",
 };
 
 function Term({ k, children }: { k: keyof typeof TERMS; children: React.ReactNode }) {
@@ -77,6 +78,7 @@ function Help() {
           tmavý díl potřebuje víc dat než klidný.</p>
         <p><b className="text-zinc-200">VMAF</b> — {TERMS.vmaf}</p>
         <p><b className="text-zinc-200">CRF</b> — {TERMS.crf}</p>
+        <p><b className="text-zinc-200">CQ</b> — {TERMS.cq}</p>
         <p><b className="text-zinc-200">×</b> — {TERMS.weight}</p>
         <p><b className="text-zinc-200">Rychlost</b> — kodér může hledat úsporu důkladněji (pomaleji) nebo rychleji. Kvalita je pořád
           stejná (drží ji VMAF); pomalejší jen dá menší soubor.</p>
@@ -88,6 +90,8 @@ function Help() {
   );
 }
 
+/** The encoder's quality knob: CRF of x265 (CPU), CQ of NVENC (the graphics card) — two different scales. */
+const knob = (r: { options?: { speed?: string } }) => (r.options?.speed === "gpu" ? "CQ" : "CRF");
 const gb = (b: number) => `${(b / 1024 ** 3).toFixed(2)} GB`;
 const dur = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : `${Math.max(1, Math.round(s / 60))} min`);
 const base = (p: string) => p.split("/").pop() ?? p;
@@ -380,7 +384,7 @@ export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onCle
                       <span className={(r.vmaf ?? 100) < 90 ? "text-amber-300" : ""}>
                         <Term k="vmaf">VMAF</Term> {r.vmaf}{r.options.mode === "rate" ? "" : ` (cíl ${r.options.vmaf})`}
                       </span>
-                      <span><Term k="crf">CRF</Term> {r.crf}</span>
+                      <span><Term k={knob(r) === "CQ" ? "cq" : "crf"}>{knob(r)}</Term> {r.crf}</span>
                       <span>kódování ~{dur(r.est_seconds ?? 0)}</span>
                     </div>
                     {(r.vmaf ?? 100) < 90 && (
@@ -390,7 +394,7 @@ export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onCle
                     )}
                     {r.trials && (
                       <div className="text-zinc-500">
-                        <Term k="samples">Vzorky</Term>: {r.trials.map((t) => `CRF ${t.crf} → ${t.mbps != null ? `${t.mbps} Mb/s, ` : ""}VMAF ${t.vmaf}`).join(" · ")}
+                        <Term k="samples">Vzorky</Term>: {r.trials.map((t) => `${knob(r)} ${t.crf} → ${t.mbps != null ? `${t.mbps} Mb/s, ` : ""}VMAF ${t.vmaf}`).join(" · ")}
                       </div>
                     )}
                     {r.stills && (
