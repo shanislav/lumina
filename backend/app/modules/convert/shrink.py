@@ -30,7 +30,7 @@ QUALITIES = (95, 93, 90)
 # CRF (by the samples), the preview tells the quality it gives — the user decides whether it is good enough. Either
 # way the film is encoded at that one CRF: an even quality, the bitrate about the chosen one (not held to it)
 DEFAULTS = {"vmaf": 95, "speed": "balanced", "max_height": 0, "audio": "copy", "min_saving": 25, "go": False,
-            "mode": "quality", "mbps": 4.0, "where": "server", "keep": "replace"}
+            "mode": "quality", "mbps": 4.0, "where": "server", "keep": "replace", "grain": "keep"}
 RATE_CRF_MAX = 45                          # rate mode: a low bitrate may need a CRF above the quality search's range
 RATE_CLOSE = 0.07                          # a sample bitrate this close to the target is the one
 CRF_PER_HALF_SIZE = 6                      # x265: about +6 CRF halves the size (first guess of the next CRF)
@@ -48,6 +48,11 @@ CHECK_AT = (0.3, 0.7)                      # the full result's own check: VMAF o
 CHECK_S = 10
 CHECK_SLACK = 2.0                          # … may be this much under the target (samples are an estimate)
 BIG_AUDIO = ("truehd", "dts", "pcm", "flac")
+# film grain softened before x265 (the user's choice — the grain is what costs the most): hqdn3d compares a frame
+# with its neighbours and smooths the random noise, shapes and edges stay. The samples' references and the check's
+# windows of the original are softened the same way: VMAF then measures the encoding, not the softening (it would
+# count the grain gone as lost quality and choose a bigger file)
+GRAIN = {"light": "hqdn3d=2:1.5:3:2.25", "strong": "hqdn3d=4:3:6:4.5"}
 NICE = ["nice", "-n", "10"] if os.name == "posix" else []   # the encoder gives way to everything else …
 # … on Windows too (a worker: BELOW_NORMAL), and no console window popping up (the worker's tray app has none)
 SPAWN = {"creationflags": 0x00004000 | 0x08000000} if os.name == "nt" else {}
@@ -80,6 +85,9 @@ def options(raw: dict | None) -> dict:
         o["min_saving"] = 0
     o["mode"] = "rate" if raw.get("mode") == "rate" else "quality"
     o["where"] = raw.get("where") if raw.get("where") in WHERE else "server"
+    o["grain"] = raw.get("grain") if raw.get("grain") in GRAIN else "keep"
+    if o["speed"] == "gpu":
+        o["grain"] = "keep"                         # the graphics card smooths it by itself
     if o["speed"] == "gpu" and o["where"] == "together":
         o["where"] = "any"                          # parts of one file: x265 only (another card, another picture)
     if raw.get("threads"):                          # a worker's own limit (its settings), not the user's choice
@@ -175,12 +183,20 @@ def x265_params(info: dict) -> str:
     return ":".join(p)
 
 
-def _scale_filter(info: dict, opts: dict) -> list[str]:
+def grain_filter(opts: dict) -> str:
+    return GRAIN.get(opts.get("grain") or "", "")
+
+
+def _filters(info: dict, opts: dict, grain: bool = True) -> list[str]:
+    """The picture's filters before the encoder: the grain softened (not for the samples — their references are
+    softened already), a smaller resolution."""
     h = opts.get("max_height") or 0
-    return ["-vf", f"scale=-2:{h}:flags=lanczos"] if h and info["height"] > h else []
+    chain = [f for f in (grain_filter(opts) if grain else "",
+                         f"scale=-2:{h}:flags=lanczos" if h and info["height"] > h else "") if f]
+    return ["-vf", ",".join(chain)] if chain else []
 
 
-def _video_args(info: dict, opts: dict, crf: float) -> list[str]:
+def _video_args(info: dict, opts: dict, crf: float, grain: bool = True) -> list[str]:
     """x265 10-bit at ``crf`` (NVENC: its CQ)."""
     encoder, preset = SPEEDS[opts["speed"]]
     if encoder == "hevc_nvenc":
@@ -190,10 +206,10 @@ def _video_args(info: dict, opts: dict, crf: float) -> list[str]:
         return ["-c:v", "hevc_nvenc", "-preset", preset, "-tune", "hq", "-rc", "vbr", "-cq", f"{crf:g}", "-b:v", "0",
                 "-multipass", "fullres",
                 "-rc-lookahead", "32", "-spatial-aq", "1", "-temporal-aq", "1", "-b_ref_mode", "middle",
-                "-pix_fmt", "p010le", *_scale_filter(info, opts)]
+                "-pix_fmt", "p010le", *_filters(info, opts, grain)]
     params = x265_params(info) + (f":pools={opts['threads']}" if opts.get("threads") else "")
     return ["-c:v", encoder, "-preset", preset, "-crf", f"{crf:g}", "-pix_fmt", "yuv420p10le",
-            "-x265-params", params, *_scale_filter(info, opts)]
+            "-x265-params", params, *_filters(info, opts, grain)]
 
 
 def video_mbps(info: dict) -> float:
@@ -232,23 +248,25 @@ def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
     return run
 
 
-def cut_samples(path: str, info: dict, work: str) -> list[str]:
+def cut_samples(path: str, info: dict, work: str, vf: str = "") -> list[str]:
     """The video of a few places of the film, each into its own file — the references.
     Decoded from a few seconds before the place and kept losslessly (FFV1): right after a seek the decoder gives
     broken frames until its references fill up (open GOP), and noise like that cannot be encoded well — a sample
     beginning with it measured VMAF 65 at any CRF. Not joined into one file either: a transport stream's
     timestamps break at the joins and frames slip against each other."""
     parts = [os.path.join(work, f"sample{k}.mkv") for k in range(len(SAMPLES))]
-    _together(lambda k: window(path, info["duration"] * SAMPLES[k], SAMPLE_S, parts[k]), len(SAMPLES))
+    _together(lambda k: window(path, info["duration"] * SAMPLES[k], SAMPLE_S, parts[k], vf), len(SAMPLES))
     return parts
 
 
-def window(path: str, at: float, length: float, out: str) -> str:
+def window(path: str, at: float, length: float, out: str, vf: str = "") -> str:
     """``length`` s of the video from ``at``, decoded from a few seconds earlier and cut by the decoded timestamps
-    (frame-exact; a transport stream's own seek lands on another frame), kept losslessly (FFV1)."""
+    (frame-exact; a transport stream's own seek lands on another frame), kept losslessly (FFV1). ``vf``: a filter
+    (the grain softened) — it runs over the earlier seconds too, a filter comparing neighbours starts warmed up."""
     start = max(0.0, at - PREROLL_S)
     _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.2f}", "-i", path, "-ss", f"{at - start:.2f}",
-          "-t", f"{length:g}", "-map", "0:v:0", "-c:v", "ffv1", "-level", "3", "-g", "1", out], 1800)
+          "-t", f"{length:g}", "-map", "0:v:0", *(["-vf", vf] if vf else []), "-c:v", "ffv1", "-level", "3", "-g", "1",
+          out], 1800)
     return out
 
 
@@ -287,7 +305,7 @@ def encode_sample(refs: list[str], info: dict, opts: dict, crf: float, work: str
 
     def encode_one(k: int) -> None:
         _run([*NICE, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", refs[k], "-map", "0:v:0",
-              *_video_args(info, opts, crf), paths[k]], 6 * 3600)
+              *_video_args(info, opts, crf, grain=False), paths[k]], 6 * 3600)
 
     # an 8 s sample never fills a many-core CPU (the encoder's pipeline barely starts): several at once there;
     # the wall time of all of them is what the whole film will take per frame
@@ -361,9 +379,10 @@ def find_crf_for_rate(refs: list[str], info: dict, opts: dict, work: str, progre
     return best, trials
 
 
-def stills(refs: list[str], encoded: list[str], info: dict, out_dir: str) -> list[dict]:
+def stills(refs: list[str], encoded: list[str], info: dict, out_dir: str, source: str = "") -> list[dict]:
     """Frames of the original and the new one at the same moments (the middle of three samples: the film's
-    beginning, middle and end) — tone-mapped for a normal screen when the film is HDR."""
+    beginning, middle and end) — tone-mapped for a normal screen when the film is HDR. ``source``: the original
+    file — its own frame, when the references are softened (the grain's change is to be seen)."""
     os.makedirs(out_dir, exist_ok=True)
     tone = ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,"
             "zscale=t=bt709:m=bt709:r=tv,format=yuv420p,") if info["hdr10"] else ""
@@ -374,7 +393,12 @@ def stills(refs: list[str], encoded: list[str], info: dict, out_dir: str) -> lis
         names = {}
         for label, src in (("a", refs[i]), ("b", encoded[i])):
             name = f"{k}{label}.jpg"
-            _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{at:.2f}", "-i", src, "-frames:v", "1",
+            seek = ["-ss", f"{at:.2f}", "-i", src]
+            if label == "a" and source:
+                t = info["duration"] * SAMPLES[i] + at
+                start = max(0.0, t - PREROLL_S)
+                seek = ["-ss", f"{start:.2f}", "-i", source, "-ss", f"{t - start:.2f}"]
+            _run(["ffmpeg", "-nostdin", "-v", "error", "-y", *seek, "-frames:v", "1",
                   "-vf", f"{tone}scale='min(1920,iw)':-2", "-q:v", "2", os.path.join(out_dir, name)], 300)
             names[label] = name
         shots.append(names)
@@ -398,7 +422,7 @@ def plan(path: str, opts: dict, work: str, preview_dir: str, progress=None) -> d
     os.makedirs(work, exist_ok=True)
     if progress:
         progress("samples")
-    refs = cut_samples(path, info, work)
+    refs = cut_samples(path, info, work, grain_filter(opts))
     if rate:
         best, trials = find_crf_for_rate(refs, info, opts, work, progress)
     else:
@@ -417,7 +441,7 @@ def plan(path: str, opts: dict, work: str, preview_dir: str, progress=None) -> d
     est_seconds = int(best["seconds"] / max(1.0, sample_frames) * frames * 1.05)
     if progress:
         progress("stills")
-    shots = stills(refs, best["paths"], info, preview_dir)
+    shots = stills(refs, best["paths"], info, preview_dir, path if grain_filter(opts) else "")
     decision = "ok" if saving >= opts["min_saving"] else "low_saving"
     note = "" if decision == "ok" else f"Ušetří jen {saving:g} % (méně než {opts['min_saving']} %)"
     return {**base, "decision": decision, "note": note, "crf": best["crf"], "vmaf": best["vmaf"], "est_size": est,
@@ -483,7 +507,7 @@ def verify(src: str, out: str, info: dict, opts: dict, work: str, frames: int = 
     scores = []
     places = [info["duration"] * share for share in CHECK_AT] + [max(0.0, s - CHECK_S / 2) for s in seams]
     for k, at in enumerate(places):
-        a = window(src, at, CHECK_S, os.path.join(work, f"check{k}a.mkv"))
+        a = window(src, at, CHECK_S, os.path.join(work, f"check{k}a.mkv"), grain_filter(opts))
         z = window(out, at, CHECK_S, os.path.join(work, f"check{k}b.mkv"))
         scores.append(round(vmaf(z, a), 2))
         for p in (a, z):

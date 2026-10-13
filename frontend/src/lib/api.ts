@@ -2251,7 +2251,7 @@ export const getConvertJobs = () =>
     server_encoders?: string[] }>("/jobs");
 export const startConvertDv = (paths: string[]) => convertCall<{ added: number }>("/dv", jsonBody("POST", { paths }));
 
-export interface ShrinkOptions { vmaf: number; speed: "small" | "balanced" | "fast" | "gpu"; where: "server" | "worker" | "any" | "together"; max_height: number; audio: "copy" | "shrink"; min_saving: number; go: boolean; mode: "quality" | "rate"; mbps: number; keep?: "replace" | "version" }
+export interface ShrinkOptions { vmaf: number; speed: "small" | "balanced" | "fast" | "gpu"; where: "server" | "worker" | "any" | "together"; max_height: number; audio: "copy" | "shrink"; min_saving: number; go: boolean; mode: "quality" | "rate"; mbps: number; keep?: "replace" | "version"; grain?: "keep" | "light" | "strong" }
 export interface ShrinkFile { path: string; kind: "movie" | "episode"; group: string; title: string; size: number; codec: string; height: number; mbps: number; hdr: string; weight: number }
 export interface ShrinkPlan {
   src_size: number; duration: number; codec: string; height: number; options: ShrinkOptions; decision: string; note: string; src_mbps?: number; mbps?: number;

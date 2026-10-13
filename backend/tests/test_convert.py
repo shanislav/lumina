@@ -119,7 +119,7 @@ from app.modules.convert import shrink  # noqa: E402
 def test_the_users_choices_are_checked():
     o = shrink.options({"vmaf": "93", "speed": "warp", "max_height": "1080", "audio": "shrink", "min_saving": 500, "go": 1})
     assert o == {"vmaf": 93.0, "speed": "balanced", "max_height": 1080, "audio": "shrink", "min_saving": 80, "go": True,
-                 "mode": "quality", "mbps": 4.0, "where": "server", "keep": "replace"}
+                 "mode": "quality", "mbps": 4.0, "where": "server", "keep": "replace", "grain": "keep"}
     assert shrink.options({"mode": "rate", "mbps": "2.5"})["mbps"] == 2.5
     assert shrink.options({"keep": "version", "min_saving": 30})["min_saving"] == 0          # a version needs no saving
     assert shrink.options({"vmaf": 20})["vmaf"] == 95                      # nonsense → the default
@@ -213,3 +213,14 @@ async def test_a_shrunk_file_may_stay_next_to_the_original_as_another_version(tm
         rows = conn.execute("SELECT tmdb_id, file_path, file_size FROM library_movies ORDER BY id").fetchall()
     assert rows == [(1, str(src), None), (1, str(new), 900)] or [r[:2] for r in rows] == [(1, str(src)), (1, str(new))]
     assert "nová verze" in result["note"]
+
+
+def test_the_grain_is_softened_before_x265_and_the_references_alike():
+    info = {"hdr10": False, "height": 1080}
+    opts = shrink.options({"grain": "light", "max_height": 720})
+    args = shrink._video_args(info, opts, 24)
+    assert args[args.index("-vf") + 1] == shrink.GRAIN["light"] + ",scale=-2:720:flags=lanczos"
+    samples = shrink._video_args(info, opts, 24, grain=False)             # their references are softened already
+    assert samples[samples.index("-vf") + 1] == "scale=-2:720:flags=lanczos"
+    assert shrink.options({"grain": "strong", "speed": "gpu"})["grain"] == "keep"
+    assert shrink.options({"grain": "nonsense"})["grain"] == "keep"

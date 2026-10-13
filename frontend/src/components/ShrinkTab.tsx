@@ -43,6 +43,7 @@ const TERMS = {
   mode_quality: "Zvolíš kvalitu, Lumina najde nejmenší soubor, který ji drží. Velikost vyjde pro každý soubor jinak.",
   mode_rate: "Zvolíš datový tok (velikost), Lumina ukáže, jakou kvalitu to dá. Každý soubor bude mít zhruba stejný tok, kvalita vyjde různě.",
   samples: "Pokusy na vzorcích: každý řádek je jedno CRF (u grafické karty CQ) a VMAF, které s ním vyšlo. Hledá se nejvyšší číslo (nejmenší soubor), které ještě dosáhne cíle.",
+  grain: "Jemný šum filmu (hlavně starší seriály a filmy z pásky). Zjemnění ho před kódováním vyhladí — tvary a hrany zůstanou, obraz je čistší a soubor menší. Kvalitu (VMAF) pak Lumina měří proti zjemněnému originálu; náhled ukáže originál se zrnem vedle nového.",
   cq: "Nastavení kodéru grafické karty (NVENC), obdoba CRF u procesoru: menší číslo = lepší obraz a větší soubor. Je to jiná stupnice — CQ 31 na kartě není totéž co CRF 31 na procesoru. Lumina ho najde podle VMAF stejně jako CRF.",
 };
 
@@ -273,6 +274,17 @@ export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onCle
           </select>
         </label>
         <label className="space-y-1">
+          <span className="text-xs text-zinc-400"><Term k="grain">Filmové zrno</Term></span>
+          <select value={gpu ? "keep" : opts.grain ?? "keep"} disabled={gpu}
+            onChange={(e) => set({ grain: e.target.value as ShrinkOptions["grain"] })}
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-200 disabled:opacity-50">
+            <option value="keep">ponechat</option>
+            <option value="light">zjemnit</option>
+            <option value="strong">zjemnit silně</option>
+          </select>
+          <span className="text-xs text-zinc-500">{gpu ? "Grafická karta zrno zjemňuje sama." : "Zrno je nejdražší část obrazu — zjemněné zmenší zrnité filmy a seriály o další desítky procent."}</span>
+        </label>
+        <label className="space-y-1">
           <span className="text-xs text-zinc-400">Zvuk</span>
           <select value={opts.audio} onChange={(e) => set({ audio: e.target.value as ShrinkOptions["audio"] })}
             className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-200">
@@ -385,6 +397,9 @@ export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onCle
                         <Term k="vmaf">VMAF</Term> {r.vmaf}{r.options.mode === "rate" ? "" : ` (cíl ${r.options.vmaf})`}
                       </span>
                       <span><Term k={knob(r) === "CQ" ? "cq" : "crf"}>{knob(r)}</Term> {r.crf}</span>
+                      {r.options.grain && r.options.grain !== "keep" && (
+                        <span className="text-sky-300"><Term k="grain">zrno</Term> {r.options.grain === "strong" ? "zjemněno silně" : "zjemněno"}</span>
+                      )}
                       <span>kódování ~{dur(r.est_seconds ?? 0)}</span>
                     </div>
                     {(r.vmaf ?? 100) < 90 && (
