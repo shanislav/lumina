@@ -342,7 +342,8 @@ async def _run_shrink(job: dict) -> dict:
 
 async def shrink_done(job: dict, out: str, check: dict) -> dict:
     """An encoded file (from the server or a worker, in the work folder next to the original) takes the
-    original's place — only when it saves enough; the library follows and the name the new codec."""
+    original's place — only when it saves enough; the library follows and the name the new codec. Or, chosen so,
+    the original stays and the new file is the title's next version."""
     src = job["path"]
     opts = shrink.options(job.get("options"))
     crf = float((job.get("options") or {}).get("crf") or 0)
@@ -352,6 +353,18 @@ async def shrink_done(job: dict, out: str, check: dict) -> dict:
     if saving < opts["min_saving"]:
         raise shrink.ShrinkError(f"Ušetřilo by jen {saving:g} % — soubor nechávám")
     _progress("library")
+    note = (f"{old_size / 1024**3:.2f} GB → {check['size'] / 1024**3:.2f} GB ({-saving:+g} %), "
+            f"VMAF kontrola {', '.join(f'{v:g}' for v in check['vmaf_check'])}")
+    data = {**check, "saving": saving, "old_size": old_size, "crf": crf}
+    if opts["keep"] == "version":
+        from app.modules.library.imports import _unique_path
+        final = _unique_path(os.path.join(folder, os.path.basename(out)))   # "… (2)" until it gets its own name
+        _same_owner(out, src)
+        os.replace(out, final)
+        await _library_version(src, final)
+        final = await _rename(final)
+        logger.info("Shrunk %s into a new version %s (%s)", src, final, note)
+        return {"path": final, "note": f"nová verze vedle originálu: {note}", "data": {**data, "version": True}}
     final = os.path.join(folder, os.path.basename(out))
     if final != src and os.path.exists(final):
         raise shrink.ShrinkError(f"{os.path.basename(final)} už ve složce je")
@@ -361,10 +374,8 @@ async def shrink_done(job: dict, out: str, check: dict) -> dict:
         os.remove(src)
     await _library(src, final)
     final = await _rename(final)
-    note = (f"{old_size / 1024**3:.2f} GB → {check['size'] / 1024**3:.2f} GB (−{saving:g} %), "
-            f"VMAF kontrola {', '.join(f'{v:g}' for v in check['vmaf_check'])}")
     logger.info("Shrunk %s → %s (%s)", src, final, note)
-    return {"path": final, "note": note, "data": {**check, "saving": saving, "old_size": old_size, "crf": crf}}
+    return {"path": final, "note": note, "data": data}
 
 
 # ── one file in parts (where = "together") ──
@@ -738,6 +749,41 @@ def _same_owner(path: str, like: str) -> None:
         os.chmod(path, st.st_mode & 0o777)
     except (OSError, AttributeError):        # not on Windows, not on a share that refuses it
         pass
+
+
+async def _library_version(old: str, new: str) -> None:
+    """The new file next to the original as the title's next version: a film's row (a copy of the original's with
+    the new file's facts), an episode's file in the series inventory; Plex rescans the folder."""
+    from app.core import naming
+    from app.core.mediainfo import probe_async
+    from app.modules.library.notify import emit_movie_updated
+    media = await probe_async(new)
+    st = os.stat(new)
+    movie_id = None
+    db = await get_db()
+    try:
+        row = await (await db.execute("SELECT * FROM library_movies WHERE file_path = ?", (old,))).fetchone()
+        if row:
+            values = {k: row[k] for k in row.keys() if k != "id"}
+            values.update(file_path=new, filename=os.path.basename(new), file_size=st.st_size, file_mtime=st.st_mtime,
+                          media=json.dumps(media), quality=naming.resolution_label(media) or values.get("quality") or "",
+                          added_at=_now())
+            cur = await db.execute(f"INSERT INTO library_movies ({', '.join(values)}) VALUES "
+                                   f"({', '.join('?' for _ in values)})", tuple(values.values()))
+            movie_id = cur.lastrowid
+        tv = await (await db.execute("SELECT * FROM tv_files WHERE file_path = ?", (old,))).fetchone()
+        if tv:
+            values = {**dict(tv), "file_path": new, "scanned_at": _now()}
+            await db.execute(f"INSERT OR REPLACE INTO tv_files ({', '.join(values)}) VALUES "
+                             f"({', '.join('?' for _ in values)})", tuple(values.values()))
+            await db.execute("INSERT OR REPLACE INTO tv_media (file_path, size, mtime, media) VALUES (?, ?, ?, ?)",
+                             (new, st.st_size, st.st_mtime, json.dumps(media)))
+        await db.commit()
+        if movie_id:
+            await emit_movie_updated(db, movie_id)
+    finally:
+        await db.close()
+    await events.emit("library.files_added", {"folders": [os.path.dirname(new)]})
 
 
 async def _library(old: str, new: str) -> None:

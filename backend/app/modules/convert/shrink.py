@@ -30,13 +30,15 @@ QUALITIES = (95, 93, 90)
 # CRF (by the samples), the preview tells the quality it gives — the user decides whether it is good enough. Either
 # way the film is encoded at that one CRF: an even quality, the bitrate about the chosen one (not held to it)
 DEFAULTS = {"vmaf": 95, "speed": "balanced", "max_height": 0, "audio": "copy", "min_saving": 25, "go": False,
-            "mode": "quality", "mbps": 4.0, "where": "server"}
+            "mode": "quality", "mbps": 4.0, "where": "server", "keep": "replace"}
 RATE_CRF_MAX = 45                          # rate mode: a low bitrate may need a CRF above the quality search's range
 RATE_CLOSE = 0.07                          # a sample bitrate this close to the target is the one
 CRF_PER_HALF_SIZE = 6                      # x265: about +6 CRF halves the size (first guess of the next CRF)
 RATE_SLACK = 4.0                           # rate mode: the result's VMAF may be this much under the preview's
-SAMPLES = (0.15, 0.38, 0.62, 0.85)        # where in the film the samples are (share of its length)
-SAMPLE_S = 8
+# where in the film the samples are (share of its length): 6 × 5 s from 10 % to 90 % — measured against whole
+# encodes of four films: the size estimated twice as well as by 4 × 8 s (off by 11 % vs 21 %), the VMAF as well
+SAMPLES = (0.10, 0.26, 0.42, 0.58, 0.74, 0.90)
+SAMPLE_S = 5
 PREROLL_S = 5                              # decoded before a sample and thrown away (see cut_samples)
 SAMPLE_EVERY = 3                           # samples' VMAF from every 3rd frame
 THREADS_PER_SAMPLE = 6                     # samples encoded at once: one per this many CPU threads
@@ -72,6 +74,10 @@ def options(raw: dict | None) -> dict:
     except (TypeError, ValueError):
         pass
     o["go"] = bool(raw.get("go"))
+    # the original: replaced, or kept with the new file as the title's next version (no saving needed then)
+    o["keep"] = "version" if raw.get("keep") == "version" else "replace"
+    if o["keep"] == "version":
+        o["min_saving"] = 0
     o["mode"] = "rate" if raw.get("mode") == "rate" else "quality"
     o["where"] = raw.get("where") if raw.get("where") in WHERE else "server"
     if o["speed"] == "gpu" and o["where"] == "together":
@@ -356,16 +362,17 @@ def find_crf_for_rate(refs: list[str], info: dict, opts: dict, work: str, progre
 
 
 def stills(refs: list[str], encoded: list[str], info: dict, out_dir: str) -> list[dict]:
-    """Frames of the original and the new one at the same moments (the middle of three samples) — tone-mapped
-    for a normal screen when the film is HDR."""
+    """Frames of the original and the new one at the same moments (the middle of three samples: the film's
+    beginning, middle and end) — tone-mapped for a normal screen when the film is HDR."""
     os.makedirs(out_dir, exist_ok=True)
     tone = ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,"
             "zscale=t=bt709:m=bt709:r=tv,format=yuv420p,") if info["hdr10"] else ""
     shots = []
-    for k in range(min(3, len(refs))):
+    picks = sorted({round(i * (len(refs) - 1) / 2) for i in range(3)})
+    for k, i in enumerate(picks):
         at = SAMPLE_S / 2
         names = {}
-        for label, src in (("a", refs[k]), ("b", encoded[k])):
+        for label, src in (("a", refs[i]), ("b", encoded[i])):
             name = f"{k}{label}.jpg"
             _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{at:.2f}", "-i", src, "-frames:v", "1",
                   "-vf", f"{tone}scale='min(1920,iw)':-2", "-q:v", "2", os.path.join(out_dir, name)], 300)

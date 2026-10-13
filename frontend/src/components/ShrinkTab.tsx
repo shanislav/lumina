@@ -56,7 +56,7 @@ function Help() {
       <div className="mt-2 space-y-2 leading-relaxed">
         <p><b className="text-zinc-200">Co se děje.</b> Video se znovu zakóduje úspornějším kodekem (H.265) tak, aby bylo menší, ale vypadalo
           (skoro) stejně. Zvuk a titulky zůstanou beze změny. Každé překódování trochu ubere — cílem je ubrat tak málo, aby to nebylo vidět.</p>
-        <p><b className="text-zinc-200">1. Náhled</b> (soubor se nemění): Lumina vystřihne 4 krátké kousky filmu, zkusí je
+        <p><b className="text-zinc-200">1. Náhled</b> (soubor se nemění): Lumina vystřihne 6 krátkých kousků filmu (od začátku po konec), zkusí je
           zakódovat s různým nastavením a změří, jak moc se podobají originálu. Najde nastavení, které dá nejmenší soubor při tvé
           zvolené kvalitě, a ukáže odhad velikosti, času a 3 snímky — originál a nový (přepínáš mezerníkem).</p>
         <p><b className="text-zinc-200">2. Překódování</b>: celý soubor se zakóduje,
@@ -276,11 +276,22 @@ export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onCle
             <option value="shrink">zmenšit velké stopy (DTS, TrueHD, PCM → E-AC-3)</option>
           </select>
         </label>
-        <label className="flex items-center gap-2 text-xs text-zinc-400">
-          Překódovat jen při úspoře aspoň
-          <input type="number" min={0} max={80} value={opts.min_saving} onChange={(e) => set({ min_saving: Number(e.target.value) || 0 })}
-            className="w-14 rounded border border-zinc-700 bg-zinc-800 px-1 text-right text-zinc-200" /> %
+        <label className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
+          Originál:
+          <select value={opts.keep ?? "replace"} onChange={(e) => set({ keep: e.target.value as ShrinkOptions["keep"] })}
+            className="rounded border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-zinc-200">
+            <option value="replace">nahradit zmenšeným</option>
+            <option value="version">ponechat — zmenšený bude další verze</option>
+          </select>
+          {opts.keep === "version" && <span className="text-zinc-500">Oba soubory zůstanou v knihovně i v Plexu; starý smažeš, až budeš chtít.</span>}
         </label>
+        {opts.keep !== "version" && (
+          <label className="flex items-center gap-2 text-xs text-zinc-400">
+            Překódovat jen při úspoře aspoň
+            <input type="number" min={0} max={80} value={opts.min_saving} onChange={(e) => set({ min_saving: Number(e.target.value) || 0 })}
+              className="w-14 rounded border border-zinc-700 bg-zinc-800 px-1 text-right text-zinc-200" /> %
+          </label>
+        )}
         <label className="flex items-center gap-2 text-xs text-zinc-400">
           <input type="checkbox" checked={opts.go} onChange={(e) => set({ go: e.target.checked })} />
           po náhledu rovnou kódovat, když se to vyplatí (bez potvrzení)
