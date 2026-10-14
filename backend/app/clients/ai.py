@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GEMINI_API = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
+# the lite model: 500 questions a day on the free tier and an answer in a second — the flash one has 20 a day and
+# hangs often in high demand (it stays as the last resort)
+DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
 # Non-chat Gemini models (embeddings, speech, images, live) cannot answer a question.
 _GEMINI_NON_CHAT = ("embedding", "tts", "image", "live", "audio", "aqa", "imagen", "veo", "robotics", "computer-use",
                     "transcribe", "customtools", "omni", "lyria", "nano-banana", "antigravity", "deep-research")
@@ -117,8 +119,8 @@ def _version(name: str) -> float:
 
 
 def gemini_chain(cfg: dict, names: list[str] | None = None) -> list[str]:
-    """The Gemini models to ask, in order: the chosen one, the other flash models (the newest first), the lite
-    ones, Gemma — without those out of their daily limit today. ``names``: the key's chat models (else the
+    """The Gemini models to ask, in order: the chosen one, the lite ones (the newest first), Gemma, the flash ones
+    last — without those out of their daily limit today. ``names``: the key's chat models (else the
     last list read from Google; before any, the chosen model and the lite alias)."""
     chosen = cfg.get("gemini_model") or DEFAULT_GEMINI_MODEL
     if names is None:
@@ -127,8 +129,8 @@ def gemini_chain(cfg: dict, names: list[str] | None = None) -> list[str]:
 
     def rank(n: str) -> tuple:
         if "gemma" in n:
-            return (3, "a4b" in n, -_version(n), n)          # the dense model before the small MoE one
-        return (1 + ("lite" in n), "preview" in n, -(99 if "latest" in n else _version(n)), n)
+            return (2, "a4b" in n, -_version(n), n)          # the dense model before the small MoE one
+        return (1 if "lite" in n else 3, "preview" in n, -(99 if "latest" in n else _version(n)), n)
 
     out = [chosen] + sorted((n for n in usable if n != chosen), key=rank)
     gone = set(gemini_usage()["out"])

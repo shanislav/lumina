@@ -111,9 +111,10 @@ async def test_one_gemini_model_out_the_next_one_answers(monkeypatch):
         "gemini-flash-latest", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-pro-latest", "gemini-flash-lite-latest",
         "gemma-4-31b-it"]})
     got = await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}])
-    assert (got.text, got.provider, got.model, got.label) == ("Fenomén (1996)", "gemini", "gemini-3.7-flash", "Gemini 3.7 flash")
+    # the chosen one out for today (with the model behind it) → the lite one; the flash ones last
+    assert (got.text, got.provider, got.model) == ("Fenomén (1996)", "gemini", "gemini-flash-lite-latest")
     assert len(calls) == 2 and set(ai.gemini_usage()["out"]) == {"gemini-flash-latest", "gemini-3.8-flash"}
-    assert ai.gemini_chain(BOTH) == ["gemini-3.7-flash", "gemini-flash-lite-latest", "gemma-4-31b-it"]  # no pro
+    assert ai.gemini_chain(BOTH) == ["gemini-flash-lite-latest", "gemma-4-31b-it", "gemini-3.7-flash"]  # no pro
     assert ai.order(BOTH, "describe") == ["gemini", "groq"]
 
 
