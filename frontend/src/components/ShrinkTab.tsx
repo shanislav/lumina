@@ -43,7 +43,7 @@ const TERMS = {
   mode_quality: "Zvolíš kvalitu, Lumina najde nejmenší soubor, který ji drží. Velikost vyjde pro každý soubor jinak.",
   mode_rate: "Zvolíš datový tok (velikost), Lumina ukáže, jakou kvalitu to dá. Každý soubor bude mít zhruba stejný tok, kvalita vyjde různě.",
   samples: "Pokusy na vzorcích: každý řádek je jedno CRF (u grafické karty CQ) a VMAF, které s ním vyšlo. Hledá se nejvyšší číslo (nejmenší soubor), které ještě dosáhne cíle.",
-  grain: "Jemný šum filmu (hlavně starší seriály a filmy z pásky). Zjemnění ho před kódováním vyhladí — tvary a hrany zůstanou, obraz je čistší a soubor menší. Kvalitu (VMAF) pak Lumina měří proti zjemněnému originálu; náhled ukáže originál se zrnem vedle nového.",
+  grain: "Jemný šum filmu (hlavně starší seriály a filmy z pásky). Zjemnění ho před kódováním vyhladí — tvary a hrany zůstanou, obraz je čistší a soubor o ~5–10 % menší. Kvalitu (VMAF) pak Lumina měří proti zjemněnému originálu; náhled ukáže originál se zrnem vedle nového.",
   cq: "Nastavení kodéru grafické karty (NVENC), obdoba CRF u procesoru: menší číslo = lepší obraz a větší soubor. Je to jiná stupnice — CQ 31 na kartě není totéž co CRF 31 na procesoru. Lumina ho najde podle VMAF stejně jako CRF.",
 };
 
@@ -282,7 +282,7 @@ export default function ShrinkTab({ jobs, phase, phases, onChanged, scope, onCle
             <option value="light">zjemnit</option>
             <option value="strong">zjemnit silně</option>
           </select>
-          <span className="text-xs text-zinc-500">{gpu ? "Grafická karta zrno zjemňuje sama." : "Zrno je nejdražší část obrazu — zjemněné zmenší zrnité filmy a seriály o další desítky procent."}</span>
+          <span className="text-xs text-zinc-500">{gpu ? "Grafická karta zrno zjemňuje sama." : "Vyhladí šum filmu — obraz je čistší, zrnité filmy a seriály vyjdou o ~5–10 % menší (a kódují se rychleji)."}</span>
         </label>
         <label className="space-y-1">
           <span className="text-xs text-zinc-400">Zvuk</span>
