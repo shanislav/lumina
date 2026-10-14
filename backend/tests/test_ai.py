@@ -225,3 +225,19 @@ async def test_an_overloaded_gemini_model_is_asked_last_for_a_while(monkeypatch)
     calls.clear()
     await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}])
     assert len(calls) == 1 and "lite" in calls[0][0]                           # straight to the one that answers
+
+
+async def test_after_a_hang_the_light_models_go_first(monkeypatch):
+    monkeypatch.setattr(ai, "_busy", {})
+
+    def answer(url, body):
+        if "lite" in url:
+            return gemini_ok("ok")
+        if "generativelanguage" in url:
+            raise ai.httpx.ReadTimeout("hung")
+        return groq_ok("from groq")
+    calls = fake_http(monkeypatch, answer)
+    monkeypatch.setattr(ai, "_models", {"at": 9e12, "key": hash("k"), "names": [
+        "gemini-flash-latest", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-flash-lite-latest"]})
+    got = await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}])
+    assert got.model == "gemini-flash-lite-latest" and len(calls) == 2         # one hang, then the lite one

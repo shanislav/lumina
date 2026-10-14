@@ -341,7 +341,9 @@ async def ask(cfg: dict, provider: str, system: str, messages: list[dict], *, ma
         if not chain:
             raise LimitError("Gemini: všechny modely mají dnes vyčerpaný limit")
         last: Exception | None = None
-        for model in chain:                      # a model out of its limit (or failing): the next one
+        todo = list(chain)
+        while todo:                              # a model out of its limit (or failing): the next one
+            model = todo.pop(0)
             if model in gemini_usage()["out"]:  # the alias's 429 named the model behind it
                 continue
             try:
@@ -360,6 +362,8 @@ async def ask(cfg: dict, provider: str, system: str, messages: list[dict], *, ma
                 last = e
                 if isinstance(e, httpx.TimeoutException) or "HTTP 503" in str(e):
                     _busy[model] = time.monotonic() + BUSY_S
+                    # Google is overloaded: the other big models likely hang too — the light ones first
+                    todo.sort(key=lambda n: not ("lite" in n or "gemma" in n))
                 if deadline is not None and deadline - time.monotonic() < MIN_LEFT:
                     break                        # no time for another model: the caller's other AI answers
         raise last if isinstance(last, LimitError) else AIError(_why(last) if last else "Gemini neodpověděl")
