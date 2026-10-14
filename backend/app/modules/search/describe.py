@@ -112,7 +112,8 @@ def _parse(content: str) -> tuple[list[dict], str]:
 # lets this one request take 180 s (nginx location /api/search/describe), everything else 60 s
 DEADLINE_S = 150
 GROQ_RESERVE_S = 25      # Gemini stops trying models while Groq still has this much time to answer
-GEMINI_MODEL_S = 90      # one Gemini model may think this long here
+GEMINI_MODEL_S = 45      # one Gemini model may think this long here (a flash model thinks ~30-45 s; an
+#                          overloaded one hangs — then the lite one or Groq answers in time)
 
 
 async def _groq(cfg: dict, messages: list[dict], max_tokens: int, temperature: float = 0.3,

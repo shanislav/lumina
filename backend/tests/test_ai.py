@@ -201,3 +201,27 @@ async def test_a_hanging_gemini_model_gives_way_in_time(monkeypatch):
     assert got.model == "gemini-3.6-flash" and len(calls) == 2
     with pytest.raises(ai.LimitError):
         await ai.ask(BOTH, "groq", "sys", [{"role": "user", "content": "q"}], deadline=t.monotonic() + 2)
+
+
+async def test_an_overloaded_gemini_model_is_asked_last_for_a_while(monkeypatch):
+    """"High demand" (503) or a hang: the next question goes first to the models that answer (the lite one)."""
+    async def no_wait(s):
+        pass
+    monkeypatch.setattr(ai.asyncio, "sleep", no_wait)
+    monkeypatch.setattr(ai, "_busy", {})
+
+    def answer(url, body):
+        if "gemini-flash-latest" in url:
+            return Resp(503, text='{"error": {"code": 503, "message": "high demand"}}')
+        if "generativelanguage" in url:
+            return gemini_ok("ok")
+        return groq_ok("from groq")
+    calls = fake_http(monkeypatch, answer)
+    monkeypatch.setattr(ai, "_models", {"at": 9e12, "key": hash("k"), "names": [
+        "gemini-flash-latest", "gemini-flash-lite-latest"]})
+    first = await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}])
+    assert first.model == "gemini-flash-lite-latest" and len(calls) == 3        # 503, its retry, the lite one
+    assert ai.gemini_chain(BOTH) == ["gemini-flash-lite-latest", "gemini-flash-latest"]
+    calls.clear()
+    await ai.chat(BOTH, "describe", "sys", [{"role": "user", "content": "q"}])
+    assert len(calls) == 1 and "lite" in calls[0][0]                           # straight to the one that answers

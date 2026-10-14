@@ -55,6 +55,8 @@ ORDER = {
 MAX_WAIT = 20                          # seconds a per-minute limit may hold a question
 MODEL_TIMEOUT = 40                     # one Gemini model that hangs (it happens) gives way to the next one
 MIN_LEFT = 6                           # less time left than this: no new question (the caller's deadline)
+BUSY_S = 30 * 60                       # a Gemini model that hung or was "in high demand" is asked last this long
+_busy: dict[str, float] = {}           # model → until when it is asked last
 
 USAGE_FILE = DB_PATH.parent / "gemini_usage.json"
 _gemini: dict = {}
@@ -130,7 +132,11 @@ def gemini_chain(cfg: dict, names: list[str] | None = None) -> list[str]:
 
     out = [chosen] + sorted((n for n in usable if n != chosen), key=rank)
     gone = set(gemini_usage()["out"])
-    return [n for n in dict.fromkeys(out) if n not in gone]
+    # a model that hung or was overloaded a moment ago goes last: the others (the lite one answers in a second)
+    # before it — not minutes of waiting for it again
+    now = time.monotonic()
+    chain = [n for n in dict.fromkeys(out) if n not in gone]
+    return [n for n in chain if _busy.get(n, 0) <= now] + [n for n in chain if _busy.get(n, 0) > now]
 
 
 # ── Gemini's day ──
@@ -352,6 +358,8 @@ async def ask(cfg: dict, provider: str, system: str, messages: list[dict], *, ma
             except (AIError, httpx.HTTPError) as e:
                 logger.info("Gemini %s: %s — the next model", model, _why(e))
                 last = e
+                if isinstance(e, httpx.TimeoutException) or "HTTP 503" in str(e):
+                    _busy[model] = time.monotonic() + BUSY_S
                 if deadline is not None and deadline - time.monotonic() < MIN_LEFT:
                     break                        # no time for another model: the caller's other AI answers
         raise last if isinstance(last, LimitError) else AIError(_why(last) if last else "Gemini neodpověděl")
