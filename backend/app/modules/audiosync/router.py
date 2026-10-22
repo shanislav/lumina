@@ -807,6 +807,8 @@ async def _run_dub(items: list[dict], body: DubBody) -> None:
                     logger.exception("Dub of E%02d failed", item["episode"])
                     r = {"status": "error", "note": str(e)}
                 report.append({"episode": item["episode"], **{k: v for k, v in r.items() if k != "path"}})
+                if r.get("status") != "ok":
+                    logger.warning("Dub of E%02d not moved (%s): %s", item["episode"], r.get("status"), r.get("note"))
                 _job.update(report=list(report))
                 if r.get("path"):
                     # its name says the new sound ("[CS+SK]"); Plex rescans
@@ -816,6 +818,13 @@ async def _run_dub(items: list[dict], body: DubBody) -> None:
             _job.update(error=str(e))
         finally:
             _job.update(running=False, done=len(items), current="", finished_at=time.time())
+            # the bell: how it went, the episodes left as they were and why (the report lives only until a restart)
+            await events.emit("audiosync.season_done", {
+                "title": _job.get("title", ""), "tmdb_id": _job.get("tmdb_id"), "season": _job.get("season"),
+                "lang": body.lang, "total": len(items), "error": _job.get("error"),
+                "done": [r["episode"] for r in report if r.get("status") == "ok"],
+                "failed": [{"episode": r["episode"], "note": r.get("note") or r.get("status")}
+                           for r in report if r.get("status") != "ok"]})
 
 
 async def _rename_episode(path: str) -> None:

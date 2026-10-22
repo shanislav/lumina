@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
-import { DownloadItem, getDownloads, removeDownload, formatSize, startQueuedNow, stopAllDownloads } from "@/lib/api";
+import { DownloadItem, getDownloads, removeDownload, formatSize, startQueuedNow, stopAllDownloads, requesterLabel } from "@/lib/api";
 
 function speedText(bytesPerSec: number): string {
   if (bytesPerSec < 1024) return `${bytesPerSec} B/s`;
@@ -174,6 +174,11 @@ export default function DownloadPanel() {
                     </Link>
                   ) : (
                     <span className="text-sm text-zinc-200 truncate flex-1" title={name}>{name}</span>
+                  )}
+                  {dl.requested_by && (
+                    <span className="shrink-0 text-xs text-zinc-500" title={`Přidal: ${requesterLabel(dl.requested_by)}`}>
+                      👤 {requesterLabel(dl.requested_by)}
+                    </span>
                   )}
                   {(dl.requested_by || dl.created_at) && (
                     <span className="cursor-default text-xs text-zinc-500 hover:text-zinc-300"

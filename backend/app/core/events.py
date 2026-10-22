@@ -16,6 +16,7 @@ Known events:
     library.movie_updated  {movie_id, status, tmdb_id, file_path, folder, media, tmdb, versions, ...}
                            a library file changed (import, scan, rename, undo) — NFO, Plex, wanted react
     library.files_added    {folders: [path, ...]}
+    audiosync.season_done  {title, tmdb_id, season, lang, total, error, done: [episode], failed: [{episode, note}]}
                            files came into film folders besides an import (subtitles) — Plex rescans
     library.files_removed  {folders: [path, ...]}
                            files of the library were deleted (a version, a whole movie folder) — Plex rescans

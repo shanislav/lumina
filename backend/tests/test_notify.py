@@ -86,3 +86,15 @@ async def test_a_file_change_says_what_it_was_and_opens_its_tab(db):
                                            "Náhled zmenšení hotový"]
     assert items[2]["body"].startswith("Kosti S01E04.mkv — 1.20 GB → ~0.80 GB (−34 %)") and "zařazeno" not in items[2]["body"]
     assert [i["link"] for i in items] == ["/library?convert=shrink", "/library?convert=dv", "/library?convert=shrink"]
+
+
+async def test_a_season_dub_says_which_episodes_stayed_and_why(db):
+    await handlers.on_season_dub_done({"title": "Sběratelé kostí S02 · SK", "tmdb_id": 1911, "season": 2, "lang": "sk",
+                                       "total": 3, "error": None, "done": [3, 4],
+                                       "failed": [{"episode": 6, "note": "Kontrola výsledku neprošla"}]})
+    await handlers.on_season_dub_done({"title": "Kosti S03 · SK", "tmdb_id": 1911, "season": 3, "lang": "sk",
+                                       "total": 2, "error": None, "done": [1, 2], "failed": []})
+    items = (await store.listing(ADMIN))["items"]
+    assert items[0]["title"] == "Dabing SK přenesen: Kosti S03 · SK" and items[0]["level"] == "ok"
+    assert items[1]["title"].startswith("Přenos dabingu SK: 2/3 dílů — 1 zůstalo beze změny")
+    assert "E06: Kontrola výsledku neprošla" in items[1]["body"] and items[1]["link"] == "/series?tmdb=1911"

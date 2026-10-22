@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DownloadItem, DownloadList, getDownloads, removeDownload } from "@/lib/api";
+import { DownloadItem, DownloadList, getDownloads, removeDownload, requesterLabel } from "@/lib/api";
 import { useAuth } from "@/components/AuthGate";
 import { size } from "@/lib/mobile";
 import { Spinner } from "@/components/mobile/ui";
@@ -53,6 +53,7 @@ export default function MobileDownloads() {
             <p className="text-sm text-zinc-400">
               {p} % · {size(d.completed_length)} z {size(d.total_length)}{d.download_speed ? ` · ${size(d.download_speed)}/s` : ""}
               {d.source_label ? ` · ${d.source_label}` : ""}
+              {d.requested_by ? ` · 👤 ${requesterLabel(d.requested_by)}` : ""}
             </p>
             {can("download") && (
               <button onClick={() => cancel(d)}

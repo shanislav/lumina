@@ -119,6 +119,26 @@ async def on_series_found(p: dict) -> None:
                         link=link, permission="download")
 
 
+async def on_season_dub_done(p: dict) -> None:
+    """A season's dub moved (Přenos dabingu): all in, or which episodes stayed as they were and why."""
+    done, failed = p.get("done") or [], p.get("failed") or []
+    lang = (p.get("lang") or "").upper()
+    link = f"/series?tmdb={p['tmdb_id']}" if p.get("tmdb_id") else ""
+    if p.get("error"):
+        await store.add("audiosync", f"Přenos dabingu {lang} spadl: {p.get('title', '')}", p["error"], level="error",
+                        link=link, permission="audiosync")
+        return
+    if not failed:
+        await store.add("audiosync", f"Dabing {lang} přenesen: {p.get('title', '')}", f"všech {len(done)} dílů",
+                        level="ok", link=link, permission="audiosync")
+        return
+    lines = "; ".join(f"E{f['episode']:02d}: {f['note']}" for f in failed)
+    await store.add("audiosync", f"Přenos dabingu {lang}: {len(done)}/{p.get('total', len(done) + len(failed))} dílů — "
+                    f"{len(failed)} zůstalo beze změny: {p.get('title', '')}",
+                    f"{lines} · tyto díly mají dál původní verze (obě), zkus je v editoru zvuku",
+                    level="warn", link=link, permission="audiosync")
+
+
 async def on_convert_finished(p: dict) -> None:
     """A file change ended (Úpravy souborů): an error always, success merged into one notice per hour."""
     name = os.path.basename(p.get("result_path") or p.get("path") or "")

@@ -2277,3 +2277,13 @@ export interface ConvertWorker {
 export const getConvertWorkers = () => convertCall<{ workers: ConvertWorker[] }>("/workers");
 export const addConvertWorker = (name: string) => convertCall<{ id: number; name: string; token: string }>("/workers", jsonBody("POST", { name }));
 export const removeConvertWorker = (id: number) => convertCall<{ ok: boolean }>(`/workers/${id}`, { method: "DELETE" });
+
+
+/** Who started a download, for people: a user's name, or which automation ("series" → "automatika seriálu"). */
+export function requesterLabel(requestedBy?: string): string {
+  const by = (requestedBy || "").trim();
+  if (!by) return "";
+  if (by === "series") return "automatika seriálu";
+  if (by.startsWith("upgrade")) return "lepší verze (plánovač)";
+  return by;
+}

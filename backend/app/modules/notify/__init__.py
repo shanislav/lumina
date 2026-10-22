@@ -21,5 +21,6 @@ module = Module(
                    Subscription("download.planned", handlers.on_download_planned),
                    Subscription("offers.found", handlers.on_offers_found),
                    Subscription("series.found", handlers.on_series_found),
-                   Subscription("convert.finished", handlers.on_convert_finished)],
+                   Subscription("convert.finished", handlers.on_convert_finished),
+                   Subscription("audiosync.season_done", handlers.on_season_dub_done)],
 )
