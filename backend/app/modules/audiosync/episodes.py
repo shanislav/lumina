@@ -85,28 +85,42 @@ async def move_dub(item: dict, lang: str, delete_source: bool, progress=None, re
         return {"status": "error", "note": "málo místa na disku"}
     result = await asyncio.to_thread(engine.analyze, target, item["target_track"], source, item["source_track"],
                                      progress)
-    data = result.to_dict()
-    if data["verdict"] not in ("constant", "speed", "cuts") or (data.get("confidence") or 0) < MIN_CONFIDENCE:
-        return {"status": "unsure", "note": f"zvuk k obrazu nesedí jistě ({data.get('note') or data['verdict']})",
-                "verdict": data["verdict"], "confidence": data.get("confidence")}
-    # the picture: each piece's offset checked, a cut in speech placed again (only where it is needed)
-    if progress:
-        progress("picture")
-    data = await asyncio.to_thread(video.refine, data, target, item["target_track"], source)
-    if data.get("unsure_cut"):
-        return {"status": "unsure", "note": f"střih kolem {data['unsure_cut']} padl do řeči a obraz neporadil",
-                "verdict": data["verdict"], "confidence": data.get("confidence"), "picture": data.get("picture")}
+    first = result.to_dict()
+    if first["verdict"] not in ("constant", "speed", "cuts") or (first.get("confidence") or 0) < MIN_CONFIDENCE:
+        return {"status": "unsure", "note": f"zvuk k obrazu nesedí jistě ({first.get('note') or first['verdict']})",
+                "verdict": first["verdict"], "confidence": first.get("confidence")}
     work = folder / WORK_DIR
     out_name = f"{os.path.splitext(os.path.basename(target))[0]}.mkv"
-    try:
-        built = await asyncio.to_thread(
-            muxer.transfer_many, target, item["target_track"],
-            [{"path": source, "tracks": [item["source_track"]], "analysis": data,
-              "language": engine.ISO3.get(lang, lang)}],
-            work, out_name, progress, None, [item["target_track"]] if redo else None, False)
-    except muxer.TransferError as e:
-        shutil.rmtree(work, ignore_errors=True)
-        return {"status": "error", "note": str(e)}
+    # the first mapping; when its result fails the check, measured again densely — loose, then strict (a TV
+    # version's small cuts of 0.1–0.3 s slip between the first analysis' windows). The first one that passes counts.
+    built, data, errors = None, first, []
+    for mode in (None, "loose", "strict"):
+        if mode:
+            logger.info("Dub of %s: %s — measuring once more (%s)", os.path.basename(target), errors[-1], mode)
+            data = await asyncio.to_thread(engine.dense, target, item["target_track"], source, item["source_track"],
+                                           first, mode, progress)
+            if data["verdict"] not in ("constant", "speed", "cuts"):
+                errors.append(data.get("note") or data["verdict"])
+                continue
+        # the picture: each piece's offset checked, a cut in speech placed again (only where it is needed); a cut
+        # it cannot place stays where the sound put it — the check measures right next to it and decides
+        if progress:
+            progress("picture")
+        data = await asyncio.to_thread(video.refine, data, target, item["target_track"], source)
+        try:
+            built = await asyncio.to_thread(
+                muxer.transfer_many, target, item["target_track"],
+                [{"path": source, "tracks": [item["source_track"]], "analysis": data,
+                  "language": engine.ISO3.get(lang, lang)}],
+                work, out_name, progress, None, [item["target_track"]] if redo else None, False)
+            break
+        except muxer.TransferError as e:
+            shutil.rmtree(work, ignore_errors=True)
+            errors.append(str(e))
+    if built is None:
+        tried = "" if len(errors) < 2 else f" (i po hustém měření: {errors[-1]})"
+        return {"status": "error", "note": errors[0] + tried, "verdict": first["verdict"],
+                "picture": data.get("picture")}
     final = str(folder / out_name)
     os.replace(built, final)
     shutil.rmtree(work, ignore_errors=True)

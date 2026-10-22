@@ -655,3 +655,101 @@ def cut_pieces(ref_path: str, ref_track: int, other_path: str, other_track: int,
     last = segments[-1]
     pieces.append({"start": start, "end": duration, "offset": last.at(start), "slope": last.slope})
     return pieces
+
+
+# ── once more, densely: the mapping of a result that did not pass its check ──
+#
+# The analysis measures every ~70 s: a stretch of a minute with another offset (a TV version's small cuts at ad
+# breaks, often only 0.1–0.3 s) slips between its windows — the built track is then off there by that much, and
+# the check finds it. Measured again every 15 s with short windows close to the first mapping (a few seconds
+# around it — quick), such stretches show; a run of windows is a segment, the cuts between them are placed as
+# usual. Loose: steps of 0.15 s and more, three windows at least; strict: 0.05 s and two windows (a version with
+# many small cuts) — the loose one first, the strict one may take noise for cuts.
+
+DENSE_STEP_S = 15.0
+DENSE_WINDOW_S = 20.0
+DENSE_MARGIN_S = 8.0
+DENSE_MODES = {"loose": (CONTINUES_S, 3), "strict": (0.05, 2)}
+STAIRS_S = 0.5             # segments stepping one way this much over the film: the speed is a hair off
+
+
+def _dense_segments(windows: list[Window], step: float, min_run: int) -> list[Segment]:
+    good = [w for w in windows if w.good]
+    groups: list[list[Window]] = []
+    for w in good:
+        if groups and abs(w.offset - groups[-1][-1].offset) <= step:
+            groups[-1].append(w)
+        else:
+            groups.append([w])
+    segs = []
+    for g in groups:
+        if len(g) < min_run:                       # a lone window or two: noise
+            continue
+        start, end = g[0].at, g[-1].at + DENSE_WINDOW_S
+        if len(g) >= 3:
+            slope, intercept = fit_line(g)
+            if abs(slope * (end - start)) > step:
+                segs.append(Segment(start=start, end=end, offset=intercept + slope * start, slope=slope))
+                continue
+        segs.append(Segment(start=start, end=end, offset=float(np.median([w.offset for w in g]))))
+    merged: list[Segment] = []
+    for s in segs:                                 # the noise between two runs of one offset gone: one run again
+        if merged and abs(s.at(s.start) - merged[-1].at(merged[-1].end)) <= step:
+            m = merged[-1]
+            merged[-1] = Segment(start=m.start, end=s.end, offset=m.offset, slope=m.slope)
+        else:
+            merged.append(s)
+    return merged
+
+
+def _stairs(segs: list[Segment]) -> float | None:
+    """Segments stepping one way all along (a speed a hair off, taken for cuts) → the speed correction (slope)."""
+    if len(segs) < 4:
+        return None
+    steps = [b.offset - a.at(a.end) for a, b in zip(segs, segs[1:])]
+    total = segs[-1].at(segs[-1].end) - segs[0].offset
+    if abs(total) < STAIRS_S or not (all(s < 0 for s in steps) or all(s > 0 for s in steps)):
+        return None
+    return total / (segs[-1].end - segs[0].start)
+
+
+def dense(ref_path: str, ref_track: int, other_path: str, other_track: int, first: dict, mode: str = "loose",
+          progress=None) -> dict:
+    """The mapping measured again every DENSE_STEP_S around ``first`` (an analysis' dict) → an analysis dict
+    (the same keys: verdict, speed, offset, pieces …)."""
+    step, min_run = DENSE_MODES[mode]
+    duration = (first.get("reference") or {}).get("duration") or probe(ref_path)["duration"]
+
+    def measure(speed: float) -> list[Segment]:
+        out = []
+        ats = np.arange(5.0, duration - DENSE_WINDOW_S - 1, DENSE_STEP_S)
+        for i, at in enumerate(ats):
+            guess = mapping_at(first, float(at))
+            guess = (first["offset"] if guess is None else guess) + (first["speed"] - speed) * at
+            out.append(_measure(ref_path, ref_track, other_path, other_track, float(at), speed, guess,
+                                margin=DENSE_MARGIN_S, window=DENSE_WINDOW_S))
+            if progress:
+                progress("dense", i + 1, len(ats))
+        return _dense_segments(out, step, min_run)
+
+    speed = first["speed"]
+    segs = measure(speed)
+    slope = _stairs(segs)
+    if slope is not None:
+        exact = speed + slope
+        near = min(SPEEDS, key=lambda s: abs(s - exact))
+        better = near if abs(near - exact) < 5e-4 else exact
+        logger.info("audiosync dense: steps one way (%+.2f s) — speed %.5f → %.5f", slope * duration, speed, better)
+        speed, segs = better, measure(better)
+    data = {**first, "speed": speed}
+    if not segs:
+        return {**data, "verdict": "no_match", "note": "Ani husté měření zvuk nespárovalo"}
+    logger.info("audiosync dense (%s): %d segments: %s", mode, len(segs),
+                ", ".join(f"{s.start:.0f}-{s.end:.0f} {s.offset:+.3f}" for s in segs))
+    if len(segs) == 1:
+        o = segs[0].offset
+        return {**data, "verdict": "constant" if abs(speed - 1) < 1e-9 else "speed", "offset": o,
+                "pieces": [{"start": 0.0, "end": duration, "offset": o, "slope": segs[0].slope}]}
+    main = max(segs, key=lambda s: s.end - s.start)
+    return {**data, "verdict": "cuts", "offset": main.offset,
+            "pieces": cut_pieces(ref_path, ref_track, other_path, other_track, speed, segs, duration, progress)}

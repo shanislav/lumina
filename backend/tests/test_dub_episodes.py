@@ -62,3 +62,64 @@ async def test_the_own_track_without_a_language_named_and_only_that(monkeypatch)
     await dubs._name_own_track("b.mkv", "Bones S01E05 [CS].mkv", 0, "sk")     # has its language already
     await dubs._name_own_track("c.mkv", "Bones.S01E06.HEVC.mkv", 0, "sk")     # the name tells none
     assert written == [("cs", 0)]
+
+
+def test_dense_windows_make_segments_noise_left_out():
+    from app.modules.audiosync import analyze as engine
+
+    def w(at, off, good=True):
+        return engine.Window(at=at, offset=off, score=0.3 if good else 0.0, sharpness=3.0 if good else 0.0)
+    # 0.25 for a while, a 45 s stretch at 0.02 (a small cut at an ad break), one noisy window, 0.4 after
+    wins = [w(t, 0.25) for t in range(0, 300, 15)] + [w(t, 0.02) for t in range(300, 345, 15)] + \
+        [w(345, 0.9)] + [w(t, 0.4) for t in range(360, 600, 15)]
+    segs = engine._dense_segments(wins, 0.15, 3)
+    assert [round(s.offset, 2) for s in segs] == [0.25, 0.02, 0.4]
+    assert engine._stairs(segs) is None                            # up and down: cuts, not a speed
+
+
+def test_segments_stepping_one_way_are_a_speed_a_hair_off():
+    from app.modules.audiosync import analyze as engine
+    segs = [engine.Segment(start=t, end=t + 300, offset=-0.3 * k) for k, t in enumerate(range(0, 2400, 300))]
+    slope = engine._stairs(segs)
+    assert slope is not None and slope < 0
+
+
+async def test_a_failed_check_measures_again_densely(tmp_path, monkeypatch):
+    from app.modules.audiosync import analyze as engine
+    from app.modules.audiosync import episodes as dubs
+    from app.modules.audiosync import transfer as muxer
+    from app.modules.audiosync import video
+    target, source = tmp_path / "E06 [CS].mkv", tmp_path / "E06 [SK].avi"
+    target.write_bytes(b"t")
+    source.write_bytes(b"s")
+
+    class Result:
+        def to_dict(self):
+            return {"verdict": "speed", "speed": 0.959, "offset": 0.04, "confidence": 0.9,
+                    "pieces": [{"start": 0, "end": 100, "offset": 0.04}]}
+    monkeypatch.setattr(engine, "analyze", lambda *a, **k: Result())
+    modes = []
+
+    def fake_dense(ref, rt, other, ot, first, mode, progress=None):
+        modes.append(mode)
+        return {**first, "verdict": "cuts", "pieces": [{"start": 0, "end": 50, "offset": 0.04},
+                                                       {"start": 50, "end": 100, "offset": 0.25}]}
+    monkeypatch.setattr(engine, "dense", fake_dense)
+    monkeypatch.setattr(video, "refine", lambda data, *a: data)
+
+    def fake_build(ref, rt, sources, work, out_name, *a):
+        if len(sources[0]["analysis"]["pieces"]) == 1:
+            raise muxer.TransferError("Kontrola výsledku neprošla (posuny +0.22 s)")
+        work.mkdir(parents=True, exist_ok=True)
+        out = work / out_name
+        out.write_bytes(b"new")
+        return str(out)
+    monkeypatch.setattr(muxer, "transfer_many", fake_build)
+
+    async def nothing(*a, **k):
+        return None
+    monkeypatch.setattr(dubs, "_name_own_track", nothing)
+    monkeypatch.setattr(dubs, "_library", nothing)
+    item = {"target_path": str(target), "source_path": str(source), "target_track": 0, "source_track": 0}
+    r = await dubs.move_dub(item, "sk", False)
+    assert r["status"] == "ok" and modes == ["loose"] and (tmp_path / "E06 [CS].mkv").read_bytes() == b"new"
