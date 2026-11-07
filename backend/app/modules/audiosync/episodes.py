@@ -94,19 +94,20 @@ async def move_dub(item: dict, lang: str, delete_source: bool, progress=None, re
     # the first mapping; when its result fails the check, measured again densely — loose, then strict (a TV
     # version's small cuts of 0.1–0.3 s slip between the first analysis' windows). The first one that passes counts.
     built, data, errors = None, first, []
-    for mode in (None, "loose", "strict"):
+    for mode in (None, "loose", "strict", "elastic"):
         if mode:
             logger.info("Dub of %s: %s — measuring once more (%s)", os.path.basename(target), errors[-1], mode)
             data = await asyncio.to_thread(engine.dense, target, item["target_track"], source, item["source_track"],
                                            first, mode, progress)
-            if data["verdict"] not in ("constant", "speed", "cuts"):
+            if data["verdict"] not in ("constant", "speed", "cuts", "elastic"):
                 errors.append(data.get("note") or data["verdict"])
                 continue
         # the picture: each piece's offset checked, a cut in speech placed again (only where it is needed); a cut
         # it cannot place stays where the sound put it — the check measures right next to it and decides
         if progress:
             progress("picture")
-        data = await asyncio.to_thread(video.refine, data, target, item["target_track"], source)
+        if data["verdict"] != "elastic":      # the elastic mapping follows the sound minute by minute already
+            data = await asyncio.to_thread(video.refine, data, target, item["target_track"], source)
         try:
             built = await asyncio.to_thread(
                 muxer.transfer_many, target, item["target_track"],

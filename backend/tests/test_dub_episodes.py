@@ -123,3 +123,15 @@ async def test_a_failed_check_measures_again_densely(tmp_path, monkeypatch):
     item = {"target_path": str(target), "source_path": str(source), "target_track": 0, "source_track": 0}
     r = await dubs.move_dub(item, "sk", False)
     assert r["status"] == "ok" and modes == ["loose"] and (tmp_path / "E06 [CS].mkv").read_bytes() == b"new"
+
+
+def test_elastic_pieces_glide_from_anchor_to_anchor():
+    from app.modules.audiosync import analyze as engine
+    # the offset wavers slowly: +0.1 at 0 → −0.1 at 3 min → +0.1 at 6 min
+    wins = [engine.Window(at=t - engine.DENSE_WINDOW_S / 2, offset=0.1 - 0.2 * min(t, 360 - t) / 180,
+                          score=0.3, sharpness=3.0) for t in range(10, 360, 15)]
+    out = engine._elastic([{"start": 0.0, "end": 360.0, "offset": 0.0}], wins, 0.959)
+    assert len(out) == 6 and all(p["offset"] is not None for p in out)
+    ends = [p["offset"] + p["slope"] * (p["end"] - p["start"]) for p in out]
+    assert all(abs(e - n["offset"]) < 1e-9 for e, n in zip(ends, out[1:]))     # no jump between sub-pieces
+    assert out[3]["offset"] < out[0]["offset"]                                  # it follows the dip

@@ -689,15 +689,42 @@ async def _run_apply(body: ApplyBody, fmap: dict, target: dict, sources: dict, l
             keep, build_keep = lay["keep"], lay["build_keep"]
             ref_track = fmap.get("ref_track", 0)
             if sources:
-                srcs = []
+                rows = []
                 for src in sources.values():
                     row = await _result_row(src["result_id"])
-                    analysis = engine.shifted(clips.with_adjustment(json.loads(row["result"])), src["delta"])
-                    srcs.append({"path": (await _file(src["version_id"]))["file_path"],
-                                 "tracks": sorted(set(src["tracks"])), "analysis": analysis})
+                    rows.append((src, row, clips.with_adjustment(json.loads(row["result"])),
+                                 (await _file(src["version_id"]))["file_path"]))
                 out_name = Path(target["filename"]).stem + " [audio].mkv"
-                out = await asyncio.to_thread(muxer.transfer_many, target["file_path"], ref_track, srcs, workdir,
-                                              out_name, progress, report, build_keep, False, lay["build_default"])
+                # the first mappings; a result failing its check: each measured again densely — loose, strict,
+                # then elastic (see analyze.dense) — the first build that passes counts
+                errors: list[str] = []
+                out = None
+                for mode in (None, "loose", "strict", "elastic"):
+                    srcs = []
+                    for src, row, first, path in rows:
+                        analysis = first
+                        if mode:
+                            _job.update(phase=f"dense-{mode}")
+                            analysis = await asyncio.to_thread(engine.dense, target["file_path"], row["reference_track"],
+                                                               path, row["other_track"], first, mode, progress)
+                            if analysis["verdict"] not in ("constant", "speed", "cuts", "elastic"):
+                                analysis = first
+                        srcs.append({"path": path, "tracks": sorted(set(src["tracks"])),
+                                     "analysis": engine.shifted(analysis, src["delta"])})
+                    if mode:
+                        logger.info("audiosync apply: %s — measuring once more (%s)", errors[-1], mode)
+                    try:
+                        out = await asyncio.to_thread(muxer.transfer_many, target["file_path"], ref_track, srcs,
+                                                      workdir, out_name, progress, report, build_keep, False,
+                                                      lay["build_default"])
+                        break
+                    except muxer.NothingToAdd:
+                        raise
+                    except muxer.TransferError as e:
+                        errors.append(str(e))
+                        shutil.rmtree(workdir, ignore_errors=True)
+                if out is None:
+                    raise muxer.TransferError(errors[0] + (f" (ani po hustém měření: {errors[-1]})" if len(errors) > 1 else ""))
                 if lay["drop_ref"]:
                     # the new tracks were checked against the reference — now it goes
                     out = await asyncio.to_thread(muxer.strip, out,

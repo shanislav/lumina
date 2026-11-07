@@ -391,8 +391,10 @@ def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: P
     added = []
     for k, src in enumerate(sources):
         analysis = src["analysis"]
-        cut = analysis.get("verdict") == "cuts"
-        if analysis.get("verdict") not in ("constant", "speed", "cuts") or (cut and not analysis.get("pieces")):
+        # "elastic": the offset glides between anchors (each piece its own hair of speed) — assembled like a cut,
+        # checked as one continuous mapping (its pieces are no cuts)
+        cut = analysis.get("verdict") in ("cuts", "elastic")
+        if analysis.get("verdict") not in ("constant", "speed", "cuts", "elastic") or (cut and not analysis.get("pieces")):
             raise TransferError("Zvuk k tomuto obrazu nesedí — není co přenést")
         other = engine.probe(src["path"])
         tracks = list(src["tracks"])
@@ -416,7 +418,8 @@ def transfer_many(ref_path: str, ref_track: int, sources: list[dict], workdir: P
             info = as_added(info, analysis)
             added.append({"file": file, "tid": tid, "delay_ms": delay_ms, "language": info.get("language") or "",
                           "name": track_name(info, moved=True), "source": src["path"],
-                          "check": (analysis.get("pieces") if cut else None, analysis.get("expect", 0.0))})
+                          "check": (analysis.get("pieces") if analysis.get("verdict") == "cuts" else analysis.get("check_pieces"),
+                                    analysis.get("expect", 0.0))})
     if not added:
         raise NothingToAdd("Tyto dabingy už soubor má — není co přidat")
     added = output_order(added, lambda a: a["file"], lambda a: a["tid"])

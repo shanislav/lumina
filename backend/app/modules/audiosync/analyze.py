@@ -713,14 +713,39 @@ def _stairs(segs: list[Segment]) -> float | None:
     return total / (segs[-1].end - segs[0].start)
 
 
+ELASTIC_KNOT_S = 60.0       # elastic: an anchor every minute — the offset glides between them
+ELASTIC_JUMP_S = 1.0        # elastic: only a jump this big is a cut (a missing scene, an intermission)
+
+
+def _elastic(pieces: list[dict], windows: list[Window], speed: float) -> list[dict]:
+    """Each piece with audio cut into a minute's sub-pieces whose offset glides from anchor to anchor (the median
+    of the dense windows around each) — a recording whose sync wavers slowly, followed without a jump."""
+    good = [(w.at + DENSE_WINDOW_S / 2, w.offset) for w in windows if w.good]
+    out = []
+    for p in pieces:
+        if p.get("offset") is None or p["end"] - p["start"] < 2 * ELASTIC_KNOT_S:
+            out.append(p)
+            continue
+        knots = [float(k) for k in np.arange(p["start"], p["end"], ELASTIC_KNOT_S)] + [p["end"]]
+        vals = []
+        for k in knots:
+            near = [o for at, o in good if abs(at - k) <= ELASTIC_KNOT_S and p["start"] <= at <= p["end"]]
+            vals.append(float(np.median(near)) if len(near) >= 2 else piece_offset(p, k))
+        for (k1, v1), (k2, v2) in zip(zip(knots, vals), list(zip(knots, vals))[1:]):
+            out.append({"start": k1, "end": k2, "offset": v1, "slope": (v2 - v1) / (k2 - k1)})
+    return out
+
+
 def dense(ref_path: str, ref_track: int, other_path: str, other_track: int, first: dict, mode: str = "loose",
           progress=None) -> dict:
     """The mapping measured again every DENSE_STEP_S around ``first`` (an analysis' dict) → an analysis dict
-    (the same keys: verdict, speed, offset, pieces …)."""
-    step, min_run = DENSE_MODES[mode]
+    (the same keys: verdict, speed, offset, pieces …). Mode "elastic": only big jumps are cuts, between them the
+    offset glides minute by minute (a TV recording whose sync wavers) — verdict "elastic", its cuts in
+    ``check_pieces`` for the result's check."""
+    step, min_run = DENSE_MODES.get(mode, (ELASTIC_JUMP_S, 3))
     duration = (first.get("reference") or {}).get("duration") or probe(ref_path)["duration"]
 
-    def measure(speed: float) -> list[Segment]:
+    def measure(speed: float) -> list[Window]:
         out = []
         ats = np.arange(5.0, duration - DENSE_WINDOW_S - 1, DENSE_STEP_S)
         for i, at in enumerate(ats):
@@ -730,26 +755,32 @@ def dense(ref_path: str, ref_track: int, other_path: str, other_track: int, firs
                                 margin=DENSE_MARGIN_S, window=DENSE_WINDOW_S))
             if progress:
                 progress("dense", i + 1, len(ats))
-        return _dense_segments(out, step, min_run)
+        return out
 
     speed = first["speed"]
-    segs = measure(speed)
-    slope = _stairs(segs)
+    windows = measure(speed)
+    slope = _stairs(_dense_segments(windows, *DENSE_MODES["loose"]))
     if slope is not None:
         exact = speed + slope
         near = min(SPEEDS, key=lambda s: abs(s - exact))
         better = near if abs(near - exact) < 5e-4 else exact
         logger.info("audiosync dense: steps one way (%+.2f s) — speed %.5f → %.5f", slope * duration, speed, better)
-        speed, segs = better, measure(better)
+        speed, windows = better, measure(better)
+    segs = _dense_segments(windows, step, min_run)
     data = {**first, "speed": speed}
     if not segs:
         return {**data, "verdict": "no_match", "note": "Ani husté měření zvuk nespárovalo"}
     logger.info("audiosync dense (%s): %d segments: %s", mode, len(segs),
                 ", ".join(f"{s.start:.0f}-{s.end:.0f} {s.offset:+.3f}" for s in segs))
     if len(segs) == 1:
-        o = segs[0].offset
-        return {**data, "verdict": "constant" if abs(speed - 1) < 1e-9 else "speed", "offset": o,
-                "pieces": [{"start": 0.0, "end": duration, "offset": o, "slope": segs[0].slope}]}
+        pieces = [{"start": 0.0, "end": duration, "offset": segs[0].offset, "slope": segs[0].slope}]
+    else:
+        pieces = cut_pieces(ref_path, ref_track, other_path, other_track, speed, segs, duration, progress)
     main = max(segs, key=lambda s: s.end - s.start)
-    return {**data, "verdict": "cuts", "offset": main.offset,
-            "pieces": cut_pieces(ref_path, ref_track, other_path, other_track, speed, segs, duration, progress)}
+    if mode == "elastic":
+        return {**data, "verdict": "elastic", "offset": main.offset, "pieces": _elastic(pieces, windows, speed),
+                "check_pieces": pieces if len(pieces) > 1 else None}
+    if len(segs) == 1:
+        return {**data, "verdict": "constant" if abs(speed - 1) < 1e-9 else "speed", "offset": main.offset,
+                "pieces": pieces}
+    return {**data, "verdict": "cuts", "offset": main.offset, "pieces": pieces}
