@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from app.clients.tmdb import TMDBClient
 from app.config import get_effective_settings
 from app.core import events
-from app.core.auth import require
+from app.core.auth import User, require
 from app.core.profiles import load_profiles, pick_profile
 from app.core.quality import prefs_from_settings
 from app.db import get_db
@@ -221,8 +221,8 @@ class PackDownload(BaseModel):
     keep_owned: bool = False     # the pack's episodes come as another version — nothing owned goes (a dub to move)
 
 
-@router.post("/{tmdb_id:int}/pack/download", dependencies=[Depends(require("download"))])
-async def pack_download(tmdb_id: int, body: PackDownload) -> dict:
+@router.post("/{tmdb_id:int}/pack/download")
+async def pack_download(tmdb_id: int, body: PackDownload, user: User = Depends(require("download"))) -> dict:
     """Download a pack of the whole show: every episode goes to its season; what the user has stays, unless
     ``replace_owned``; files that are no episode (a film, extras) stay in the downloads."""
     show, _ = await show_with_seasons(tmdb_id)
@@ -239,7 +239,7 @@ async def pack_download(tmdb_id: int, body: PackDownload) -> dict:
         # the pack's one season: files named only "01 - Name" inside it ("Chalupáři S01")
         "library_action": {"mode": "pack", "replace_owned": body.replace_owned and not body.keep_owned,
                            "keep_owned": body.keep_owned, "pack_season": pack_season},
-        "requested_by": "series",
+        "requested_by": user.username,
     })
     if payload.get("error"):
         raise HTTPException(502, payload["error"])
@@ -349,8 +349,8 @@ class SeasonDownload(BaseModel):
     keep_owned: bool = False   # the new files come as another version — nothing owned goes (a dub to move)
 
 
-@router.post("/{tmdb_id:int}/season/{season}/download", dependencies=[Depends(require("download"))])
-async def season_download(tmdb_id: int, season: int, body: SeasonDownload) -> dict:
+@router.post("/{tmdb_id:int}/season/{season}/download")
+async def season_download(tmdb_id: int, season: int, body: SeasonDownload, user: User = Depends(require("download"))) -> dict:
     """Download the chosen files of a season (the plan, or a pack) — each like "Download" in the file table."""
     show, _ = await show_with_seasons(tmdb_id)
     owned = await store.owned_episodes(tmdb_id)
@@ -367,7 +367,7 @@ async def season_download(tmdb_id: int, season: int, body: SeasonDownload) -> di
                                "replace": bool(body.replace_owned and not body.keep_owned and (season, episode) in owned),
                                "replace_owned": body.replace_owned and not body.keep_owned,
                                "keep_owned": body.keep_owned},
-            "requested_by": "series",
+            "requested_by": user.username,
         })
         if payload.get("error"):
             errors.append(f"E{episode:02d}: {payload['error']}")

@@ -221,7 +221,9 @@ async def request_download(wanted_id: int) -> None:
     payload = await events.emit("download.request", {
         "file_ident": best["ident"], "source": best.get("source"), "source_id": best.get("source_id") or 0,
         "magnet_url": best.get("magnet_url"), "tmdb_id": item["tmdb_id"], "title": item["title"],
-        "year": int(item["year"] or 0), "content_type": "movie", "requested_by": "wanted (plánovač)",
+        "year": int(item["year"] or 0), "content_type": "movie",
+        # who wished for it (Chci) — the scheduler only found it
+        "requested_by": f"{item['added_by']} (Chci)" if item.get("added_by") else "Chci (plánovač)",
         "file_name": best.get("name") or "",
     })
     if payload.get("started"):

@@ -2283,7 +2283,7 @@ export const removeConvertWorker = (id: number) => convertCall<{ ok: boolean }>(
 export function requesterLabel(requestedBy?: string): string {
   const by = (requestedBy || "").trim();
   if (!by) return "";
-  if (by === "series") return "automatika seriálu";
+  if (by === "series") return "ze stránky seriálu";          // before 2026-11: who clicked was not kept
   if (by.startsWith("upgrade")) return "lepší verze (plánovač)";
   return by;
 }
