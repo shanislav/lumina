@@ -87,6 +87,15 @@ async def move_dub(item: dict, lang: str, delete_source: bool, progress=None, re
                                      progress)
     first = result.to_dict()
     if first["verdict"] not in ("constant", "speed", "cuts") or (first.get("confidence") or 0) < MIN_CONFIDENCE:
+        # weak matches, or the dub's part far from where it was looked for (a double episode): the whole other
+        # track searched, the offsets many places agree on — then the same ladder and check as any other
+        rescued = await asyncio.to_thread(engine.rescue, target, item["target_track"], source, item["source_track"],
+                                          progress)
+        if rescued:
+            logger.info("Dub of %s: %s — rescued: %s", os.path.basename(target), first.get("note") or first["verdict"],
+                        rescued["verdict"])
+            first = rescued
+    if first["verdict"] not in ("constant", "speed", "cuts") or (first.get("confidence") or 0) < engine.RESCUE_MIN / engine.RESCUE_WINDOWS:
         return {"status": "unsure", "note": f"zvuk k obrazu nesedí jistě ({first.get('note') or first['verdict']})",
                 "verdict": first["verdict"], "confidence": first.get("confidence")}
     work = folder / WORK_DIR

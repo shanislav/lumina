@@ -784,3 +784,83 @@ def dense(ref_path: str, ref_track: int, other_path: str, other_track: int, firs
         return {**data, "verdict": "constant" if abs(speed - 1) < 1e-9 else "speed", "offset": main.offset,
                 "pieces": pieces}
     return {**data, "verdict": "cuts", "offset": main.offset, "pieces": pieces}
+
+
+# ── a rescue: the first analysis found no sure mapping ──
+#
+# Weak matches (two dubs sharing little but music) fall under GOOD_SCORE one by one — yet many windows landing on
+# one offset are proof enough. And the other version's part may lie far from where it is looked for: a double
+# episode in one file (the second half starts 45 min in), a long opening. Here each window of the reference is
+# looked up in the whole other track, at every usual speed; offsets several windows agree on make the mapping —
+# one group one offset, groups one after another a cut between them.
+
+RESCUE_WINDOWS = 12
+RESCUE_WINDOW_S = 30.0
+RESCUE_SCORE = 0.03        # a weak match still counts when others agree with it
+RESCUE_AGREE_S = 0.5       # offsets this close are one group
+RESCUE_MIN = 4             # windows a mapping needs (one group, or the groups together)
+
+
+def _groups(found: list[Window]) -> list[list[Window]]:
+    """Windows by offset: groups of at least two agreeing ones (by offset, not time)."""
+    usable = sorted((w for w in found if w.score >= RESCUE_SCORE), key=lambda w: w.offset)
+    groups: list[list[Window]] = []
+    for w in usable:
+        if groups and w.offset - groups[-1][-1].offset <= RESCUE_AGREE_S:
+            groups[-1].append(w)
+        else:
+            groups.append([w])
+    return [g for g in groups if len(g) >= 2]
+
+
+def rescue(ref_path: str, ref_track: int, other_path: str, other_track: int, progress=None) -> dict | None:
+    """The mapping found by agreement in the whole other track (see above) → an analysis dict, or None."""
+    ref, other = probe(ref_path), probe(other_path)
+    duration = ref["duration"]
+    if duration < 4 * RESCUE_WINDOW_S or not other.get("duration"):
+        return None
+    whole = onsets(extract(other_path, other_track, 0.0, other["duration"] + 1))
+    ats = [float(x) for x in np.linspace(duration * 0.04, duration - RESCUE_WINDOW_S - 30, RESCUE_WINDOWS)]
+    needles = [onsets(extract(ref_path, ref_track, at, RESCUE_WINDOW_S)) for at in ats]
+    best: tuple[int, float, list[list[Window]], list[Window]] | None = None
+    for k, speed in enumerate(sorted(SPEEDS, key=lambda s: abs(s - 1) > 1e-9)):
+        hay = stretch(whole, speed)
+        found = []
+        for at, needle in zip(ats, needles):
+            lag, score, sharp = locate(needle, hay)
+            found.append(Window(at=at, offset=lag / FPS * speed - speed * at, score=score, sharpness=sharp))
+        groups = _groups(found)
+        support = sum(len(g) for g in groups)
+        if best is None or support > best[0]:
+            best = (support, speed, groups, found)
+        if progress:
+            progress("rescue", k + 1, len(SPEEDS))
+        if groups and max(len(g) for g in groups) >= RESCUE_WINDOWS // 2:
+            break                                   # half the film on one offset: this speed it is
+    if not best or best[0] < RESCUE_MIN:
+        return None
+    support, speed, groups, found = best
+    label = {id(w): i for i, g in enumerate(groups) for w in g}
+    segs: list[Segment] = []
+    last = None
+    for w in sorted(found, key=lambda w: w.at):
+        g = label.get(id(w))
+        if g is None:
+            continue
+        offset = float(np.median([x.offset for x in groups[g]]))
+        if last == g:
+            segs[-1] = Segment(start=segs[-1].start, end=w.at + RESCUE_WINDOW_S, offset=segs[-1].offset)
+        else:
+            segs.append(Segment(start=w.at, end=w.at + RESCUE_WINDOW_S, offset=offset))
+        last = g
+    logger.info("audiosync rescue: speed %.5f, %d of %d windows agree: %s", speed, support, len(found),
+                ", ".join(f"{s.start:.0f}-{s.end:.0f} {s.offset:+.2f}" for s in segs))
+    data = {"speed": speed, "confidence": support / len(found), "reference": ref, "other": other,
+            "note": "záchranná analýza (shoda více míst)", "segments": [asdict(s) for s in segs], "windows": [],
+            "drift_s": 0.0}
+    main = max(segs, key=lambda s: s.end - s.start)
+    if len(segs) == 1:
+        return {**data, "verdict": "constant" if abs(speed - 1) < 1e-9 else "speed", "offset": main.offset,
+                "pieces": [{"start": 0.0, "end": duration, "offset": main.offset}]}
+    return {**data, "verdict": "cuts", "offset": main.offset,
+            "pieces": cut_pieces(ref_path, ref_track, other_path, other_track, speed, segs, duration, progress)}
