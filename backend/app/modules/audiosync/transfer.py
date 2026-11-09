@@ -204,16 +204,22 @@ def verify(out_path: str, ref_track: int, new_track: int, duration: float,
                     positions.append(a + x)
                     break
                 x -= b - a
+    def sure(w: engine.Window) -> bool:
+        # two dubs of different languages match weakly in dialogue — but a weak match that lands right where
+        # the track is meant to be (out of ±150 s searched) is no chance either
+        return w.good or (w.score >= engine.GOOD_SCORE and abs(w.offset - meant(w.at)) <= VERIFY_TYPICAL)
     windows = []
+    confirmed = []
     errors = []
     for at in positions:
         w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0, meant(at))
-        for alt in (at + 60, at - 60):          # a quiet place cannot be measured — try next to it
-            if w.good or not (0 < alt < duration - engine.WINDOW_S):
+        for alt in (at + 30, at - 30, at + 60, at - 60, at + 90, at - 90):   # a quiet place — try next to it
+            if sure(w) or not (0 < alt < duration - engine.WINDOW_S):
                 continue
             w = engine._measure(out_path, ref_track, out_path, new_track, alt, 1.0, meant(alt))
         windows.append(w)
-        if w.good:
+        if sure(w):
+            confirmed.append(w)
             errors.append(w.offset - meant(w.at))
     # the end: the last scene comes after the last ad break (the spread above stops before it)
     last = max((p for p in pieces or [] if p.get("offset") is not None), key=lambda p: p["end"], default=None)
@@ -224,13 +230,13 @@ def verify(out_path: str, ref_track: int, new_track: int, duration: float,
             break
         w = engine._measure(out_path, ref_track, out_path, new_track, at, 1.0, meant(at))
         windows.append(w)
-        if w.good:
+        if sure(w):
             if abs(w.offset - meant(at)) > VERIFY_MAX:
                 raise TransferError(f"Ke konci kolem {_clock(at)} zvuk nesedí ({w.offset:+.2f} s) — soubor nepoužit")
+            confirmed.append(w)
             break
-    good = [w for w in windows if w.good]
     typical = float(np.median([abs(e) for e in errors])) if errors else 99.0
-    if len(good) < VERIFY_WINDOWS - 1 or typical > VERIFY_TYPICAL or any(abs(e) > VERIFY_MAX for e in errors):
+    if len(confirmed) < VERIFY_WINDOWS - 1 or typical > VERIFY_TYPICAL or any(abs(e) > VERIFY_MAX for e in errors):
         offs = ", ".join(f"{e:+.2f}" for e in errors) or "žádná shoda"
         raise TransferError(f"Kontrola výsledku neprošla (posuny {offs} s) — soubor nepoužit")
     # a different cut: next to every cut the audio must fit too. A quiet stretch cannot be measured,

@@ -224,3 +224,20 @@ def test_language_read_from_a_track_title_when_the_tag_is_missing():
     assert language_from_title("Slovak AC3 2.0ch") == "slo"
     assert language_from_title("EN+CZ") == ""            # two languages — not a guess
     assert language_from_title("Stereo") == ""
+
+
+def test_check_trusts_a_weak_match_that_lands_exactly_but_not_one_elsewhere(monkeypatch):
+    # two dubs in different languages: dialogue matches weakly, only music and effects strongly
+    import pytest
+    from app.modules.audiosync import analyze as engine
+    from app.modules.audiosync import transfer
+    weak = {"offset": 0.02}
+
+    def measure(a, at_, b, bt, at, speed=1.0, offset=0.0, **k):
+        strong = int(at) % 3 == 0
+        return Window(at, 0.01 if strong else weak["offset"], 0.1 if strong else 0.05, 3.0 if strong else 1.2)
+    monkeypatch.setattr(engine, "_measure", measure)
+    transfer.verify("x.mkv", 0, 1, 2600.0)
+    weak["offset"] = 37.5                  # a weak peak somewhere in the searched range — no confirmation
+    with pytest.raises(transfer.TransferError):
+        transfer.verify("x.mkv", 0, 1, 2600.0)
